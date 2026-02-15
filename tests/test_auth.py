@@ -11,7 +11,6 @@ from open_llm_router.settings import get_settings
 
 def _set_default_test_env(monkeypatch) -> None:
     monkeypatch.setenv("ROUTING_CONFIG_PATH", "config/router.yaml")
-    monkeypatch.setenv("BACKEND_BASE_URL", "http://localhost:11434")
 
 
 def _build_client(monkeypatch, **env):

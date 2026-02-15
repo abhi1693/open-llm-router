@@ -19,15 +19,7 @@ pip install -e .
 Set environment variables:
 
 ```bash
-export BACKEND_BASE_URL="http://localhost:11434"
-export BACKEND_API_KEY=""                    # optional
 export ROUTING_CONFIG_PATH="config/router.yaml"
-export INGRESS_AUTH_REQUIRED="true"
-export INGRESS_API_KEYS="local-dev-key-1,local-dev-key-2"
-export OAUTH_ENABLED="true"
-export OAUTH_ISSUER="https://your-oauth-issuer"
-export OAUTH_AUDIENCE="your-api-audience"
-export OAUTH_JWKS_URL="https://your-oauth-issuer/.well-known/jwks.json"
 ```
 
 Run:
