@@ -13,6 +13,12 @@ def _load(path: Path) -> dict:
         return yaml.safe_load(handle) or {}
 
 
+def _save(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False)
+
+
 def test_cli_add_account_and_route(tmp_path):
     config_path = tmp_path / "router.yaml"
 
@@ -56,12 +62,15 @@ def test_cli_add_account_and_route(tmp_path):
     )
 
     config = _load(config_path)
-    assert config["default_model"] == "qwen2.5-14b-instruct"
+    assert config["default_model"] == "openai/qwen2.5-14b-instruct"
     assert config["accounts"][0]["name"] == "openclaw-a"
     assert config["accounts"][0]["provider"] == "openai"
-    assert "qwen2.5-coder-14b-instruct" in config["accounts"][0]["models"]
+    assert "openai/qwen2.5-coder-14b-instruct" in config["accounts"][0]["models"]
     assert config["task_routes"]["coding"]["xhigh"] == ["codex-1"]
+    assert isinstance(config["models"], dict)
     assert "codex-1" in config["models"]
+    assert config["models"]["openai/qwen2.5-14b-instruct"]["id"] == "qwen2.5-14b-instruct"
+    assert config["models"]["codex-1"]["id"] == "codex-1"
 
 
 def test_cli_set_route_accepts_multiple_models(tmp_path):
@@ -136,6 +145,8 @@ def test_cli_set_route_accepts_provider_qualified_models(tmp_path):
     ]
     assert "openai/gpt-5.2" in config["models"]
     assert "openai-codex/gpt-5.2-codex" in config["models"]
+    assert config["models"]["openai/gpt-5.2"]["id"] == "gpt-5.2"
+    assert config["models"]["openai-codex/gpt-5.2-codex"]["id"] == "gpt-5.2-codex"
 
 
 def test_cli_set_profile_candidates_and_learned_options(tmp_path):
@@ -321,6 +332,8 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
     assert "openai-codex/gpt-5.2" in account["models"]
     assert "openai-codex/gpt-5.2-codex" in config["models"]
     assert "openai-codex/gpt-5.2" in config["models"]
+    assert config["models"]["openai-codex/gpt-5.2-codex"]["id"] == "gpt-5.2-codex"
+    assert config["models"]["openai-codex/gpt-5.2"]["id"] == "gpt-5.2"
     assert config["default_model"] == "openai-codex/gpt-5.2-codex"
 
 

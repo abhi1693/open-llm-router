@@ -73,7 +73,7 @@ Minimum required shape:
 ```yaml
 default_model: openai-codex/gpt-5.2
 models:
-  - openai-codex/gpt-5.2
+  openai-codex/gpt-5.2: {}
 accounts:
   - name: default
     provider: openai-codex
@@ -131,7 +131,8 @@ retry_statuses:
   - 504
 ```
 
-Model identifiers in this config can be either plain model IDs (for example, `gpt-5.2`) or provider-qualified IDs (`openai-codex/gpt-5.2`).
+Top-level `models` is a mapping keyed by `provider/modelId`, which allows attaching model metadata (for example `name`, `id`, or custom attributes) without ambiguity.
+If `id` is omitted, it defaults to the `modelId` segment of the key (for example `openai-codex/gpt-5.2` -> `id: gpt-5.2`).
 
 Use the config CLI to edit routing without touching YAML manually:
 

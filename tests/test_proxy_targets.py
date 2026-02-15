@@ -102,6 +102,35 @@ def test_build_targets_resolves_provider_qualified_model_to_matching_account():
     asyncio.run(proxy.close())
 
 
+def test_build_targets_uses_model_registry_id_for_upstream_model():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai-codex/gpt-5.3-codex": {
+                "id": "gpt-5.3-codex-upstream",
+                "name": "GPT 5.3 Codex",
+            }
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-codex",
+                provider="openai-codex",
+                base_url="http://provider-codex",
+                api_key="key-b",
+                models=["openai-codex/gpt-5.3-codex"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(_decision("openai-codex/gpt-5.3-codex", []))
+    assert [target.label for target in targets] == ["acct-codex:openai-codex/gpt-5.3-codex"]
+    assert targets[0].upstream_model == "gpt-5.3-codex-upstream"
+    asyncio.run(proxy.close())
+
+
 def test_build_targets_request_source_ignores_fallbacks():
     proxy = BackendProxy(
         base_url="http://legacy",
