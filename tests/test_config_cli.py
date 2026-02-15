@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import pytest
 import yaml
 
 from open_llm_router.config_cli import main
@@ -384,6 +385,24 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(tmp_path, monkeypat
     assert config["default_model"] == "openai-codex/gpt-5.2-codex"
     assert "openai-codex/gpt-5.2-codex" in config["models"]
     assert "openai-codex/gpt-5.2" in config["models"]
+
+
+def test_cli_login_chatgpt_rejects_non_openai_codex_provider(tmp_path):
+    config_path = tmp_path / "router.yaml"
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--path",
+                str(config_path),
+                "login-chatgpt",
+                "--account",
+                "openai-work",
+                "--provider",
+                "openai",
+                "--models",
+                "gpt-5.2",
+            ]
+        )
 
 
 def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch):
