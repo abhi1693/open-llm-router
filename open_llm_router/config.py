@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ComplexityConfig(BaseModel):
@@ -120,12 +120,27 @@ class BackendAccount(BaseModel):
         return provider, model_id
 
     def supports_model(self, model: str) -> bool:
+        def _matches_model_id(expected_model_id: str) -> bool:
+            expected = expected_model_id.strip()
+            if not expected:
+                return False
+            for configured in self.models:
+                configured_provider, configured_model_id = self._split_model_ref(configured)
+                if configured_model_id != expected:
+                    continue
+                if configured_provider and configured_provider.lower() != self.provider.strip().lower():
+                    continue
+                return True
+            return False
+
         provider, model_id = self._split_model_ref(model)
+        if not self.models:
+            return True
         if provider:
             if self.provider.strip().lower() != provider.lower():
                 return False
-            return not self.models or model_id in self.models or model in self.models
-        return not self.models or model in self.models
+            return model in self.models or _matches_model_id(model_id)
+        return model in self.models or _matches_model_id(model)
 
     def upstream_model(self, requested_model: str) -> str:
         provider, model_id = self._split_model_ref(requested_model)
@@ -220,12 +235,70 @@ class RoutingConfig(BaseModel):
     default_model: str
     task_routes: dict[str, TaskRoute]
     fallback_models: list[str] = Field(default_factory=list)
-    models: list[str] = Field(default_factory=list)
+    models: dict[str, dict[str, Any]] = Field(default_factory=dict)
     model_profiles: dict[str, ModelProfile] = Field(default_factory=dict)
     accounts: list[BackendAccount] = Field(default_factory=list)
     retry_statuses: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
     learned_routing: LearnedRoutingConfig = Field(default_factory=LearnedRoutingConfig)
+
+    @staticmethod
+    def _default_model_id(model_key: str) -> str:
+        provider, sep, model_id = model_key.partition("/")
+        if sep and provider.strip() and model_id.strip():
+            return model_id.strip()
+        return model_key
+
+    @classmethod
+    def _normalize_model_metadata(
+        cls, model_key: str, raw_metadata: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        metadata = dict(raw_metadata or {})
+        raw_id = metadata.get("id")
+        if isinstance(raw_id, str) and raw_id.strip():
+            metadata["id"] = raw_id.strip()
+        else:
+            metadata["id"] = cls._default_model_id(model_key)
+        return metadata
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def _coerce_models(
+        cls, value: Any
+    ) -> dict[str, dict[str, Any]]:
+        if value is None:
+            return {}
+        if isinstance(value, list):
+            coerced: dict[str, dict[str, Any]] = {}
+            for item in value:
+                if not isinstance(item, str):
+                    continue
+                model_key = item.strip()
+                if model_key:
+                    coerced.setdefault(
+                        model_key, cls._normalize_model_metadata(model_key, {})
+                    )
+            return coerced
+        if isinstance(value, dict):
+            coerced: dict[str, dict[str, Any]] = {}
+            for raw_model_key, raw_metadata in value.items():
+                if not isinstance(raw_model_key, str):
+                    continue
+                model_key = raw_model_key.strip()
+                if not model_key:
+                    continue
+                if raw_metadata is None:
+                    coerced[model_key] = cls._normalize_model_metadata(model_key, {})
+                    continue
+                if not isinstance(raw_metadata, dict):
+                    raise ValueError(
+                        f"Model metadata for '{model_key}' must be an object."
+                    )
+                coerced[model_key] = cls._normalize_model_metadata(
+                    model_key, raw_metadata
+                )
+            return coerced
+        raise ValueError("Expected 'models' to be either a list or a mapping.")
 
     def should_auto_route(self, requested_model: str | None) -> bool:
         if not requested_model or not requested_model.strip():
@@ -241,7 +314,7 @@ class RoutingConfig(BaseModel):
         return [self.default_model]
 
     def available_models(self) -> list[str]:
-        discovered: set[str] = set(self.models)
+        discovered: set[str] = set(self.models.keys())
         discovered.add(self.default_model)
         discovered.update(self.fallback_models)
         for account in self.accounts:
