@@ -295,6 +295,8 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
                 "login-chatgpt",
                 "--account",
                 "openai-codex-work",
+                "--provider",
+                "openai-codex",
                 "--models",
                 "gpt-5.2-codex,gpt-5.2",
                 "--set-default",
@@ -315,8 +317,60 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
     assert account["oauth_account_id"] == "acc_123"
     assert account["oauth_client_id"] == "app_client_1"
     assert account["oauth_token_url"] == "https://auth.openai.com/oauth/token"
-    assert "gpt-5.2-codex" in account["models"]
-    assert config["default_model"] == "gpt-5.2-codex"
+    assert "openai-codex/gpt-5.2-codex" in account["models"]
+    assert "openai-codex/gpt-5.2" in account["models"]
+    assert "openai-codex/gpt-5.2-codex" in config["models"]
+    assert "openai-codex/gpt-5.2" in config["models"]
+    assert config["default_model"] == "openai-codex/gpt-5.2-codex"
+
+
+def test_cli_login_chatgpt_normalizes_existing_default_model(tmp_path, monkeypatch):
+    config_path = tmp_path / "router.yaml"
+    _save(
+        config_path,
+        {
+            "default_model": "gpt-5.2-codex",
+            "models": ["gpt-5.2-codex"],
+            "accounts": [],
+        },
+    )
+
+    def _fake_login(_args):
+        return {
+            "oauth_access_token": "access-token-1",
+            "oauth_refresh_token": "refresh-token-1",
+            "oauth_expires_at": 2222222222,
+            "oauth_account_id": "acc_123",
+            "oauth_client_id": "app_client_1",
+            "oauth_token_url": "https://auth.openai.com/oauth/token",
+        }
+
+    monkeypatch.setattr(
+        "open_llm_router.config_cli._run_chatgpt_oauth_login_flow",
+        _fake_login,
+    )
+
+    assert (
+        main(
+            [
+                "--path",
+                str(config_path),
+                "login-chatgpt",
+                "--account",
+                "openai-codex-work",
+                "--provider",
+                "openai-codex",
+                "--models",
+                "gpt-5.2-codex,gpt-5.2",
+            ]
+        )
+        == 0
+    )
+
+    config = _load(config_path)
+    assert config["default_model"] == "openai-codex/gpt-5.2-codex"
+    assert "openai-codex/gpt-5.2-codex" in config["models"]
+    assert "openai-codex/gpt-5.2" in config["models"]
 
 
 def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch):

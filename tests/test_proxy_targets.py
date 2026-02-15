@@ -314,6 +314,29 @@ def test_prepare_upstream_request_maps_chat_completions_to_codex_responses():
     ]
 
 
+def test_build_targets_resolves_codex_model_key_to_upstream_model_id():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-codex",
+                provider="openai-codex",
+                base_url="http://provider-codex",
+                api_key="key-b",
+                models=["gpt-5.2-codex", "openai-codex/gpt-5.2"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(_decision("openai-codex/gpt-5.2", []))
+    assert targets[0].model == "openai-codex/gpt-5.2"
+    assert targets[0].upstream_model == "gpt-5.2"
+    asyncio.run(proxy.close())
+
+
 def test_prepare_upstream_request_converts_chat_multimodal_content():
     payload = {
         "model": "gpt-5.2-codex",

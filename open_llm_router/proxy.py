@@ -43,6 +43,7 @@ class BackendTarget:
     auth_mode: str
     organization: str | None
     project: str | None
+    upstream_model: str
 
     @property
     def label(self) -> str:
@@ -613,7 +614,7 @@ class BackendProxy:
                 auth_mode=target.auth_mode,
             )
             trial_payload = deepcopy(payload)
-            trial_payload["model"] = target.model
+            trial_payload["model"] = target.upstream_model
             request_spec = _prepare_upstream_request(
                 path=path,
                 payload=trial_payload,
@@ -1402,6 +1403,7 @@ class BackendProxy:
                             provider=account.provider,
                             base_url=account.base_url,
                             model=model,
+                            upstream_model=account.upstream_model(model),
                             auth_mode=account.auth_mode,
                             organization=account.organization,
                             project=account.project,

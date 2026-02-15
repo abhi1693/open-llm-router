@@ -127,6 +127,12 @@ class BackendAccount(BaseModel):
             return not self.models or model_id in self.models or model in self.models
         return not self.models or model in self.models
 
+    def upstream_model(self, requested_model: str) -> str:
+        provider, model_id = self._split_model_ref(requested_model)
+        if provider and self.provider.strip().lower() == provider.lower():
+            return model_id
+        return requested_model.strip()
+
     @staticmethod
     def _resolve_env_or_value(env_name: str | None, value: str | None) -> str | None:
         if env_name:

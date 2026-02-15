@@ -36,6 +36,18 @@ def _parse_csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _qualify_model(provider: str, model: str) -> str:
+    normalized_provider = provider.strip()
+    normalized_model = model.strip()
+    if not normalized_provider or "/" in normalized_model:
+        return normalized_model
+    return f"{normalized_provider}/{normalized_model}"
+
+
+def _qualify_models(provider: str, models: list[str]) -> list[str]:
+    return [_qualify_model(provider, model) for model in models]
+
+
 def _dedupe(values: list[str]) -> list[str]:
     seen: set[str] = set()
     output: list[str] = []
@@ -442,14 +454,28 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
     oauth_data = _run_chatgpt_oauth_login_flow(args)
     account.update(oauth_data)
 
-    account_models = _parse_csv(args.models)
+    raw_account_models = _parse_csv(args.models)
+    account_models = _qualify_models(args.provider, raw_account_models)
     if account_models:
-        existing = account.get("models", [])
+        existing = _qualify_models(args.provider, account.get("models", []))
         account["models"] = _dedupe([*existing, *account_models])
         _add_models(data, account_models)
 
     if args.set_default and account_models:
         data["default_model"] = account_models[0]
+    elif account_models:
+        current_default = str(data.get("default_model") or "").strip()
+        if current_default:
+            raw_to_qualified = {
+                raw_model: qualified_model
+                for raw_model, qualified_model in zip(raw_account_models, account_models, strict=False)
+            }
+            if current_default in raw_to_qualified:
+                data["default_model"] = raw_to_qualified[current_default]
+            else:
+                qualified_default = _qualify_model(args.provider, current_default)
+                if qualified_default in account["models"]:
+                    data["default_model"] = qualified_default
     _ensure_default_model(data)
 
     account_id = account.get("oauth_account_id")
@@ -567,7 +593,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     add_account = subparsers.add_parser("add-account", help="Add or update a backend account/provider.")
     add_account.add_argument("--name", required=True)
-    add_account.add_argument("--provider", default="openai")
+    add_account.add_argument("--provider", required=True)
     add_account.add_argument("--base-url", required=True)
     add_account.add_argument(
         "--auth-mode",
@@ -601,7 +627,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run ChatGPT/Codex OAuth login and save tokens into an account.",
     )
     login_chatgpt.add_argument("--account", required=True)
-    login_chatgpt.add_argument("--provider", default="openai-codex")
+    login_chatgpt.add_argument("--provider", required=True)
     login_chatgpt.add_argument("--base-url", default="https://chatgpt.com/backend-api")
     login_chatgpt.add_argument("--models", default="")
     login_chatgpt.add_argument("--set-default", action="store_true")
