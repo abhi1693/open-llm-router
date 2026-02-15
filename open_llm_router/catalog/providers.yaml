@@ -1,0 +1,42 @@
+version: 1
+providers:
+  - id: openai
+    display_name: OpenAI
+    base_url: https://api.openai.com/v1
+    auth_modes:
+      - api_key
+      - oauth
+      - passthrough
+    endpoint_defaults:
+      chat_completions: /chat/completions
+      responses: /responses
+    reliability_priors:
+      latency_ms: 900
+      failure_rate: 0.02
+
+  - id: openai-codex
+    display_name: OpenAI Codex
+    base_url: https://chatgpt.com/backend-api
+    auth_modes:
+      - oauth
+      - api_key
+      - passthrough
+    endpoint_defaults:
+      chat_completions: /codex/responses
+      responses: /codex/responses
+    reliability_priors:
+      latency_ms: 1100
+      failure_rate: 0.03
+
+  - id: gemini
+    display_name: Google Gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    auth_modes:
+      - api_key
+      - passthrough
+    endpoint_defaults:
+      chat_completions: /chat/completions
+      responses: /responses
+    reliability_priors:
+      latency_ms: 750
+      failure_rate: 0.025

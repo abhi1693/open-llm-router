@@ -10,7 +10,7 @@ from open_llm_router.settings import get_settings
 
 
 def _set_default_test_env(monkeypatch) -> None:
-    monkeypatch.setenv("ROUTING_CONFIG_PATH", "config/router.yaml")
+    monkeypatch.setenv("ROUTING_CONFIG_PATH", "router.profile.yaml")
 
 
 def _build_client(monkeypatch, **env):

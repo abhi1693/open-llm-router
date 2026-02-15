@@ -1,0 +1,185 @@
+version: 1
+profiles:
+  auto:
+    description: Adaptive default tuned for balanced quality/cost with learned routing enabled.
+    default_model: openai-codex/gpt-5.2
+    task_routes:
+      general:
+        low:
+          - gemini/gemini-2.5-flash-lite
+        medium:
+          - gemini/gemini-2.5-flash
+        high:
+          - openai-codex/gpt-5.2
+      coding:
+        low:
+          - openai/codex-1
+        medium:
+          - openai-codex/gpt-5.2
+        high:
+          - openai-codex/gpt-5.2-codex
+        xhigh:
+          - openai-codex/gpt-5.3-codex
+      thinking:
+        low:
+          - openai-codex/gpt-5.2
+        medium:
+          - openai-codex/gpt-5.2-codex
+        high:
+          - openai-codex/gpt-5.3
+        xhigh:
+          - openai-codex/gpt-5.3-codex
+      image:
+        default:
+          - gemini/gemini-2.5-flash
+      instruction_following:
+        default:
+          - gemini/gemini-2.5-flash-lite
+    fallback_models:
+      - gemini/gemini-2.5-flash
+      - openai-codex/gpt-5.2
+      - openai-codex/gpt-5.2-codex
+    learned_routing:
+      enabled: true
+      bias: -4.0
+      default_output_tokens: 512
+      utility_weights:
+        cost: 12.0
+        latency: 0.2
+        failure: 3.0
+      feature_weights:
+        complexity_score: 1.4
+        task_coding: 1.0
+        task_thinking: 0.8
+        reasoning_effort_high: 1.1
+      task_candidates:
+        general:
+          - gemini/gemini-2.5-flash-lite
+          - gemini/gemini-2.5-flash
+          - openai-codex/gpt-5.2
+        coding:
+          - openai/codex-1
+          - openai-codex/gpt-5.2
+          - openai-codex/gpt-5.2-codex
+          - openai-codex/gpt-5.3-codex
+        thinking:
+          - openai-codex/gpt-5.2
+          - openai-codex/gpt-5.2-codex
+          - openai-codex/gpt-5.3
+          - openai-codex/gpt-5.3-codex
+
+  balanced:
+    description: Stable multi-objective routing with moderate quality and cost control.
+    default_model: openai-codex/gpt-5.2
+    task_routes:
+      general:
+        low:
+          - gemini/gemini-2.5-flash-lite
+        medium:
+          - gemini/gemini-2.5-flash
+        high:
+          - openai-codex/gpt-5.2
+      coding:
+        medium:
+          - openai/codex-1
+        high:
+          - openai-codex/gpt-5.2-codex
+      thinking:
+        high:
+          - openai-codex/gpt-5.3
+      image:
+        default:
+          - gemini/gemini-2.5-flash
+    fallback_models:
+      - gemini/gemini-2.5-flash
+      - openai-codex/gpt-5.2
+    learned_routing:
+      enabled: true
+      feature_weights:
+        complexity_score: 1.2
+        task_coding: 0.8
+        task_thinking: 0.7
+      task_candidates:
+        coding:
+          - openai/codex-1
+          - openai-codex/gpt-5.2-codex
+
+  cost:
+    description: Cheapest viable path with hard downgrade behavior.
+    default_model: gemini/gemini-2.5-flash-lite
+    task_routes:
+      general:
+        default:
+          - gemini/gemini-2.5-flash-lite
+      coding:
+        default:
+          - gemini/gemini-2.5-flash
+      thinking:
+        default:
+          - gemini/gemini-2.5-flash
+      image:
+        default:
+          - gemini/gemini-2.5-flash
+    fallback_models:
+      - gemini/gemini-2.5-flash
+      - openai-codex/gpt-5.2
+    learned_routing:
+      enabled: true
+      utility_weights:
+        cost: 18.0
+        latency: 0.15
+        failure: 2.5
+
+  quality:
+    description: Highest quality bias for hard tasks with cost-aware fallback chain.
+    default_model: openai-codex/gpt-5.3
+    task_routes:
+      coding:
+        high:
+          - openai-codex/gpt-5.3-codex
+        xhigh:
+          - openai-codex/gpt-5.3-codex
+      thinking:
+        high:
+          - openai-codex/gpt-5.3
+        xhigh:
+          - openai-codex/gpt-5.3-codex
+      general:
+        high:
+          - openai-codex/gpt-5.3
+    fallback_models:
+      - openai-codex/gpt-5.2-codex
+      - openai-codex/gpt-5.2
+      - gemini/gemini-2.5-flash
+    learned_routing:
+      enabled: true
+      utility_weights:
+        cost: 7.0
+        latency: 0.12
+        failure: 3.5
+
+  latency:
+    description: Lowest latency first while preserving fallback quality floor.
+    default_model: gemini/gemini-2.5-flash-lite
+    task_routes:
+      general:
+        default:
+          - gemini/gemini-2.5-flash-lite
+      coding:
+        default:
+          - openai/codex-1
+      thinking:
+        default:
+          - gemini/gemini-2.5-flash
+      image:
+        default:
+          - gemini/gemini-2.5-flash
+    fallback_models:
+      - gemini/gemini-2.5-flash
+      - openai-codex/gpt-5.2
+    learned_routing:
+      enabled: true
+      utility_weights:
+        cost: 10.0
+        latency: 0.45
+        failure: 3.0

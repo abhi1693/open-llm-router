@@ -47,6 +47,13 @@ class BackendTarget:
 
     @property
     def label(self) -> str:
+        if "/" in self.model:
+            provider, _, model_id = self.model.partition("/")
+            if (
+                provider.strip().lower() == self.provider.strip().lower()
+                and self.upstream_model == model_id.strip()
+            ):
+                return f"{self.account_name}:{model_id.strip()}"
         return f"{self.account_name}:{self.model}"
 
 

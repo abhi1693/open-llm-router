@@ -190,7 +190,9 @@ def classify_request(
     if think_score >= 4:
         complexity = _bump_complexity(complexity)
         complexity_adjustments.append("bump:think_score>=4")
-    if task == "coding" and complexity == "low" and text_length > complexity_cfg.low_max_chars // 2:
+    # Avoid escalating short coding prompts too aggressively; keep low-tier routing for
+    # concise requests and reserve medium-tier bumps for longer prompts.
+    if task == "coding" and complexity == "low" and text_length > int(complexity_cfg.low_max_chars * 0.8):
         complexity = "medium"
         complexity_adjustments.append("set:low->medium_for_coding_mid_length")
     if reasoning_effort in {"high", "xhigh", "max"}:

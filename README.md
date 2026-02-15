@@ -18,7 +18,7 @@ pip install -e .
 1. Set required config path:
 
 ```bash
-export ROUTING_CONFIG_PATH="config/router.yaml"
+export ROUTING_CONFIG_PATH="router.profile.yaml"
 ```
 
 2. Start the server:
@@ -66,7 +66,10 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 ## Routing config
 
-Routing behavior is driven by `config/router.yaml` (path set by `ROUTING_CONFIG_PATH`).
+Routing behavior is driven by `ROUTING_CONFIG_PATH`.
+
+- Recommended: `router.profile.yaml` (profile compiler input)
+- Legacy/manual support: `router.yaml` (raw runtime schema)
 
 Minimum required shape:
 
@@ -134,22 +137,23 @@ retry_statuses:
 Top-level `models` is a mapping keyed by `provider/modelId`, which allows attaching model metadata (for example `name`, `id`, or custom attributes) without ambiguity.
 If `id` is omitted, it defaults to the `modelId` segment of the key (for example `openai-codex/gpt-5.2` -> `id: gpt-5.2`).
 
-Use the config CLI to edit routing without touching YAML manually:
+Unified provider login flow (recommended):
 
 ```bash
-smr-config --path config/router.yaml add-account --name default --provider openai-codex --base-url http://localhost:11434 \
-  --api-key-env BACKEND_API_KEY --models openai-codex/gpt-5.2
-```
+# OpenAI via ChatGPT OAuth
+router provider login openai --kind chatgpt --name openai-codex-work
 
-Gemini (API key) can be configured as an OpenAI-compatible backend:
+# OpenAI via API key
+router provider login openai --kind apikey --name openai-work
 
-```bash
-smr-config --path config/router.yaml add-account \
-  --name gemini-work \
-  --provider gemini \
-  --base-url https://generativelanguage.googleapis.com/v1beta/openai \
-  --api-key-env GEMINI_API_KEY \
-  --models gemini-2.5-pro,gemini-2.5-flash
+# Gemini via API key (apikey is default kind)
+router provider login gemini --name gemini-work
+
+# Inline key instead of env var
+router provider login openai --kind apikey --name openai-work --apikey sk-...
+
+# Explicit env-var name (alias: --api-key-env)
+router provider login gemini --name gemini-work --apikey-env GEMINI_API_KEY
 ```
 
 This stores provider-qualified model keys like `gemini/gemini-2.5-pro` and defaults model metadata `id` to `gemini-2.5-pro`.
@@ -190,6 +194,8 @@ JSONL entries include route decisions and proxy attempt/response events.
 Backend connectivity can be configured through:
 
 - `backend_base_url`/`backend_api_key` settings in code defaults and env loading
-- account-level `base_url` and auth fields in `config/router.yaml`
+- account-level `base_url` and auth fields in `router.yaml` (or generated effective config)
+
+`router provider login ...` writes/updates `router.profile.yaml` (profile format), not raw `router.yaml`.
 
 If you keep only one default backend account, `ROUTING_CONFIG_PATH` is the only required external setting to get started.

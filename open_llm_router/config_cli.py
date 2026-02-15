@@ -646,10 +646,10 @@ def cmd_show(_: argparse.Namespace, data: dict[str, Any]) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="smr-config",
-        description="Manage open-llm-router config/router.yaml entries from CLI.",
+        prog="router",
+        description="Manage open-llm-router router.yaml entries from CLI.",
     )
-    parser.add_argument("--path", default="config/router.yaml", help="Path to router YAML config.")
+    parser.add_argument("--path", default="router.yaml", help="Path to router YAML config.")
     parser.add_argument("--dry-run", action="store_true", help="Print changes without writing file.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)

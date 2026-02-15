@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     backend_base_url: str = "http://localhost:11434"
     backend_api_key: str | None = None
     backend_timeout_seconds: float = 120.0
-    routing_config_path: str = "config/router.yaml"
+    routing_config_path: str = "router.profile.yaml"
     ingress_auth_required: bool = False
     ingress_api_keys: str = ""
     oauth_enabled: bool = False

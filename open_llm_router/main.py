@@ -9,7 +9,10 @@ from fastapi.responses import JSONResponse
 
 from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
-from open_llm_router.config import RoutingConfig, load_routing_config
+from open_llm_router.config import (
+    RoutingConfig,
+    load_routing_config_with_metadata,
+)
 from open_llm_router.proxy import BackendProxy
 from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
 from open_llm_router.settings import get_settings
@@ -87,11 +90,14 @@ def _build_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
-    routing_config = load_routing_config(settings.routing_config_path)
+    routing_config, explain_metadata = load_routing_config_with_metadata(
+        settings.routing_config_path
+    )
     authenticator = Authenticator(settings)
     app.state.settings = settings
     app.state.authenticator = authenticator
     app.state.routing_config = routing_config
+    app.state.routing_config_explain = explain_metadata
     app.state.smart_router = SmartModelRouter(routing_config)
     audit_logger = JsonlAuditLogger(
         path=settings.router_audit_log_path,

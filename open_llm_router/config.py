@@ -329,6 +329,13 @@ class RoutingConfig(BaseModel):
 
 
 def load_routing_config(config_path: str) -> RoutingConfig:
+    routing_config, _ = load_routing_config_with_metadata(config_path)
+    return routing_config
+
+
+def load_routing_config_with_metadata(
+    config_path: str,
+) -> tuple[RoutingConfig, dict[str, Any] | None]:
     path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(
@@ -339,4 +346,26 @@ def load_routing_config(config_path: str) -> RoutingConfig:
     with path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
 
-    return RoutingConfig.model_validate(raw)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Expected YAML object in '{config_path}'.")
+
+    from open_llm_router.catalog import (
+        load_internal_catalog,
+        validate_routing_document_against_catalog,
+    )
+    from open_llm_router.profile_compiler import (
+        compile_profile_document,
+        is_profile_document,
+    )
+
+    catalog = load_internal_catalog()
+    explain_metadata: dict[str, Any] | None = None
+
+    if is_profile_document(raw):
+        compiled = compile_profile_document(raw, catalog=catalog)
+        raw = compiled.effective_config
+        explain_metadata = compiled.explain
+    else:
+        validate_routing_document_against_catalog(raw, catalog=catalog)
+
+    return RoutingConfig.model_validate(raw), explain_metadata

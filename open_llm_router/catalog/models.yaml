@@ -1,0 +1,265 @@
+version: 1
+models:
+  - id: gpt-5.2
+    provider: openai-codex
+    aliases: []
+    costs:
+      input_per_1k: 0.0018
+      output_per_1k: 0.0065
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.68
+      quality_sensitivity: 2.0
+      latency_ms: 1150
+      failure_rate: 0.03
+
+  - id: gpt-5.2-codex
+    provider: openai-codex
+    aliases:
+      - codex-1
+    costs:
+      input_per_1k: 0.002
+      output_per_1k: 0.007
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.74
+      quality_sensitivity: 2.2
+      latency_ms: 1300
+      failure_rate: 0.032
+
+  - id: gpt-5.3
+    provider: openai-codex
+    aliases: []
+    costs:
+      input_per_1k: 0.0023
+      output_per_1k: 0.0078
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.78
+      quality_sensitivity: 2.35
+      latency_ms: 1350
+      failure_rate: 0.032
+
+  - id: gpt-5.3-codex
+    provider: openai-codex
+    aliases: []
+    costs:
+      input_per_1k: 0.0025
+      output_per_1k: 0.0085
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.8
+      quality_sensitivity: 2.45
+      latency_ms: 1450
+      failure_rate: 0.035
+
+  - id: gpt-5.3-codex-spark
+    provider: openai-codex
+    aliases: []
+    costs:
+      input_per_1k: 0.0021
+      output_per_1k: 0.0068
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.75
+      quality_sensitivity: 2.2
+      latency_ms: 980
+      failure_rate: 0.03
+
+  - id: gpt-5.2
+    provider: openai
+    aliases: []
+    costs:
+      input_per_1k: 0.0019
+      output_per_1k: 0.0067
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.7
+      quality_sensitivity: 2.1
+      latency_ms: 1080
+      failure_rate: 0.028
+
+  - id: codex-1
+    provider: openai
+    aliases: []
+    costs:
+      input_per_1k: 0.0017
+      output_per_1k: 0.0062
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.7
+      quality_sensitivity: 2.05
+      latency_ms: 1020
+      failure_rate: 0.028
+
+  - id: gemini-2.5-flash
+    provider: gemini
+    aliases: []
+    costs:
+      input_per_1k: 0.0002
+      output_per_1k: 0.0008
+    limits:
+      context_tokens: 1048576
+      max_output_tokens: 8192
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - vision
+      - tool_use
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.45
+      quality_sensitivity: 1.25
+      latency_ms: 700
+      failure_rate: 0.025
+
+  - id: gemini-2.5-flash-lite
+    provider: gemini
+    aliases: []
+    costs:
+      input_per_1k: 0.0001
+      output_per_1k: 0.0004
+    limits:
+      context_tokens: 1048576
+      max_output_tokens: 8192
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - vision
+      - tool_use
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.35
+      quality_sensitivity: 1.05
+      latency_ms: 520
+      failure_rate: 0.022
+
+  - id: qwen2.5-14b-instruct
+    provider: openai
+    aliases: []
+    costs:
+      input_per_1k: 0.00008
+      output_per_1k: 0.0002
+    limits:
+      context_tokens: 32768
+      max_output_tokens: 4096
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.3
+      quality_sensitivity: 1.1
+      latency_ms: 640
+      failure_rate: 0.03
+
+  - id: qwen2.5-coder-14b-instruct
+    provider: openai
+    aliases: []
+    costs:
+      input_per_1k: 0.00009
+      output_per_1k: 0.00023
+    limits:
+      context_tokens: 32768
+      max_output_tokens: 4096
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.35
+      quality_sensitivity: 1.2
+      latency_ms: 700
+      failure_rate: 0.03
+
+  - id: deepseek-r1
+    provider: openai
+    aliases: []
+    costs:
+      input_per_1k: 0.0004
+      output_per_1k: 0.0012
+    limits:
+      context_tokens: 65536
+      max_output_tokens: 8192
+      min_input_chars: 1
+    capabilities:
+      - chat
+      - tool_use
+      - reasoning
+      - streaming
+      - json_mode
+    priors:
+      quality_bias: 0.6
+      quality_sensitivity: 1.7
+      latency_ms: 1180
+      failure_rate: 0.035
