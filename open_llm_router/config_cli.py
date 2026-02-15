@@ -48,6 +48,57 @@ def _qualify_models(provider: str, models: list[str]) -> list[str]:
     return [_qualify_model(provider, model) for model in models]
 
 
+def _default_model_id(model_key: str) -> str:
+    provider, sep, model_id = model_key.partition("/")
+    if sep and provider.strip() and model_id.strip():
+        return model_id.strip()
+    return model_key
+
+
+def _normalize_model_metadata(
+    model_key: str, raw_metadata: dict[str, Any] | None
+) -> dict[str, Any]:
+    metadata = dict(raw_metadata or {})
+    raw_id = metadata.get("id")
+    if isinstance(raw_id, str) and raw_id.strip():
+        metadata["id"] = raw_id.strip()
+    else:
+        metadata["id"] = _default_model_id(model_key)
+    return metadata
+
+
+def _coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
+    if value is None:
+        return {}
+    if isinstance(value, list):
+        coerced: dict[str, dict[str, Any]] = {}
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            model_key = item.strip()
+            if model_key:
+                coerced.setdefault(model_key, _normalize_model_metadata(model_key, {}))
+        return coerced
+    if isinstance(value, dict):
+        coerced: dict[str, dict[str, Any]] = {}
+        for raw_model_key, raw_metadata in value.items():
+            if not isinstance(raw_model_key, str):
+                continue
+            model_key = raw_model_key.strip()
+            if not model_key:
+                continue
+            if raw_metadata is None:
+                coerced[model_key] = _normalize_model_metadata(model_key, {})
+                continue
+            if not isinstance(raw_metadata, dict):
+                raise ValueError(
+                    f"Model metadata for '{model_key}' must be an object."
+                )
+            coerced[model_key] = _normalize_model_metadata(model_key, raw_metadata)
+        return coerced
+    raise ValueError("Expected 'models' to be either a list or a mapping.")
+
+
 def _dedupe(values: list[str]) -> list[str]:
     seen: set[str] = set()
     output: list[str] = []
@@ -330,7 +381,7 @@ def _load_config(path: Path) -> dict[str, Any]:
 
 def _ensure_schema(data: dict[str, Any]) -> None:
     data.setdefault("default_model", "")
-    data.setdefault("models", [])
+    data["models"] = _coerce_models_map(data.get("models"))
     data.setdefault("model_profiles", {})
     data.setdefault("accounts", [])
     data.setdefault("task_routes", {})
@@ -354,9 +405,10 @@ def _ensure_default_model(data: dict[str, Any]) -> None:
     current = str(data.get("default_model") or "").strip()
     if current:
         return
-    models = data.get("models", [])
+    models = _coerce_models_map(data.get("models"))
+    data["models"] = models
     if models:
-        data["default_model"] = models[0]
+        data["default_model"] = next(iter(models.keys()))
 
 
 def _save_config(path: Path, data: dict[str, Any]) -> None:
@@ -373,7 +425,12 @@ def _find_account(accounts: list[dict[str, Any]], name: str) -> dict[str, Any] |
 
 
 def _add_models(data: dict[str, Any], models: list[str]) -> None:
-    data["models"] = _dedupe([*data.get("models", []), *models])
+    models_map = _coerce_models_map(data.get("models"))
+    for model in models:
+        normalized = model.strip()
+        if normalized and normalized not in models_map:
+            models_map[normalized] = _normalize_model_metadata(normalized, {})
+    data["models"] = models_map
 
 
 def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
@@ -426,9 +483,9 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.project is not None:
         account["project"] = _normalize_optional(args.project)
 
-    account_models = _parse_csv(args.models)
+    account_models = _qualify_models(args.provider, _parse_csv(args.models))
     if account_models:
-        existing = account.get("models", [])
+        existing = _qualify_models(args.provider, account.get("models", []))
         account["models"] = _dedupe([*existing, *account_models])
         _add_models(data, account_models)
 
@@ -571,9 +628,10 @@ def cmd_set_learned(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 
 def cmd_show(_: argparse.Namespace, data: dict[str, Any]) -> str:
+    models_map = _coerce_models_map(data.get("models"))
     summary = {
         "default_model": data.get("default_model"),
-        "models_count": len(data.get("models", [])),
+        "models_count": len(models_map),
         "accounts": [account.get("name") for account in data.get("accounts", [])],
         "tasks": sorted(data.get("task_routes", {}).keys()),
         "learned_enabled": bool(data.get("learned_routing", {}).get("enabled", False)),

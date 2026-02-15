@@ -104,6 +104,7 @@ async def startup() -> None:
         backend_api_key=settings.backend_api_key,
         retry_statuses=routing_config.retry_statuses,
         accounts=routing_config.accounts,
+        model_registry=routing_config.models,
         audit_hook=audit_logger.log,
     )
     logger.info(

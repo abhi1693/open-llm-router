@@ -482,6 +482,7 @@ class BackendProxy:
         backend_api_key: str | None,
         retry_statuses: list[int],
         accounts: list[BackendAccount] | None = None,
+        model_registry: dict[str, dict[str, Any]] | None = None,
         audit_hook: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.retry_statuses = set(retry_statuses)
@@ -489,6 +490,7 @@ class BackendProxy:
         self._oauth_runtime: dict[str, OAuthRuntimeState] = {}
         self._oauth_refresh_locks: dict[str, asyncio.Lock] = {}
         self._rate_limited_until: dict[str, float] = {}
+        self._model_registry = model_registry or {}
         self._audit_hook = audit_hook
         if accounts:
             self.accounts = [account for account in accounts if account.enabled]
@@ -506,6 +508,35 @@ class BackendProxy:
 
     async def close(self) -> None:
         await self.client.aclose()
+
+    @staticmethod
+    def _split_model_ref(model: str) -> tuple[str | None, str]:
+        normalized = model.strip()
+        if not normalized:
+            return None, ""
+        if "/" not in normalized:
+            return None, normalized
+        provider, model_id = normalized.split("/", 1)
+        provider = provider.strip()
+        model_id = model_id.strip()
+        if not provider or not model_id:
+            return None, normalized
+        return provider, model_id
+
+    def _resolve_upstream_model(self, account: BackendAccount, model: str) -> str:
+        metadata = self._model_registry.get(model)
+        if isinstance(metadata, dict):
+            metadata_id = metadata.get("id")
+            if isinstance(metadata_id, str) and metadata_id.strip():
+                return metadata_id.strip()
+
+        # Fallback for metadata maps that only key by provider/modelId with empty metadata.
+        provider, model_id = self._split_model_ref(model)
+        if provider and provider.lower() == account.provider.strip().lower():
+            return model_id
+
+        # Backward-compatible fallback for plain model ids.
+        return account.upstream_model(model)
 
     def _audit(self, event: str, **fields: Any) -> None:
         if self._audit_hook is None:
@@ -1403,7 +1434,7 @@ class BackendProxy:
                             provider=account.provider,
                             base_url=account.base_url,
                             model=model,
-                            upstream_model=account.upstream_model(model),
+                            upstream_model=self._resolve_upstream_model(account, model),
                             auth_mode=account.auth_mode,
                             organization=account.organization,
                             project=account.project,
