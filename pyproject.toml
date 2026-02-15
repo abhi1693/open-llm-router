@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-model-router"
+version = "0.1.0"
+description = "OpenAI-compatible smart model router for self-hosted model backends"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "pyjwt[crypto]>=2.10.1",
+    "pydantic-settings>=2.6.0",
+    "pyyaml>=6.0.2",
+    "uvicorn>=0.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[project.scripts]
+smart-model-router = "smart_model_router.main:run"
+smr-config = "smart_model_router.config_cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["smart_model_router*"]
+exclude = ["config*"]

@@ -1,0 +1,3 @@
+[console_scripts]
+smart-model-router = smart_model_router.main:run
+smr-config = smart_model_router.config_cli:main

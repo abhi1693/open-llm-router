@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.idea/
+logs/
+config/router.yaml
+*.pyc
+*.pyo
+*.pyd
+.DS_Store

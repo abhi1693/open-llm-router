@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: smart-model-router
+Version: 0.1.0
+Summary: OpenAI-compatible smart model router for self-hosted model backends
+Requires-Python: >=3.12
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: pyjwt[crypto]>=2.10.1
+Requires-Dist: pydantic-settings>=2.6.0
+Requires-Dist: pyyaml>=6.0.2
+Requires-Dist: uvicorn>=0.32.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"
