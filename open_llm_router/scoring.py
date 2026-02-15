@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from math import exp
 from typing import Any
 
-from smart_model_router.config import LearnedRoutingConfig, ModelProfile
+from open_llm_router.config import LearnedRoutingConfig, ModelProfile
 
 COMPLEXITY_SCORES = {
     "low": 0.25,

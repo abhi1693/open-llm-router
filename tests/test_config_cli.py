@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from smart_model_router.config_cli import main
+from open_llm_router.config_cli import main
 
 
 def _load(path: Path) -> dict:
@@ -209,7 +209,7 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "smart_model_router.config_cli._run_chatgpt_oauth_login_flow",
+        "open_llm_router.config_cli._run_chatgpt_oauth_login_flow",
         _fake_login,
     )
 
@@ -246,7 +246,7 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
 
 
 def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch):
-    import smart_model_router.config_cli as config_cli
+    import open_llm_router.config_cli as config_cli
 
     class _DummyServer:
         def __init__(self) -> None:
@@ -313,7 +313,7 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch
 
 
 def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(monkeypatch):
-    import smart_model_router.config_cli as config_cli
+    import open_llm_router.config_cli as config_cli
 
     class _DummyServer:
         def __init__(self) -> None:

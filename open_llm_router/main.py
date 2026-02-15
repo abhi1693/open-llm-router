@@ -7,15 +7,15 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from smart_model_router.audit import JsonlAuditLogger
-from smart_model_router.auth import AuthConfigurationError, Authenticator
-from smart_model_router.config import RoutingConfig, load_routing_config
-from smart_model_router.proxy import BackendProxy
-from smart_model_router.router_engine import SmartModelRouter
-from smart_model_router.settings import get_settings
+from open_llm_router.audit import JsonlAuditLogger
+from open_llm_router.auth import AuthConfigurationError, Authenticator
+from open_llm_router.config import RoutingConfig, load_routing_config
+from open_llm_router.proxy import BackendProxy
+from open_llm_router.router_engine import SmartModelRouter
+from open_llm_router.settings import get_settings
 
 app = FastAPI(
-    title="Smart Model Router",
+    title="Open-LLM Router",
     description="OpenAI-compatible API router with model auto-selection and fallback.",
     version="0.1.0",
 )
@@ -45,7 +45,7 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
                 "id": "auto",
                 "object": "model",
                 "created": 0,
-                "owned_by": "smart-model-router",
+                "owned_by": "open-llm-router",
             }
         ],
     }
@@ -259,7 +259,7 @@ async def auth_config_handler(_: Request, exc: AuthConfigurationError):
 def run() -> None:
     import uvicorn
 
-    uvicorn.run("smart_model_router.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("open_llm_router.main:app", host="0.0.0.0", port=8000, reload=False)
 
 
 if __name__ == "__main__":

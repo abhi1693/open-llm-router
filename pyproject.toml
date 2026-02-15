@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "smart-model-router"
+name = "open-llm-router"
 version = "0.1.0"
-description = "OpenAI-compatible smart model router for self-hosted model backends"
+description = "OpenAI-compatible Open LLM router for self-hosted model backends"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -22,8 +22,8 @@ dev = [
 ]
 
 [project.scripts]
-smart-model-router = "smart_model_router.main:run"
-smr-config = "smart_model_router.config_cli:main"
+open-llm-router = "open_llm_router.main:run"
+smr-config = "open_llm_router.config_cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -35,5 +35,5 @@ package = true
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["smart_model_router*"]
+include = ["open_llm_router*"]
 exclude = ["config*"]

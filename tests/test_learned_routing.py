@@ -1,5 +1,5 @@
-from smart_model_router.config import RoutingConfig
-from smart_model_router.router_engine import SmartModelRouter
+from open_llm_router.config import RoutingConfig
+from open_llm_router.router_engine import SmartModelRouter
 
 
 def _router() -> SmartModelRouter:

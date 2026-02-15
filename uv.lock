@@ -466,7 +466,7 @@ wheels = [
 ]
 
 [[package]]
-name = "smart-model-router"
+name = "open-llm-router"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

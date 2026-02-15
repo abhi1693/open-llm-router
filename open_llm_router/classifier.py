@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from smart_model_router.config import ComplexityConfig
+from open_llm_router.config import ComplexityConfig
 
 CODE_HINTS = (
     "code",

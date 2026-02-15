@@ -8,3 +8,4 @@ config/router.yaml
 *.pyo
 *.pyd
 .DS_Store
+*.egg-info

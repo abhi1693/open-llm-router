@@ -15,8 +15,8 @@ from fastapi import status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.datastructures import Headers
 
-from smart_model_router.config import BackendAccount
-from smart_model_router.router_engine import RouteDecision
+from open_llm_router.config import BackendAccount
+from open_llm_router.router_engine import RouteDecision
 
 HOP_BY_HOP_RESPONSE_HEADERS = {
     "connection",

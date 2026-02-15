@@ -1,4 +1,4 @@
-# Smart Model Router
+# Open-LLM Router
 
 OpenAI-compatible FastAPI gateway that auto-selects a model per request using routing rules (task type + complexity), then proxies to your backend (for example OpenClaw/Ollama-compatible endpoints).
 
@@ -33,7 +33,7 @@ export OAUTH_JWKS_URL="https://your-oauth-issuer/.well-known/jwks.json"
 Run:
 
 ```bash
-smart-model-router
+open-llm-router
 ```
 
 Server starts at `http://localhost:8000`.

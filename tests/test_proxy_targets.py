@@ -7,14 +7,14 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from starlette.datastructures import Headers
 
-from smart_model_router.config import BackendAccount
-from smart_model_router.proxy import (
+from open_llm_router.config import BackendAccount
+from open_llm_router.proxy import (
     BackendProxy,
     _build_upstream_headers,
     _parse_retry_after_seconds,
     _prepare_upstream_request,
 )
-from smart_model_router.router_engine import RouteDecision
+from open_llm_router.router_engine import RouteDecision
 
 
 def _decision(selected: str, fallbacks: list[str]) -> RouteDecision:

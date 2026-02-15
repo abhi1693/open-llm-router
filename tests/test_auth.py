@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from fastapi.testclient import TestClient
 
-from smart_model_router.main import app
-from smart_model_router.settings import get_settings
+from open_llm_router.main import app
+from open_llm_router.settings import get_settings
 
 
 def _set_default_test_env(monkeypatch) -> None:
@@ -58,7 +58,7 @@ def test_v1_models_accepts_valid_oauth_token(monkeypatch):
         {
             "sub": "user-123",
             "iss": "https://chatgpt.com",
-            "aud": "smart-router",
+            "aud": "open-llm-router",
             "scope": "openid profile",
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(minutes=5)).timestamp()),
@@ -73,7 +73,7 @@ def test_v1_models_accepts_valid_oauth_token(monkeypatch):
         INGRESS_API_KEYS="",
         OAUTH_ENABLED="true",
         OAUTH_ISSUER="https://chatgpt.com",
-        OAUTH_AUDIENCE="smart-router",
+        OAUTH_AUDIENCE="open-llm-router",
         OAUTH_ALGORITHMS="HS256",
         OAUTH_JWT_SECRET=secret,
     ) as client:

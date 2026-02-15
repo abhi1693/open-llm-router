@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from smart_model_router.classifier import classify_request
-from smart_model_router.config import ModelProfile, RoutingConfig
-from smart_model_router.scoring import build_routing_features, score_model
+from open_llm_router.classifier import classify_request
+from open_llm_router.config import ModelProfile, RoutingConfig
+from open_llm_router.scoring import build_routing_features, score_model
 
 
 @dataclass(slots=True)
