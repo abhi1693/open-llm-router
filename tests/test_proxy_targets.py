@@ -17,10 +17,14 @@ from open_llm_router.proxy import (
 from open_llm_router.router_engine import RouteDecision
 
 
-def _decision(selected: str, fallbacks: list[str]) -> RouteDecision:
+def _decision(
+    selected: str,
+    fallbacks: list[str],
+    source: str = "auto",
+) -> RouteDecision:
     return RouteDecision(
         selected_model=selected,
-        source="auto",
+        source=source,
         task="general",
         complexity="low",
         requested_model="auto",
@@ -66,6 +70,34 @@ def test_build_targets_across_accounts_and_fallback_models():
         "acct-a:m2",
         "acct-b:m3",
     ]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_request_source_ignores_fallbacks():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-a",
+                provider="openai",
+                base_url="http://provider-a",
+                api_key="key-a",
+                models=["m1", "m2"],
+            ),
+            BackendAccount(
+                name="acct-b",
+                provider="openai",
+                base_url="http://provider-b",
+                api_key="key-b",
+                models=["m1", "m3"],
+            ),
+        ],
+    )
+    targets = proxy._build_candidate_targets(_decision("m1", ["m2", "m3"], source="request"))
+    assert [target.label for target in targets] == ["acct-a:m1", "acct-b:m1"]
     asyncio.run(proxy.close())
 
 

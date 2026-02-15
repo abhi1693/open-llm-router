@@ -11,7 +11,7 @@ from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
 from open_llm_router.config import RoutingConfig, load_routing_config
 from open_llm_router.proxy import BackendProxy
-from open_llm_router.router_engine import SmartModelRouter
+from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
 from open_llm_router.settings import get_settings
 
 app = FastAPI(
@@ -158,7 +158,24 @@ async def _proxy_json_request(request: Request, path: str):
         or request.headers.get("x-correlation-id")
         or uuid4().hex[:12]
     )
-    route_decision = router.decide(payload=payload, endpoint=path)
+    try:
+        route_decision = router.decide(payload=payload, endpoint=path)
+    except InvalidModelError as exc:
+        logger.info(
+            "invalid_model request_id=%s requested_model=%s available_models=%d",
+            request_id,
+            exc.requested_model,
+            len(exc.available_models),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "type": "invalid_model",
+                "message": str(exc),
+                "requested_model": exc.requested_model,
+                "available_models": sorted(exc.available_models),
+            },
+        ) from exc
     logger.info(
         (
             "route_decision request_id=%s path=%s source=%s task=%s complexity=%s "

@@ -1385,9 +1385,12 @@ class BackendProxy:
         return JSONResponse(status_code=upstream.status_code, content=body, headers=response_headers)
 
     def _build_candidate_targets(self, route_decision: RouteDecision) -> list[BackendTarget]:
-        model_chain = _dedupe_preserving_order(
-            [route_decision.selected_model, *route_decision.fallback_models]
-        )
+        if route_decision.source == "request":
+            model_chain = [route_decision.selected_model]
+        else:
+            model_chain = _dedupe_preserving_order(
+                [route_decision.selected_model, *route_decision.fallback_models]
+            )
         targets: list[BackendTarget] = []
         for model in model_chain:
             for account in self.accounts:

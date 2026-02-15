@@ -8,6 +8,16 @@ from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.scoring import build_routing_features, score_model
 
 
+class InvalidModelError(ValueError):
+    def __init__(self, requested_model: str, available_models: list[str]):
+        self.requested_model = requested_model
+        self.available_models = available_models
+        super().__init__(
+            f"Requested model '{requested_model}' is not configured. "
+            "Use 'auto' or a configured model."
+        )
+
+
 @dataclass(slots=True)
 class RouteDecision:
     selected_model: str
@@ -22,12 +32,34 @@ class RouteDecision:
     decision_trace: dict[str, Any] = field(default_factory=dict)
 
 
+__all__ = [
+    "InvalidModelError",
+    "RouteDecision",
+    "SmartModelRouter",
+]
+
+
 class SmartModelRouter:
     def __init__(self, config: RoutingConfig):
         self.config = config
 
+    @staticmethod
+    def _normalize_requested_model(requested_model: Any) -> str | None:
+        if requested_model is None:
+            return None
+        normalized = str(requested_model).strip()
+        return normalized or None
+
+    def _require_known_model(self, requested_model: str) -> None:
+        available_models = self.config.available_models()
+        if requested_model not in available_models:
+            raise InvalidModelError(
+                requested_model=requested_model,
+                available_models=available_models,
+            )
+
     def decide(self, payload: dict[str, Any], endpoint: str) -> RouteDecision:
-        requested_model = payload.get("model")
+        requested_model = self._normalize_requested_model(payload.get("model"))
         if self.config.should_auto_route(requested_model):
             task, complexity, signals = classify_request(
                 payload=payload,
@@ -73,6 +105,7 @@ class SmartModelRouter:
                 )
             source = "auto"
         else:
+            self._require_known_model(requested_model=requested_model)
             task = "explicit"
             complexity = "n/a"
             signals = {}

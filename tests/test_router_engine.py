@@ -1,5 +1,7 @@
 from open_llm_router.config import RoutingConfig
-from open_llm_router.router_engine import SmartModelRouter
+import pytest
+
+from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
 
 
 def _router() -> SmartModelRouter:
@@ -38,13 +40,25 @@ def _router() -> SmartModelRouter:
 def test_respects_explicit_model():
     router = _router()
     payload = {
-        "model": "my-custom-model",
+        "model": "code-14b",
         "messages": [{"role": "user", "content": "hello"}],
     }
     decision = router.decide(payload, "/v1/chat/completions")
-    assert decision.selected_model == "my-custom-model"
+    assert decision.selected_model == "code-14b"
     assert decision.source == "request"
     assert decision.task == "explicit"
+
+
+def test_rejects_unknown_explicit_model():
+    router = _router()
+    payload = {
+        "model": "my-custom-model",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    with pytest.raises(InvalidModelError) as exc:
+        router.decide(payload, "/v1/chat/completions")
+    assert exc.value.requested_model == "my-custom-model"
+    assert "not configured" in str(exc.value)
 
 
 def test_routes_auto_coding_request():
