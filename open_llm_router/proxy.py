@@ -952,18 +952,30 @@ class BackendProxy:
 
     @staticmethod
     async def _iter_sse_data_json(upstream: httpx.Response) -> AsyncIterator[dict[str, Any]]:
-        async for line in upstream.aiter_lines():
-            if not line or not line.startswith("data:"):
-                continue
-            payload = line[5:].strip()
-            if not payload or payload == "[DONE]":
-                continue
+        try:
+            async for line in upstream.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                try:
+                    parsed = json.loads(payload)
+                except ValueError:
+                    continue
+                if isinstance(parsed, dict):
+                    yield parsed
+        except httpx.RequestError as exc:
+            upstream_url = "<unknown>"
             try:
-                parsed = json.loads(payload)
-            except ValueError:
-                continue
-            if isinstance(parsed, dict):
-                yield parsed
+                upstream_url = str(upstream.request.url)
+            except Exception:
+                pass
+            logger.warning(
+                "proxy_upstream_stream_error url=%s error=%s",
+                upstream_url,
+                exc,
+            )
 
     @staticmethod
     def _chat_completion_chunk(
