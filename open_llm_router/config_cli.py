@@ -497,6 +497,11 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 
 def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
+    if args.provider != "openai-codex":
+        raise ValueError(
+            "login-chatgpt only supports --provider openai-codex."
+        )
+
     accounts = data["accounts"]
     account = _find_account(accounts, args.account)
     if account is None:
@@ -685,7 +690,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run ChatGPT/Codex OAuth login and save tokens into an account.",
     )
     login_chatgpt.add_argument("--account", required=True)
-    login_chatgpt.add_argument("--provider", required=True)
+    login_chatgpt.add_argument("--provider", required=True, choices=["openai-codex"])
     login_chatgpt.add_argument("--base-url", default="https://chatgpt.com/backend-api")
     login_chatgpt.add_argument("--models", default="")
     login_chatgpt.add_argument("--set-default", action="store_true")
