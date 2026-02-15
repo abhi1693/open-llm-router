@@ -73,6 +73,35 @@ def test_build_targets_across_accounts_and_fallback_models():
     asyncio.run(proxy.close())
 
 
+def test_build_targets_resolves_provider_qualified_model_to_matching_account():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-a",
+                models=["openai/gpt-5.2", "gpt-5.2-codex"],
+            ),
+            BackendAccount(
+                name="acct-codex",
+                provider="openai-codex",
+                base_url="http://provider-codex",
+                api_key="key-b",
+                models=["gpt-5.2"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(_decision("openai/gpt-5.2", []))
+    assert [target.label for target in targets] == ["acct-openai:gpt-5.2"]
+    asyncio.run(proxy.close())
+
+
 def test_build_targets_request_source_ignores_fallbacks():
     proxy = BackendProxy(
         base_url="http://legacy",

@@ -474,10 +474,15 @@ def cmd_add_model(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 def cmd_set_route(args: argparse.Namespace, data: dict[str, Any]) -> str:
     route = data["task_routes"].setdefault(args.task, {})
-    route[args.tier] = args.model
-    _add_models(data, [args.model])
+    models = _parse_csv(args.model)
+    if not models:
+        raise ValueError("At least one model is required for --model.")
+    route[args.tier] = models
+    _add_models(data, models)
     _ensure_default_model(data)
-    return f"Route {args.task}.{args.tier} -> {args.model}"
+    if len(models) == 1:
+        return f"Route {args.task}.{args.tier} -> {models[0]}"
+    return f"Route {args.task}.{args.tier} -> {', '.join(models)}"
 
 
 def cmd_set_fallbacks(args: argparse.Namespace, data: dict[str, Any]) -> str:
@@ -618,7 +623,11 @@ def _build_parser() -> argparse.ArgumentParser:
     login_chatgpt.set_defaults(handler=cmd_login_chatgpt, mutates=True)
 
     add_model = subparsers.add_parser("add-model", help="Add model globally and optionally to one account.")
-    add_model.add_argument("--model", required=True)
+    add_model.add_argument(
+        "--model",
+        required=True,
+        help="Model id (e.g. gpt-5.2) or provider-qualified model (provider/modelId).",
+    )
     add_model.add_argument("--account")
     add_model.add_argument("--set-default", action="store_true")
     add_model.set_defaults(handler=cmd_add_model, mutates=True)
@@ -626,16 +635,31 @@ def _build_parser() -> argparse.ArgumentParser:
     set_route = subparsers.add_parser("set-route", help="Set task routing tier model.")
     set_route.add_argument("--task", required=True)
     set_route.add_argument("--tier", required=True, choices=["low", "medium", "high", "xhigh", "default"])
-    set_route.add_argument("--model", required=True)
+    set_route.add_argument(
+        "--model",
+        required=True,
+        help=(
+            "Comma-separated model list (single value is supported). "
+            "Each value may be modelId or provider/modelId."
+        ),
+    )
     set_route.set_defaults(handler=cmd_set_route, mutates=True)
 
     set_fallbacks = subparsers.add_parser("set-fallbacks", help="Set or append fallback models.")
-    set_fallbacks.add_argument("--models", required=True, help="Comma-separated model list.")
+    set_fallbacks.add_argument(
+        "--models",
+        required=True,
+        help="Comma-separated model list. Model ids may be plain or provider/modelId.",
+    )
     set_fallbacks.add_argument("--append", action="store_true")
     set_fallbacks.set_defaults(handler=cmd_set_fallbacks, mutates=True)
 
     set_profile = subparsers.add_parser("set-profile", help="Set model profile fields.")
-    set_profile.add_argument("--model", required=True)
+    set_profile.add_argument(
+        "--model",
+        required=True,
+        help="Model id (e.g. gpt-5.2) or provider-qualified model (provider/modelId).",
+    )
     set_profile.add_argument("--quality-bias", type=float)
     set_profile.add_argument("--quality-sensitivity", type=float)
     set_profile.add_argument("--cost-input-per-1k", type=float)
@@ -648,7 +672,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "set-candidates", help="Set learned-routing candidate models for a task."
     )
     set_candidates.add_argument("--task", required=True)
-    set_candidates.add_argument("--models", required=True, help="Comma-separated model list.")
+    set_candidates.add_argument(
+        "--models",
+        required=True,
+        help="Comma-separated model list. Model ids may be plain or provider/modelId.",
+    )
     set_candidates.add_argument("--enable", action="store_true")
     set_candidates.set_defaults(handler=cmd_set_candidates, mutates=True)
 

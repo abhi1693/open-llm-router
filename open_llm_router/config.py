@@ -30,22 +30,54 @@ class LearnedRoutingConfig(BaseModel):
 
 
 class TaskRoute(BaseModel):
-    low: str | None = None
-    medium: str | None = None
-    high: str | None = None
-    xhigh: str | None = None
-    default: str | None = None
+    low: str | list[str] | None = None
+    medium: str | list[str] | None = None
+    high: str | list[str] | None = None
+    xhigh: str | list[str] | None = None
+    default: str | list[str] | None = None
 
-    def pick(self, complexity: str) -> str | None:
+    @staticmethod
+    def _coerce_models(value: str | list[str] | None) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            normalized = value.strip()
+            return [normalized] if normalized else []
+        if not isinstance(value, list):
+            return []
+        cleaned = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            item = item.strip()
+            if item:
+                cleaned.append(item)
+        return cleaned
+
+    @staticmethod
+    def _pick_first_non_empty(
+        *candidates: str | list[str] | None
+    ) -> list[str]:
+        for candidate in candidates:
+            models = TaskRoute._coerce_models(candidate)
+            if models:
+                return models
+        return []
+
+    def pick(self, complexity: str) -> list[str]:
         if complexity == "low":
-            return self.low or self.medium or self.high or self.xhigh or self.default
+            return self._pick_first_non_empty(
+                self.low, self.medium, self.high, self.xhigh, self.default
+            )
         if complexity == "medium":
-            return self.medium or self.high or self.xhigh or self.default
+            return self._pick_first_non_empty(
+                self.medium, self.high, self.xhigh, self.default
+            )
         if complexity == "high":
-            return self.high or self.xhigh or self.default
+            return self._pick_first_non_empty(self.high, self.xhigh, self.default)
         if complexity == "xhigh":
-            return self.xhigh or self.high or self.default
-        return self.default or self.high or self.xhigh
+            return self._pick_first_non_empty(self.xhigh, self.high, self.default)
+        return self._pick_first_non_empty(self.default, self.high, self.xhigh)
 
 
 class BackendAccount(BaseModel):
@@ -73,7 +105,26 @@ class BackendAccount(BaseModel):
     models: list[str] = Field(default_factory=list)
     enabled: bool = True
 
+    @staticmethod
+    def _split_model_ref(model: str) -> tuple[str | None, str]:
+        normalized = model.strip()
+        if not normalized:
+            return None, ""
+        if "/" not in normalized:
+            return None, normalized
+        provider, model_id = normalized.split("/", 1)
+        provider = provider.strip()
+        model_id = model_id.strip()
+        if not provider or not model_id:
+            return None, normalized
+        return provider, model_id
+
     def supports_model(self, model: str) -> bool:
+        provider, model_id = self._split_model_ref(model)
+        if provider:
+            if self.provider.strip().lower() != provider.lower():
+                return False
+            return not self.models or model_id in self.models or model in self.models
         return not self.models or model in self.models
 
     @staticmethod
@@ -175,13 +226,13 @@ class RoutingConfig(BaseModel):
             return True
         return requested_model.strip().lower() == "auto"
 
-    def route_for(self, task: str, complexity: str) -> str:
+    def route_for(self, task: str, complexity: str) -> list[str]:
         route = self.task_routes.get(task) or self.task_routes.get("general")
         if route:
-            candidate = route.pick(complexity)
-            if candidate:
-                return candidate
-        return self.default_model
+            candidates = route.pick(complexity)
+            if candidates:
+                return candidates
+        return [self.default_model]
 
     def available_models(self) -> list[str]:
         discovered: set[str] = set(self.models)
@@ -190,9 +241,11 @@ class RoutingConfig(BaseModel):
         for account in self.accounts:
             discovered.update(account.models)
         for route in self.task_routes.values():
-            for value in (route.low, route.medium, route.high, route.xhigh, route.default):
-                if value:
-                    discovered.add(value)
+            discovered.update(TaskRoute._coerce_models(route.low))
+            discovered.update(TaskRoute._coerce_models(route.medium))
+            discovered.update(TaskRoute._coerce_models(route.high))
+            discovered.update(TaskRoute._coerce_models(route.xhigh))
+            discovered.update(TaskRoute._coerce_models(route.default))
         return sorted(discovered)
 
 

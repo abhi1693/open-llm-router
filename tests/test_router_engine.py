@@ -61,6 +61,26 @@ def test_rejects_unknown_explicit_model():
     assert "not configured" in str(exc.value)
 
 
+def test_respects_explicit_provider_qualified_model():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "general-14b",
+            "models": ["openai/codex-1", "general-14b"],
+            "complexity": {"low_max_chars": 100, "medium_max_chars": 500, "high_max_chars": 2000},
+            "task_routes": {},
+            "fallback_models": ["general-14b", "general-32b"],
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "openai/codex-1",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "openai/codex-1"
+    assert decision.source == "request"
+
+
 def test_routes_auto_coding_request():
     router = _router()
     payload = {
@@ -76,6 +96,37 @@ def test_routes_auto_coding_request():
     assert decision.source == "auto"
     assert decision.task == "coding"
     assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
+
+
+def test_routes_auto_coding_request_prefers_multi_model_route_order():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "general-14b",
+            "complexity": {"low_max_chars": 100, "medium_max_chars": 500, "high_max_chars": 2000},
+            "task_routes": {
+                "coding": {
+                    "low": ["code-7b", "code-14b"],
+                    "medium": ["code-14b", "code-32b"],
+                    "high": ["code-32b"],
+                    "xhigh": ["codex-1"],
+                },
+            },
+            "fallback_models": ["general-14b", "general-32b"],
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Debug this Python function and fix the bug in my SQL query.",
+            }
+        ],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "code-7b"
+    assert decision.fallback_models == ["code-14b", "general-14b", "general-32b"]
 
 
 def test_ignores_openclaw_style_system_preamble_for_simple_user_task():

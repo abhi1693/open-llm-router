@@ -60,8 +60,82 @@ def test_cli_add_account_and_route(tmp_path):
     assert config["accounts"][0]["name"] == "openclaw-a"
     assert config["accounts"][0]["provider"] == "openai"
     assert "qwen2.5-coder-14b-instruct" in config["accounts"][0]["models"]
-    assert config["task_routes"]["coding"]["xhigh"] == "codex-1"
+    assert config["task_routes"]["coding"]["xhigh"] == ["codex-1"]
     assert "codex-1" in config["models"]
+
+
+def test_cli_set_route_accepts_multiple_models(tmp_path):
+    config_path = tmp_path / "router.yaml"
+    assert (
+        main(
+            [
+                "--path",
+                str(config_path),
+                "add-account",
+                "--name",
+                "acct-a",
+                "--provider",
+                "openai",
+                "--base-url",
+                "http://localhost:11434",
+                "--api-key-env",
+                "BACKEND_API_KEY",
+                "--models",
+                "m-1,m-2",
+                "--set-default",
+            ]
+        )
+        == 0
+    )
+
+    assert (
+        main(
+            [
+                "--path",
+                str(config_path),
+                "set-route",
+                "--task",
+                "coding",
+                "--tier",
+                "medium",
+                "--model",
+                "m-1,m-2,m-3",
+            ]
+        )
+        == 0
+    )
+
+    config = _load(config_path)
+    assert config["task_routes"]["coding"]["medium"] == ["m-1", "m-2", "m-3"]
+
+
+def test_cli_set_route_accepts_provider_qualified_models(tmp_path):
+    config_path = tmp_path / "router.yaml"
+
+    assert (
+        main(
+            [
+                "--path",
+                str(config_path),
+                "set-route",
+                "--task",
+                "coding",
+                "--tier",
+                "xhigh",
+                "--model",
+                "openai/gpt-5.2,openai-codex/gpt-5.2-codex",
+            ]
+        )
+        == 0
+    )
+
+    config = _load(config_path)
+    assert config["task_routes"]["coding"]["xhigh"] == [
+        "openai/gpt-5.2",
+        "openai-codex/gpt-5.2-codex",
+    ]
+    assert "openai/gpt-5.2" in config["models"]
+    assert "openai-codex/gpt-5.2-codex" in config["models"]
 
 
 def test_cli_set_profile_candidates_and_learned_options(tmp_path):

@@ -71,24 +71,58 @@ Routing behavior is driven by `config/router.yaml` (path set by `ROUTING_CONFIG_
 Minimum required shape:
 
 ```yaml
-default_model: gpt-5.2
+default_model: openai-codex/gpt-5.2
 models:
-  - gpt-5.2
+  - openai-codex/gpt-5.2
 accounts:
   - name: default
-    provider: openai
+    provider: openai-codex
     base_url: http://localhost:11434
     enabled: true
     auth_mode: api_key
     models:
-      - gpt-5.2
+      - openai-codex/gpt-5.2
 task_routes:
   general:
-    low: gpt-5.2
-    medium: gpt-5.2
-    high: gpt-5.2
+    low:
+      - openai-codex/gpt-5.2
+    medium:
+      - openai-codex/gpt-5.2
+    high:
+      - openai-codex/gpt-5.2
+  coding:
+    low:
+      - openai-codex/gpt-5.2-codex
+      - openai-codex/gpt-5.3-codex-spark
+    medium:
+      - openai-codex/gpt-5.2-codex
+    high:
+      - openai-codex/gpt-5.3-codex-spark
+    default:
+      - openai-codex/gpt-5.2
+  thinking:
+    low:
+      - openai-codex/gpt-5.2
+    medium:
+      - openai-codex/gpt-5.2
+    high:
+      - openai-codex/gpt-5.3
+    xhigh:
+      - openai-codex/gpt-5.3
+  image:
+    default:
+      - openai-codex/gpt-5.2
+  instruction_following:
+    low:
+      - openai-codex/gpt-5.2
+    medium:
+      - openai-codex/gpt-5.2
+    high:
+      - openai-codex/gpt-5.2
+    xhigh:
+      - openai-codex/gpt-5.3
 fallback_models:
-  - gpt-5.2
+  - openai-codex/gpt-5.2
 retry_statuses:
   - 429
   - 500
@@ -97,11 +131,13 @@ retry_statuses:
   - 504
 ```
 
+Model identifiers in this config can be either plain model IDs (for example, `gpt-5.2`) or provider-qualified IDs (`openai-codex/gpt-5.2`).
+
 Use the config CLI to edit routing without touching YAML manually:
 
 ```bash
-smr-config --path config/router.yaml add-account --name default --provider openai --base-url http://localhost:11434 \
-  --api-key-env BACKEND_API_KEY --models gpt-5.2
+smr-config --path config/router.yaml add-account --name default --provider openai-codex --base-url http://localhost:11434 \
+  --api-key-env BACKEND_API_KEY --models openai-codex/gpt-5.2
 ```
 
 ## Supported routes

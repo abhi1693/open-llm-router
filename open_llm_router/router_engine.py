@@ -66,14 +66,16 @@ class SmartModelRouter:
                 endpoint=endpoint,
                 complexity_cfg=self.config.complexity,
             )
-            routed_model = self.config.route_for(task=task, complexity=complexity)
-            default_chain = _dedupe_preserving_order([routed_model, *self.config.fallback_models])
+            routed_models = self.config.route_for(task=task, complexity=complexity)
+            default_chain = _dedupe_preserving_order(
+                [*routed_models, *self.config.fallback_models]
+            )
             decision_trace: dict[str, Any] = {
                 "auto": True,
                 "routing_mode": "rule_chain",
                 "route_task": task,
                 "route_complexity": complexity,
-                "route_model": routed_model,
+                "route_models": list(routed_models),
                 "fallback_config": list(self.config.fallback_models),
                 "default_chain": list(default_chain),
             }
