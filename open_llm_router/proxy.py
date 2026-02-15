@@ -453,6 +453,65 @@ def _prepare_codex_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]
     return codex_payload
 
 
+def _drop_none_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned: dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None:
+                continue
+            cleaned_item = _drop_none_fields(item)
+            if cleaned_item is None:
+                continue
+            cleaned[key] = cleaned_item
+        return cleaned
+    if isinstance(value, list):
+        return [_drop_none_fields(item) for item in value if item is not None]
+    return value
+
+
+def _prepare_gemini_chat_payload(payload: dict[str, Any], stream: bool) -> dict[str, Any]:
+    allowed_fields = {
+        "model",
+        "messages",
+        "temperature",
+        "top_p",
+        "n",
+        "stream",
+        "stop",
+        "max_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+        "logit_bias",
+        "user",
+        "response_format",
+        "seed",
+        "tools",
+        "tool_choice",
+        "functions",
+        "function_call",
+    }
+    prepared: dict[str, Any] = {
+        "model": str(payload.get("model", "")).strip(),
+        "stream": stream,
+    }
+    for field in allowed_fields:
+        if field in {"model", "stream"}:
+            continue
+        if field not in payload:
+            continue
+        value = payload.get(field)
+        if value is None:
+            continue
+        prepared[field] = value
+
+    # Normalize max_output_tokens to OpenAI chat-completions max_tokens for Gemini compatibility.
+    max_output_tokens = payload.get("max_output_tokens")
+    if "max_tokens" not in prepared and isinstance(max_output_tokens, int):
+        prepared["max_tokens"] = max_output_tokens
+
+    return _drop_none_fields(prepared)
+
+
 def _prepare_upstream_request(
     path: str,
     payload: dict[str, Any],
@@ -469,6 +528,13 @@ def _prepare_upstream_request(
             payload=_prepare_codex_payload(path, payload),
             stream=True,
             adapter=adapter,
+        )
+
+    if provider.strip().lower() == "gemini" and path == "/v1/chat/completions":
+        return UpstreamRequestSpec(
+            path=path,
+            payload=_prepare_gemini_chat_payload(payload=payload, stream=stream),
+            stream=stream,
         )
 
     return UpstreamRequestSpec(path=path, payload=payload, stream=stream)

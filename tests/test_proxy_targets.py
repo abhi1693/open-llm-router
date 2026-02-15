@@ -477,6 +477,35 @@ def test_prepare_upstream_request_maps_chat_tools_for_responses_api():
     assert prepared.payload["tool_choice"] == {"type": "function", "name": "list_files"}
 
 
+def test_prepare_upstream_request_sanitizes_gemini_chat_payload():
+    payload = {
+        "model": "gemini-2.5-flash",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+        "tool_choice": None,
+        "reasoning_effort": "high",
+        "parallel_tool_calls": True,
+        "max_output_tokens": 512,
+    }
+
+    prepared = _prepare_upstream_request(
+        path="/v1/chat/completions",
+        payload=payload,
+        provider="gemini",
+        stream=True,
+    )
+
+    assert prepared.path == "/v1/chat/completions"
+    assert prepared.stream is True
+    assert prepared.payload["model"] == "gemini-2.5-flash"
+    assert prepared.payload["messages"] == [{"role": "user", "content": "Hello"}]
+    assert prepared.payload["stream"] is True
+    assert prepared.payload["max_tokens"] == 512
+    assert "tool_choice" not in prepared.payload
+    assert "reasoning_effort" not in prepared.payload
+    assert "parallel_tool_calls" not in prepared.payload
+
+
 def test_parse_retry_after_seconds_numeric():
     headers = httpx.Headers({"Retry-After": "12"})
     assert _parse_retry_after_seconds(headers, default_seconds=30.0) == 12.0

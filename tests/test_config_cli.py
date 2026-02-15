@@ -281,6 +281,46 @@ def test_cli_add_oauth_account(tmp_path):
     assert account["base_url"] == "https://chatgpt.com/backend-api"
 
 
+def test_cli_add_gemini_api_key_account(tmp_path):
+    config_path = tmp_path / "router.yaml"
+
+    assert (
+        main(
+            [
+                "--path",
+                str(config_path),
+                "add-account",
+                "--name",
+                "gemini-work",
+                "--provider",
+                "gemini",
+                "--base-url",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "--api-key-env",
+                "GEMINI_API_KEY",
+                "--models",
+                "gemini-2.5-pro,gemini-2.5-flash",
+                "--set-default",
+            ]
+        )
+        == 0
+    )
+
+    config = _load(config_path)
+    account = config["accounts"][0]
+    assert account["name"] == "gemini-work"
+    assert account["provider"] == "gemini"
+    assert account["auth_mode"] == "api_key"
+    assert account["api_key_env"] == "GEMINI_API_KEY"
+    assert "gemini/gemini-2.5-pro" in account["models"]
+    assert "gemini/gemini-2.5-flash" in account["models"]
+    assert "gemini/gemini-2.5-pro" in config["models"]
+    assert "gemini/gemini-2.5-flash" in config["models"]
+    assert config["models"]["gemini/gemini-2.5-pro"]["id"] == "gemini-2.5-pro"
+    assert config["models"]["gemini/gemini-2.5-flash"]["id"] == "gemini-2.5-flash"
+    assert config["default_model"] == "gemini/gemini-2.5-pro"
+
+
 def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
     config_path = tmp_path / "router.yaml"
 

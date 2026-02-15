@@ -141,6 +141,19 @@ smr-config --path config/router.yaml add-account --name default --provider opena
   --api-key-env BACKEND_API_KEY --models openai-codex/gpt-5.2
 ```
 
+Gemini (API key) can be configured as an OpenAI-compatible backend:
+
+```bash
+smr-config --path config/router.yaml add-account \
+  --name gemini-work \
+  --provider gemini \
+  --base-url https://generativelanguage.googleapis.com/v1beta/openai \
+  --api-key-env GEMINI_API_KEY \
+  --models gemini-2.5-pro,gemini-2.5-flash
+```
+
+This stores provider-qualified model keys like `gemini/gemini-2.5-pro` and defaults model metadata `id` to `gemini-2.5-pro`.
+
 ## Supported routes
 
 - `GET /health`
