@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     idempotency_ttl_seconds: int = 120
     idempotency_wait_timeout_seconds: float = 30.0
     redis_url: str | None = None
+    live_metrics_enabled: bool = True
+    live_metrics_ewma_alpha: float = 0.2
+    live_metrics_update_interval_seconds: float = 30.0
+    live_metrics_min_samples: int = 30
+    runtime_policy_max_adjustment_ratio: float = 0.15
+    router_runtime_overrides_path: str | None = "logs/router.runtime.overrides.yaml"
 
     model_config = SettingsConfigDict(
         env_prefix="",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -19,6 +19,15 @@ from open_llm_router.idempotency import (
     IdempotencyConfig,
     build_idempotency_store,
     build_idempotency_cache_key,
+)
+from open_llm_router.live_metrics import (
+    LiveMetricsCollector,
+    build_live_metrics_store,
+    snapshot_to_dict,
+)
+from open_llm_router.policy_updater import (
+    RuntimePolicyUpdater,
+    apply_runtime_overrides,
 )
 from open_llm_router.proxy import BackendProxy
 from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
@@ -94,11 +103,26 @@ def _build_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _runtime_policy_snapshot(config: RoutingConfig) -> dict[str, dict[str, float]]:
+    output: dict[str, dict[str, float]] = {}
+    for model, profile in sorted(config.model_profiles.items()):
+        output[model] = {
+            "latency_ms": float(profile.latency_ms),
+            "failure_rate": float(profile.failure_rate),
+        }
+    return output
+
+
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
     routing_config, explain_metadata = load_routing_config_with_metadata(
         settings.routing_config_path
+    )
+    apply_runtime_overrides(
+        path=settings.router_runtime_overrides_path,
+        routing_config=routing_config,
+        logger=logger,
     )
     authenticator = Authenticator(settings)
     app.state.settings = settings
@@ -111,6 +135,25 @@ async def startup() -> None:
         enabled=settings.router_audit_log_enabled,
     )
     app.state.audit_logger = audit_logger
+    live_metrics_store = build_live_metrics_store(
+        redis_url=settings.redis_url,
+        logger=logger,
+        alpha=settings.live_metrics_ewma_alpha,
+    )
+    live_metrics_collector = LiveMetricsCollector(
+        store=live_metrics_store,
+        logger=logger,
+        enabled=settings.live_metrics_enabled,
+    )
+    await live_metrics_collector.start()
+    app.state.live_metrics_store = live_metrics_store
+    app.state.live_metrics_collector = live_metrics_collector
+
+    def audit_event_hook(event: dict[str, Any]) -> None:
+        audit_logger.log(event)
+        live_metrics_collector.ingest(event)
+
+    app.state.audit_event_hook = audit_event_hook
     app.state.circuit_breakers = CircuitBreakerRegistry(
         CircuitBreakerConfig(
             enabled=settings.circuit_breaker_enabled,
@@ -139,13 +182,25 @@ async def startup() -> None:
         retry_statuses=routing_config.retry_statuses,
         accounts=routing_config.accounts,
         model_registry=routing_config.models,
-        audit_hook=audit_logger.log,
+        audit_hook=audit_event_hook,
         circuit_breakers=app.state.circuit_breakers,
     )
+    policy_updater = RuntimePolicyUpdater(
+        routing_config=routing_config,
+        metrics_store=live_metrics_store,
+        logger=logger,
+        enabled=settings.live_metrics_enabled,
+        interval_seconds=settings.live_metrics_update_interval_seconds,
+        min_samples=settings.live_metrics_min_samples,
+        max_adjustment_ratio=settings.runtime_policy_max_adjustment_ratio,
+        overrides_path=settings.router_runtime_overrides_path,
+    )
+    await policy_updater.start()
+    app.state.policy_updater = policy_updater
     logger.info(
         (
             "startup complete routing_config_path=%s accounts=%d models=%d default_model=%s "
-            "audit_log_enabled=%s audit_log_path=%s"
+            "audit_log_enabled=%s audit_log_path=%s live_metrics_enabled=%s"
         ),
         settings.routing_config_path,
         len(routing_config.accounts),
@@ -153,11 +208,20 @@ async def startup() -> None:
         routing_config.default_model,
         settings.router_audit_log_enabled,
         settings.router_audit_log_path,
+        settings.live_metrics_enabled,
     )
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    policy_updater: RuntimePolicyUpdater | None = getattr(app.state, "policy_updater", None)
+    if policy_updater is not None:
+        await policy_updater.stop()
+    live_metrics_collector: LiveMetricsCollector | None = getattr(
+        app.state, "live_metrics_collector", None
+    )
+    if live_metrics_collector is not None:
+        await live_metrics_collector.close()
     proxy: BackendProxy = app.state.backend_proxy
     await proxy.close()
     audit_logger: JsonlAuditLogger | None = getattr(app.state, "audit_logger", None)
@@ -175,6 +239,41 @@ async def health() -> dict[str, str]:
 async def models() -> dict[str, Any]:
     config: RoutingConfig = app.state.routing_config
     return _build_models_response(config)
+
+
+@app.get("/v1/router/live-metrics")
+async def router_live_metrics() -> dict[str, Any]:
+    collector: LiveMetricsCollector | None = getattr(app.state, "live_metrics_collector", None)
+    if collector is None:
+        raise HTTPException(status_code=503, detail="Live metrics collector is unavailable.")
+    snapshot = await collector.snapshot()
+    return {
+        "object": "router.live_metrics",
+        "dropped_events": collector.dropped_events,
+        "models": snapshot_to_dict(snapshot),
+    }
+
+
+@app.get("/v1/router/policy")
+async def router_policy() -> dict[str, Any]:
+    policy_updater: RuntimePolicyUpdater | None = getattr(app.state, "policy_updater", None)
+    config: RoutingConfig = app.state.routing_config
+    status_payload: dict[str, Any] = {}
+    if policy_updater is not None:
+        status_obj = policy_updater.status
+        status_payload = {
+            "enabled": status_obj.enabled,
+            "interval_seconds": status_obj.interval_seconds,
+            "min_samples": status_obj.min_samples,
+            "last_run_epoch": status_obj.last_run_epoch,
+            "last_applied_models": status_obj.last_applied_models,
+            "last_error": status_obj.last_error,
+        }
+    return {
+        "object": "router.policy",
+        "updater": status_payload,
+        "model_profiles": _runtime_policy_snapshot(config),
+    }
 
 
 async def _proxy_json_request(request: Request, path: str):
@@ -264,9 +363,11 @@ async def _proxy_json_request(request: Request, path: str):
             ",".join(route_decision.ranked_models[:5]),
         )
 
-    audit_logger: JsonlAuditLogger | None = getattr(app.state, "audit_logger", None)
-    if audit_logger is not None:
-        audit_logger.log(
+    audit_hook: Callable[[dict[str, Any]], None] | None = getattr(
+        app.state, "audit_event_hook", None
+    )
+    if audit_hook is not None:
+        audit_hook(
             {
                 "event": "route_decision",
                 "request_id": request_id,

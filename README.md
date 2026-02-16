@@ -188,6 +188,24 @@ Ingress auth is controlled through environment:
 
 JSONL entries include route decisions and proxy attempt/response events.
 
+### Live Metrics + Runtime Policy Updates
+
+The router can continuously update in-memory model priors (latency/failure rate) from live traffic.
+
+Environment knobs:
+
+- `LIVE_METRICS_ENABLED` (default: `true`)
+- `LIVE_METRICS_EWMA_ALPHA` (default: `0.2`)
+- `LIVE_METRICS_UPDATE_INTERVAL_SECONDS` (default: `30`)
+- `LIVE_METRICS_MIN_SAMPLES` (default: `30`)
+- `RUNTIME_POLICY_MAX_ADJUSTMENT_RATIO` (default: `0.15`)
+- `ROUTER_RUNTIME_OVERRIDES_PATH` (default: `logs/router.runtime.overrides.yaml`)
+
+Runtime endpoints:
+
+- `GET /v1/router/live-metrics` (EWMA live metrics snapshot)
+- `GET /v1/router/policy` (active runtime-adjusted model profiles + updater status)
+
 ## Important configuration note
 
 `BACKEND_BASE_URL` is intentionally not part of the default sample environment.  

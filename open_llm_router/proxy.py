@@ -682,6 +682,7 @@ class BackendProxy:
         request_id: str | None = None,
     ) -> Response:
         candidate_targets = self._build_candidate_targets(route_decision)
+        request_started = time.perf_counter()
         rid = request_id or "-"
         logger.info(
             (
@@ -889,6 +890,7 @@ class BackendProxy:
                     account=target.account_name,
                     model=target.model,
                     upstream_model=target.upstream_model,
+                    attempt_latency_ms=round((time.perf_counter() - attempt_started) * 1000.0, 3),
                     **error_details,
                 )
                 if index < len(candidate_targets) - 1:
@@ -946,6 +948,7 @@ class BackendProxy:
                 target=target,
                 attempted_targets=attempted_targets,
                 attempted_upstream_models=attempted_upstream_models,
+                request_latency_ms=round((time.perf_counter() - request_started) * 1000.0, 3),
                 route_decision=route_decision,
                 request_id=rid,
                 adapter=request_spec.adapter,
@@ -983,6 +986,7 @@ class BackendProxy:
         target: BackendTarget,
         attempted_targets: list[str],
         attempted_upstream_models: list[str],
+        request_latency_ms: float,
         route_decision: RouteDecision,
         request_id: str,
         adapter: Literal["passthrough", "chat_completions"],
@@ -998,6 +1002,7 @@ class BackendProxy:
         response_headers["x-router-task"] = route_decision.task
         response_headers["x-router-complexity"] = route_decision.complexity
         response_headers["x-router-source"] = route_decision.source
+        response_headers["x-router-request-latency-ms"] = f"{request_latency_ms:.3f}"
         response_headers["x-router-attempted-targets"] = ",".join(attempted_targets)
         if route_decision.ranked_models:
             response_headers["x-router-ranked-models"] = ",".join(route_decision.ranked_models)
@@ -1024,6 +1029,7 @@ class BackendProxy:
                         "model": target.model,
                         "upstream_model": target.upstream_model,
                         "status": upstream.status_code,
+                        "request_latency_ms": request_latency_ms,
                         "attempts": len(attempted_targets),
                         "attempted_targets": attempted_targets,
                         "attempted_upstream_models": attempted_upstream_models,
