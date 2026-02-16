@@ -1,4 +1,113 @@
 version: 1
+metadata_presets:
+  reasoning_tools_ctx200000_out16384:
+    capabilities:
+    - chat
+    - tool_use
+    - reasoning
+    - streaming
+    - json_mode
+    limits:
+      context_tokens: 200000
+      max_output_tokens: 16384
+      min_input_chars: 1
+  vision_ctx1048576_out8192:
+    capabilities:
+    - chat
+    - vision
+    - tool_use
+    - streaming
+    - json_mode
+    limits:
+      context_tokens: 1048576
+      max_output_tokens: 8192
+      min_input_chars: 1
+  reasoning_ctx128000_out16384:
+    capabilities:
+    - chat
+    - reasoning
+    - streaming
+    limits:
+      context_tokens: 128000
+      max_output_tokens: 16384
+      min_input_chars: 1
+  reasoning_ctx128000_out8192:
+    capabilities:
+    - chat
+    - reasoning
+    - streaming
+    limits:
+      context_tokens: 128000
+      max_output_tokens: 8192
+      min_input_chars: 1
+  chat_ctx128000_out8192:
+    capabilities:
+    - chat
+    - streaming
+    limits:
+      context_tokens: 128000
+      max_output_tokens: 8192
+      min_input_chars: 1
+  chat_ctx128000_out4096:
+    capabilities:
+    - chat
+    - streaming
+    limits:
+      context_tokens: 128000
+      max_output_tokens: 4096
+      min_input_chars: 1
+  reasoning_ctx128000_out4096:
+    capabilities:
+    - chat
+    - reasoning
+    - streaming
+    limits:
+      context_tokens: 128000
+      max_output_tokens: 4096
+      min_input_chars: 1
+  code_ctx128000_out4096:
+    capabilities:
+    - chat
+    - code
+    - streaming
+    limits:
+      context_tokens: 128000
+      max_output_tokens: 4096
+      min_input_chars: 1
+  code_ctx131072_out1024:
+    capabilities:
+    - chat
+    - code
+    - streaming
+    limits:
+      context_tokens: 131072
+      max_output_tokens: 1024
+      min_input_chars: 1
+  reasoning_ctx131072_out4096:
+    capabilities:
+    - chat
+    - reasoning
+    - streaming
+    limits:
+      context_tokens: 131072
+      max_output_tokens: 4096
+      min_input_chars: 1
+  chat_ctx32768_out4096:
+    capabilities:
+    - chat
+    - streaming
+    limits:
+      context_tokens: 32768
+      max_output_tokens: 4096
+      min_input_chars: 1
+  chat_ctx131072_out1024:
+    capabilities:
+    - chat
+    - streaming
+    limits:
+      context_tokens: 131072
+      max_output_tokens: 1024
+      min_input_chars: 1
 models:
 - id: gpt-5.2
   provider: openai-codex
@@ -6,173 +115,165 @@ models:
   costs:
     input_per_1k: 0.00175
     output_per_1k: 0.014
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.68
     quality_sensitivity: 2.0
     latency_ms: 1150
     failure_rate: 0.03
   created: 1765389775
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: gpt-5.2-codex
   provider: openai-codex
   aliases: []
   costs:
     input_per_1k: 0.00175
     output_per_1k: 0.014
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.74
     quality_sensitivity: 2.2
     latency_ms: 1300
     failure_rate: 0.032
   created: 1768409315
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: balanced
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.65
+    general: 0.55
+    instruction_following: 0.45
+    image: -0.9
 - id: gpt-5.3
   provider: openai-codex
   aliases: []
   costs:
     input_per_1k: 0.0023
     output_per_1k: 0.0078
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.78
     quality_sensitivity: 2.35
     latency_ms: 1350
     failure_rate: 0.032
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: premium
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: gpt-5.3-codex
   provider: openai-codex
   aliases: []
   costs:
     input_per_1k: 0.0025
     output_per_1k: 0.0085
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.8
     quality_sensitivity: 2.45
     latency_ms: 1450
     failure_rate: 0.035
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: premium
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.65
+    general: 0.55
+    instruction_following: 0.45
+    image: -0.9
 - id: gpt-5.3-codex-spark
   provider: openai-codex
   aliases: []
   costs:
     input_per_1k: 0.0021
     output_per_1k: 0.0068
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.75
     quality_sensitivity: 2.2
     latency_ms: 980
     failure_rate: 0.03
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: balanced
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.65
+    general: 0.55
+    instruction_following: 0.45
+    image: -0.9
 - id: gpt-5.2
   provider: openai
   aliases: []
   costs:
     input_per_1k: 0.00175
     output_per_1k: 0.014
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.7
     quality_sensitivity: 2.1
     latency_ms: 1080
     failure_rate: 0.028
   created: 1765389775
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: gemini-2.5-flash
   provider: gemini
   aliases: []
   costs:
     input_per_1k: 0.0003
     output_per_1k: 0.0025
-  limits:
-    context_tokens: 1048576
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - vision
-  - tool_use
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.45
     quality_sensitivity: 1.25
     latency_ms: 700
     failure_rate: 0.025
   created: 1750172488
+  metadata_preset: vision_ctx1048576_out8192
+  tier: economy
+  type: multimodal
+  task_affinity:
+    coding: 0.35
+    thinking: 0.5
+    general: 0.75
+    instruction_following: 0.7
+    image: 1.0
 - id: gemini-2.5-flash-lite
   provider: gemini
   aliases: []
   costs:
     input_per_1k: 0.0001
     output_per_1k: 0.0004
-  limits:
-    context_tokens: 1048576
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - vision
-  - tool_use
-  - streaming
-  - json_mode
   priors:
     quality_bias: 0.35
     quality_sensitivity: 1.05
     latency_ms: 520
     failure_rate: 0.022
   created: 1753200276
+  metadata_preset: vision_ctx1048576_out8192
+  tier: economy
+  type: multimodal
+  task_affinity:
+    coding: 0.35
+    thinking: 0.5
+    general: 0.75
+    instruction_following: 0.7
+    image: 1.0
 - id: z-ai/glm5
   provider: nvidia
   aliases:
@@ -180,19 +281,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.62
     quality_sensitivity: 1.8
     latency_ms: 950
     failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: moonshotai/kimi-k2.5
   provider: nvidia
   aliases:
@@ -200,20 +302,21 @@ models:
   costs:
     input_per_1k: 0.00023
     output_per_1k: 0.003
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.67
     quality_sensitivity: 1.95
     latency_ms: 980
     failure_rate: 0.03
   created: 1769487076
+  metadata_preset: reasoning_ctx128000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: deepseek-ai/deepseek-v3.2
   provider: nvidia
   aliases:
@@ -221,20 +324,21 @@ models:
   costs:
     input_per_1k: 0.00026
     output_per_1k: 0.00038
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.69
     quality_sensitivity: 2.0
     latency_ms: 1020
     failure_rate: 0.03
   created: 1764594642
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: deepseek-ai/deepseek-v3.1-terminus
   provider: nvidia
   aliases:
@@ -242,20 +346,21 @@ models:
   costs:
     input_per_1k: 0.00021
     output_per_1k: 0.00079
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.66
     quality_sensitivity: 1.95
     latency_ms: 1040
     failure_rate: 0.03
   created: 1758548275
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: deepseek-ai/deepseek-v3.1
   provider: nvidia
   aliases:
@@ -263,19 +368,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.65
     quality_sensitivity: 1.9
     latency_ms: 1010
     failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: z-ai/glm4.7
   provider: nvidia
   aliases:
@@ -283,19 +389,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.64
     quality_sensitivity: 1.85
     latency_ms: 1000
     failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: minimaxai/minimax-m2.1
   provider: nvidia
   aliases:
@@ -303,19 +410,21 @@ models:
   costs:
     input_per_1k: 0.00027
     output_per_1k: 0.00095
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.63
     quality_sensitivity: 1.8
     latency_ms: 990
     failure_rate: 0.03
   created: 1766454997
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: minimaxai/minimax-m2
   provider: nvidia
   aliases:
@@ -323,19 +432,21 @@ models:
   costs:
     input_per_1k: 0.000255
     output_per_1k: 0.001
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.62
     quality_sensitivity: 1.75
     latency_ms: 985
     failure_rate: 0.03
   created: 1761252093
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: moonshotai/kimi-k2-thinking
   provider: nvidia
   aliases:
@@ -343,20 +454,21 @@ models:
   costs:
     input_per_1k: 0.0004
     output_per_1k: 0.00175
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.68
     quality_sensitivity: 2.0
     latency_ms: 995
     failure_rate: 0.03
   created: 1762440622
+  metadata_preset: reasoning_ctx128000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: moonshotai/kimi-k2-instruct-0905
   provider: nvidia
   aliases:
@@ -364,18 +476,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.66
     quality_sensitivity: 1.9
     latency_ms: 980
     failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out4096
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: moonshotai/kimi-k2-instruct
   provider: nvidia
   aliases:
@@ -383,18 +497,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.65
     quality_sensitivity: 1.85
     latency_ms: 975
     failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out4096
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: qwen/qwen3.5-397b-a17b
   provider: nvidia
   aliases:
@@ -402,20 +518,21 @@ models:
   costs:
     input_per_1k: 0.0006
     output_per_1k: 0.0036
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.7
     quality_sensitivity: 2.05
     latency_ms: 1030
     failure_rate: 0.03
   created: 1771223018
+  metadata_preset: reasoning_ctx128000_out16384
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: qwen/qwen3-next-80b-a3b-instruct
   provider: nvidia
   aliases:
@@ -423,19 +540,21 @@ models:
   costs:
     input_per_1k: 9.0e-05
     output_per_1k: 0.0011
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.67
     quality_sensitivity: 1.95
     latency_ms: 980
     failure_rate: 0.03
   created: 1757612213
+  metadata_preset: chat_ctx128000_out4096
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: qwen/qwen3-next-80b-a3b-thinking
   provider: nvidia
   aliases:
@@ -443,20 +562,21 @@ models:
   costs:
     input_per_1k: 0.00015
     output_per_1k: 0.0012
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.69
     quality_sensitivity: 2.0
     latency_ms: 995
     failure_rate: 0.03
   created: 1757612284
+  metadata_preset: reasoning_ctx128000_out4096
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: qwen/qwen3-coder-480b-a35b-instruct
   provider: nvidia
   aliases:
@@ -464,19 +584,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - code
-  - streaming
   priors:
     quality_bias: 0.72
     quality_sensitivity: 2.1
     latency_ms: 1040
     failure_rate: 0.03
+  metadata_preset: code_ctx128000_out4096
+  tier: balanced
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.65
+    general: 0.55
+    instruction_following: 0.45
+    image: -0.9
 - id: qwen/qwen3-235b-a22b
   provider: nvidia
   aliases:
@@ -484,20 +605,21 @@ models:
   costs:
     input_per_1k: 0.0003
     output_per_1k: 0.0012
-  limits:
-    context_tokens: 128000
-    max_output_tokens: 8192
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.71
     quality_sensitivity: 2.05
     latency_ms: 1015
     failure_rate: 0.03
   created: 1745875757
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: qwen/qwen2.5-coder-32b-instruct
   provider: nvidia
   aliases:
@@ -505,19 +627,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 131072
-    max_output_tokens: 1024
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - code
-  - streaming
   priors:
     quality_bias: 0.6
     quality_sensitivity: 1.75
     latency_ms: 900
     failure_rate: 0.03
+  metadata_preset: code_ctx131072_out1024
+  tier: balanced
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.65
+    general: 0.55
+    instruction_following: 0.45
+    image: -0.9
 - id: qwen/qwq-32b
   provider: nvidia
   aliases:
@@ -525,20 +648,21 @@ models:
   costs:
     input_per_1k: 0.00015
     output_per_1k: 0.0004
-  limits:
-    context_tokens: 131072
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - reasoning
-  - streaming
   priors:
     quality_bias: 0.62
     quality_sensitivity: 1.85
     latency_ms: 930
     failure_rate: 0.03
   created: 1741208814
+  metadata_preset: reasoning_ctx131072_out4096
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.95
+    general: 0.75
+    instruction_following: 0.55
+    image: -0.7
 - id: qwen/qwen2-7b-instruct
   provider: nvidia
   aliases:
@@ -546,18 +670,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 32768
-    max_output_tokens: 4096
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.48
     quality_sensitivity: 1.35
     latency_ms: 720
     failure_rate: 0.03
+  metadata_preset: chat_ctx32768_out4096
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: qwen/qwen2.5-7b-instruct
   provider: nvidia
   aliases:
@@ -565,18 +691,20 @@ models:
   costs:
     input_per_1k: 0.0
     output_per_1k: 0.0
-  limits:
-    context_tokens: 131072
-    max_output_tokens: 1024
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - streaming
   priors:
     quality_bias: 0.53
     quality_sensitivity: 1.45
     latency_ms: 740
     failure_rate: 0.03
+  metadata_preset: chat_ctx131072_out1024
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.35
+    thinking: 0.45
+    general: 0.65
+    instruction_following: 0.7
+    image: -0.8
 - id: qwen/qwen2.5-coder-7b-instruct
   provider: nvidia
   aliases:
@@ -584,17 +712,18 @@ models:
   costs:
     input_per_1k: 3.0e-05
     output_per_1k: 9.0e-05
-  limits:
-    context_tokens: 131072
-    max_output_tokens: 1024
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - code
-  - streaming
   priors:
     quality_bias: 0.56
     quality_sensitivity: 1.55
     latency_ms: 760
     failure_rate: 0.03
   created: 1744734887
+  metadata_preset: code_ctx131072_out1024
+  tier: economy
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.65
+    general: 0.55
+    instruction_following: 0.45
+    image: -0.9

@@ -27,6 +27,8 @@ DEFAULT_COMPLEXITY = {
     "medium_max_chars": 6000,
     "high_max_chars": 16000,
 }
+TASKS = ["general", "coding", "thinking", "instruction_following", "image"]
+ROUTE_TIERS = ["low", "medium", "high", "xhigh", "default"]
 
 BASE_EFFECTIVE_CONFIG: dict[str, Any] = {
     "default_model": "",
@@ -171,6 +173,12 @@ def compile_profile_config(
 
     _materialize_model_catalog_data(effective, catalog, seed_models=account_models)
     _apply_guardrails(effective, profile, catalog, explain)
+    _align_routing_to_enabled_accounts(
+        effective,
+        catalog=catalog,
+        available_models=account_models,
+        explain=explain,
+    )
 
     if profile.raw_overrides:
         _merge_dict(effective, profile.raw_overrides)
@@ -293,6 +301,14 @@ def _materialize_model_catalog_data(
         metadata.setdefault("limits", entry.limits.model_dump(mode="python"))
         metadata.setdefault("capabilities", list(entry.capabilities))
         metadata.setdefault("priors", entry.priors.model_dump(mode="python"))
+        if entry.family:
+            metadata.setdefault("family", entry.family)
+        if entry.type:
+            metadata.setdefault("type", entry.type)
+        if entry.tier:
+            metadata.setdefault("tier", entry.tier)
+        if entry.task_affinity:
+            metadata.setdefault("task_affinity", dict(entry.task_affinity))
 
         profile = model_profiles.setdefault(canonical, {})
         if not isinstance(profile, dict):
@@ -304,6 +320,325 @@ def _materialize_model_catalog_data(
         profile.setdefault("cost_output_per_1k", entry.costs.output_per_1k)
         profile.setdefault("latency_ms", entry.priors.latency_ms)
         profile.setdefault("failure_rate", entry.priors.failure_rate)
+
+
+def _align_routing_to_enabled_accounts(
+    effective: dict[str, Any],
+    *,
+    catalog: RouterCatalog,
+    available_models: set[str],
+    explain: dict[str, Any],
+) -> None:
+    if not available_models:
+        return
+
+    available = sorted(_dedupe(available_models))
+    available_set = set(available)
+    alignment_notes: list[dict[str, Any]] = []
+
+    models_map = effective.get("models")
+    if isinstance(models_map, dict):
+        for model in list(models_map.keys()):
+            canonical = model if model in available_set else catalog.resolve_model_id(model)
+            if canonical not in available_set:
+                models_map.pop(model, None)
+                alignment_notes.append({"context": "models", "removed": model})
+
+    model_profiles = effective.get("model_profiles")
+    if isinstance(model_profiles, dict):
+        for model in list(model_profiles.keys()):
+            canonical = model if model in available_set else catalog.resolve_model_id(model)
+            if canonical not in available_set:
+                model_profiles.pop(model, None)
+                alignment_notes.append({"context": "model_profiles", "removed": model})
+
+    task_routes = effective.get("task_routes")
+    if not isinstance(task_routes, dict):
+        task_routes = {}
+        effective["task_routes"] = task_routes
+
+    for task in TASKS:
+        route = task_routes.get(task)
+        if not isinstance(route, dict):
+            route = {}
+            task_routes[task] = route
+
+        for tier in ROUTE_TIERS:
+            configured = _coerce_model_list(route.get(tier))
+            filtered = _filter_models_to_available(
+                configured,
+                available_set=available_set,
+                catalog=catalog,
+            )
+            if filtered:
+                route[tier] = filtered
+                continue
+
+            suggested = _suggest_models_for_task_tier(
+                available_models=available,
+                task=task,
+                tier=tier,
+                catalog=catalog,
+                limit=2,
+            )
+            if suggested:
+                route[tier] = suggested
+                if configured:
+                    alignment_notes.append(
+                        {
+                            "context": f"task_routes.{task}.{tier}",
+                            "from": configured,
+                            "to": suggested,
+                        }
+                    )
+                else:
+                    alignment_notes.append(
+                        {
+                            "context": f"task_routes.{task}.{tier}",
+                            "to": suggested,
+                        }
+                    )
+
+    default_model_raw = str(effective.get("default_model") or "").strip()
+    default_model: str | None = None
+    if default_model_raw:
+        default_model = catalog.resolve_model_id(default_model_raw)
+        if default_model not in available_set:
+            default_model = None
+
+    if default_model is None:
+        candidates = _suggest_models_for_task_tier(
+            available_models=available,
+            task="general",
+            tier="medium",
+            catalog=catalog,
+            limit=1,
+        )
+        if candidates:
+            old_default = default_model_raw or None
+            effective["default_model"] = candidates[0]
+            default_model = candidates[0]
+            alignment_notes.append(
+                {
+                    "context": "default_model",
+                    "from": old_default,
+                    "to": candidates[0],
+                }
+            )
+
+    fallback_models = _filter_models_to_available(
+        _coerce_model_list(effective.get("fallback_models")),
+        available_set=available_set,
+        catalog=catalog,
+    )
+    if not fallback_models:
+        fallback_models = _suggest_models_for_task_tier(
+            available_models=available,
+            task="general",
+            tier="high",
+            catalog=catalog,
+            limit=max(1, min(4, len(available))),
+        )
+    if default_model:
+        fallback_models = [model for model in fallback_models if model != default_model]
+    effective["fallback_models"] = _dedupe(fallback_models)
+
+    learned = effective.get("learned_routing")
+    if isinstance(learned, dict):
+        task_candidates = learned.get("task_candidates")
+        if not isinstance(task_candidates, dict):
+            task_candidates = {}
+            learned["task_candidates"] = task_candidates
+        for task in TASKS:
+            filtered = _filter_models_to_available(
+                _coerce_model_list(task_candidates.get(task)),
+                available_set=available_set,
+                catalog=catalog,
+            )
+            if not filtered:
+                filtered = _suggest_models_for_task_tier(
+                    available_models=available,
+                    task=task,
+                    tier="medium",
+                    catalog=catalog,
+                    limit=min(4, len(available)),
+                )
+            if filtered:
+                task_candidates[task] = filtered
+
+    if alignment_notes:
+        explain["account_alignment"] = alignment_notes
+
+
+def _filter_models_to_available(
+    models: list[str],
+    *,
+    available_set: set[str],
+    catalog: RouterCatalog,
+) -> list[str]:
+    filtered: list[str] = []
+    for model in _dedupe(models):
+        canonical = catalog.resolve_model_id(model)
+        if canonical in available_set:
+            filtered.append(canonical)
+    return filtered
+
+
+def _suggest_models_for_task_tier(
+    *,
+    available_models: list[str],
+    task: str,
+    tier: str,
+    catalog: RouterCatalog,
+    limit: int,
+) -> list[str]:
+    scored: list[tuple[float, str]] = []
+    for model in available_models:
+        entry = catalog.get_model(model)
+        score = _metadata_score_for_task_tier(
+            model=model,
+            entry=entry,
+            task=task,
+            tier=tier,
+        )
+        scored.append((score, model))
+
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+        ),
+        reverse=True,
+    )
+    return [model for _, model in scored[: max(1, limit)]]
+
+
+def _metadata_score_for_task_tier(
+    *,
+    model: str,
+    entry,
+    task: str,
+    tier: str,
+) -> float:
+    capabilities = {item.strip().lower() for item in entry.capabilities if isinstance(item, str)}
+    affinity = _task_affinity_score(
+        model=model,
+        task=task,
+        capabilities=capabilities,
+        explicit_affinity=entry.task_affinity,
+        model_type=entry.type,
+    )
+
+    model_tier = _tier_rank(entry.tier, entry.priors.quality_bias)
+    target_tier = {"low": 0.0, "medium": 1.0, "default": 1.0, "high": 2.0, "xhigh": 3.0}.get(
+        tier, 1.0
+    )
+    tier_bonus = 0.35 - 0.12 * abs(model_tier - target_tier)
+
+    quality_component = float(entry.priors.quality_bias) * (
+        0.75 if tier in {"high", "xhigh"} else 0.25
+    )
+    cost_total = float(entry.costs.input_per_1k) + float(entry.costs.output_per_1k)
+    if tier == "low":
+        cost_penalty = cost_total * 120.0
+        latency_penalty = float(entry.priors.latency_ms) / 1800.0
+    elif tier == "medium":
+        cost_penalty = cost_total * 55.0
+        latency_penalty = float(entry.priors.latency_ms) / 2600.0
+    elif tier == "high":
+        cost_penalty = cost_total * 18.0
+        latency_penalty = float(entry.priors.latency_ms) / 5200.0
+    else:
+        cost_penalty = cost_total * 8.0
+        latency_penalty = float(entry.priors.latency_ms) / 7000.0
+
+    failure_penalty = float(entry.priors.failure_rate) * 4.0
+    return (affinity * 2.0) + tier_bonus + quality_component - cost_penalty - latency_penalty - failure_penalty
+
+
+def _task_affinity_score(
+    *,
+    model: str,
+    task: str,
+    capabilities: set[str],
+    explicit_affinity: dict[str, float],
+    model_type: str | None,
+) -> float:
+    explicit = explicit_affinity.get(task)
+    if isinstance(explicit, (int, float)):
+        return float(explicit)
+
+    model_lower = model.lower()
+    score = 0.4
+    if task == "coding":
+        score = 0.45
+        if "reasoning" in capabilities:
+            score += 0.25
+        if "tool_use" in capabilities:
+            score += 0.15
+        if "json_mode" in capabilities:
+            score += 0.05
+        if any(token in model_lower for token in ("codex", "coder", "-code", "/code")):
+            score += 0.55
+    elif task == "thinking":
+        score = 0.45
+        if "reasoning" in capabilities:
+            score += 0.5
+        if "tool_use" in capabilities:
+            score += 0.05
+    elif task == "instruction_following":
+        score = 0.5
+        if "json_mode" in capabilities:
+            score += 0.25
+        if "tool_use" in capabilities:
+            score += 0.05
+    elif task == "image":
+        if "image_generation" in capabilities:
+            score = 1.1
+        elif "vision" in capabilities or "image" in capabilities:
+            score = 0.75
+        else:
+            score = -0.8
+    elif task == "general":
+        score = 0.55
+        if "reasoning" in capabilities:
+            score += 0.1
+        if "tool_use" in capabilities:
+            score += 0.05
+        if "streaming" in capabilities:
+            score += 0.05
+
+    normalized_type = (model_type or "").strip().lower()
+    if task == "coding" and normalized_type == "coding":
+        score += 0.35
+    if task == "image" and normalized_type in {"image", "vision", "multimodal"}:
+        score += 0.2
+    if task == "image" and normalized_type in {"coding", "text"}:
+        score -= 0.35
+
+    return score
+
+
+def _tier_rank(raw_tier: str | None, quality_bias: float) -> float:
+    tier = (raw_tier or "").strip().lower()
+    tier_map = {
+        "economy": 0.0,
+        "cheap": 0.0,
+        "balanced": 1.0,
+        "standard": 1.0,
+        "quality": 2.0,
+        "premium": 2.0,
+        "ultra": 3.0,
+    }
+    if tier in tier_map:
+        return tier_map[tier]
+    if quality_bias >= 0.76:
+        return 3.0
+    if quality_bias >= 0.62:
+        return 2.0
+    if quality_bias >= 0.45:
+        return 1.0
+    return 0.0
 
 
 def _apply_guardrails(

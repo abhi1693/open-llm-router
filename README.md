@@ -172,6 +172,13 @@ retry_statuses:
 Top-level `models` is a mapping keyed by `provider/modelId`, which allows attaching model metadata (for example `name`, `id`, or custom attributes) without ambiguity.
 If `id` is omitted, it defaults to the `modelId` segment of the key (for example `openai-codex/gpt-5.2` -> `id: gpt-5.2`).
 
+Catalog model metadata now supports reusable presets and routing-oriented attributes:
+- `metadata_presets` in `open_llm_router/catalog/models.yaml` to avoid repeating shared `capabilities`/`limits`.
+- Per-model metadata: `tier`, `type`, and `task_affinity` for smarter defaults.
+
+Profile compilation auto-aligns default routes to enabled account models.  
+This means a mixed account setup can prefer coding models for `coding` and multimodal models for `image` without heavy `raw_overrides`.
+
 Unified provider login flow (recommended):
 
 ```bash

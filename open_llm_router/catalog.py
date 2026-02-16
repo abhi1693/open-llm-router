@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from difflib import get_close_matches
 from functools import lru_cache
@@ -87,6 +88,10 @@ class ModelCatalogEntry(BaseModel):
     id: str
     provider: str
     created: int | None = None
+    family: str | None = None
+    type: str | None = None
+    tier: str | None = None
+    task_affinity: dict[str, float] = Field(default_factory=dict)
     aliases: list[str] = Field(default_factory=list)
     costs: CatalogCost = Field(default_factory=CatalogCost)
     limits: CatalogLimits = Field(default_factory=CatalogLimits)
@@ -252,6 +257,52 @@ def _build_alias_index(models: dict[str, ModelCatalogEntry]) -> dict[str, set[st
     return index
 
 
+def _merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _merge_dict(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _expand_model_items_with_presets(models_raw: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_models = models_raw.get("models", [])
+    if not isinstance(raw_models, list):
+        raise ValueError("Expected 'models' list in models catalog.")
+
+    raw_presets = models_raw.get("metadata_presets", {})
+    if raw_presets is None:
+        raw_presets = {}
+    if not isinstance(raw_presets, dict):
+        raise ValueError("Expected 'metadata_presets' mapping in models catalog.")
+
+    expanded: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw_models):
+        if not isinstance(item, dict):
+            raise ValueError(f"Expected object at models[{idx}] in models catalog.")
+        current = deepcopy(item)
+        preset_name = current.pop("metadata_preset", None)
+        if preset_name is None:
+            expanded.append(current)
+            continue
+        if not isinstance(preset_name, str) or not preset_name.strip():
+            raise ValueError(f"Expected non-empty string metadata_preset at models[{idx}].")
+        preset_key = preset_name.strip()
+        preset_payload = raw_presets.get(preset_key)
+        if not isinstance(preset_payload, dict):
+            raise ValueError(
+                f"Unknown metadata_preset '{preset_key}' referenced at models[{idx}]."
+            )
+        expanded.append(_merge_dict(preset_payload, current))
+    return expanded
+
+
 @lru_cache
 def load_internal_catalog() -> RouterCatalog:
     catalog_root = _catalog_dir()
@@ -264,7 +315,7 @@ def load_internal_catalog() -> RouterCatalog:
         provider_entries[entry.id] = entry
 
     model_entries: dict[str, ModelCatalogEntry] = {}
-    for item in models_raw.get("models", []):
+    for item in _expand_model_items_with_presets(models_raw):
         entry = ModelCatalogEntry.model_validate(item)
         if entry.provider not in provider_entries:
             raise ValueError(
