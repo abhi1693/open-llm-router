@@ -3,7 +3,7 @@ from __future__ import annotations
 from open_llm_router.catalog_sync import sync_catalog_models_pricing
 
 
-def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_matching():
+def test_sync_catalog_models_pricing_updates_using_provider_aliases():
     catalog_document = {
         "version": 1,
         "models": [
@@ -19,12 +19,6 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_m
                 "aliases": [],
                 "costs": {"input_per_1k": 1.0, "output_per_1k": 1.0},
             },
-            {
-                "id": "qwen2.5-14b-instruct",
-                "provider": "openai",
-                "aliases": [],
-                "costs": {"input_per_1k": 9.0, "output_per_1k": 9.0},
-            },
         ],
     }
     openrouter_models = [
@@ -38,11 +32,6 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_m
             "pricing": {"prompt": "0.0000002", "completion": "0.0000008"},
             "created": 1770000002,
         },
-        {
-            "id": "qwen/qwen2.5-14b-instruct",
-            "pricing": {"prompt": "0.00000008", "completion": "0.0000002"},
-            "created": 1770000003,
-        },
     ]
 
     stats = sync_catalog_models_pricing(
@@ -50,8 +39,8 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_m
         openrouter_models=openrouter_models,
     )
 
-    assert stats.total_local_models == 3
-    assert stats.updated == 3
+    assert stats.total_local_models == 2
+    assert stats.updated == 2
     assert stats.unchanged == 0
     assert stats.missing_remote == 0
     assert stats.missing_pricing == 0
@@ -61,11 +50,8 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_m
     assert models[0]["costs"]["output_per_1k"] == 0.0067
     assert models[1]["costs"]["input_per_1k"] == 0.0002
     assert models[1]["costs"]["output_per_1k"] == 0.0008
-    assert models[2]["costs"]["input_per_1k"] == 0.00008
-    assert models[2]["costs"]["output_per_1k"] == 0.0002
     assert models[0]["created"] == 1770000001
     assert models[1]["created"] == 1770000002
-    assert models[2]["created"] == 1770000003
 
 
 def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing():

@@ -38,7 +38,7 @@ def test_cli_add_account_and_route(tmp_path):
                 "--api-key-env",
                 "OPENCLAW_ACCOUNT_A_KEY",
                 "--models",
-                "qwen2.5-14b-instruct,qwen2.5-coder-14b-instruct",
+                "gpt-5.2,codex-1",
                 "--set-default",
             ]
         )
@@ -63,14 +63,14 @@ def test_cli_add_account_and_route(tmp_path):
     )
 
     config = _load(config_path)
-    assert config["default_model"] == "openai/qwen2.5-14b-instruct"
+    assert config["default_model"] == "openai/gpt-5.2"
     assert config["accounts"][0]["name"] == "openclaw-a"
     assert config["accounts"][0]["provider"] == "openai"
-    assert "openai/qwen2.5-coder-14b-instruct" in config["accounts"][0]["models"]
+    assert "openai/codex-1" in config["accounts"][0]["models"]
     assert config["task_routes"]["coding"]["xhigh"] == ["codex-1"]
     assert isinstance(config["models"], dict)
     assert "codex-1" in config["models"]
-    assert config["models"]["openai/qwen2.5-14b-instruct"]["id"] == "qwen2.5-14b-instruct"
+    assert config["models"]["openai/gpt-5.2"]["id"] == "gpt-5.2"
     assert config["models"]["codex-1"]["id"] == "codex-1"
 
 
@@ -160,7 +160,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path):
                 str(config_path),
                 "add-model",
                 "--model",
-                "qwen2.5-14b-instruct",
+                "gpt-5.2",
                 "--set-default",
             ]
         )
@@ -201,7 +201,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path):
                 "--task",
                 "coding",
                 "--models",
-                "qwen2.5-coder-14b-instruct,deepseek-r1,codex-1",
+                "openai-codex/gpt-5.2-codex,gemini/gemini-2.5-flash,codex-1",
                 "--enable",
             ]
         )
@@ -595,7 +595,7 @@ def test_cli_show_outputs_summary(tmp_path, capsys):
                 str(config_path),
                 "add-model",
                 "--model",
-                "qwen2.5-14b-instruct",
+                "gpt-5.2",
                 "--set-default",
             ]
         )
