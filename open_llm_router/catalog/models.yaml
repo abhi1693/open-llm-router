@@ -21,6 +21,7 @@ models:
     quality_sensitivity: 2.0
     latency_ms: 1150
     failure_rate: 0.03
+  created: 1765389775
 - id: gpt-5.2-codex
   provider: openai-codex
   aliases:
@@ -43,6 +44,7 @@ models:
     quality_sensitivity: 2.2
     latency_ms: 1300
     failure_rate: 0.032
+  created: 1768409315
 - id: gpt-5.3
   provider: openai-codex
   aliases: []
@@ -127,6 +129,7 @@ models:
     quality_sensitivity: 2.1
     latency_ms: 1080
     failure_rate: 0.028
+  created: 1765389775
 - id: codex-1
   provider: openai
   aliases: []
@@ -169,6 +172,7 @@ models:
     quality_sensitivity: 1.25
     latency_ms: 700
     failure_rate: 0.025
+  created: 1750172488
 - id: gemini-2.5-flash-lite
   provider: gemini
   aliases: []
@@ -190,6 +194,7 @@ models:
     quality_sensitivity: 1.05
     latency_ms: 520
     failure_rate: 0.022
+  created: 1753200276
 - id: qwen2.5-14b-instruct
   provider: openai
   aliases: []
@@ -252,3 +257,4 @@ models:
     quality_sensitivity: 1.7
     latency_ms: 1180
     failure_rate: 0.035
+  created: 1737381095

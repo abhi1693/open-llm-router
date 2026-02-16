@@ -129,9 +129,19 @@ def sync_catalog_models_pricing(
             missing_remote += 1
             continue
 
+        entry_updated = False
+        remote_created = _extract_created_timestamp(remote)
+        if remote_created is not None:
+            current_created = _coerce_int(entry.get("created"))
+            if current_created != remote_created:
+                entry["created"] = remote_created
+                entry_updated = True
+
         prompt_per_1k, completion_per_1k = _extract_costs_per_1k(remote)
         if prompt_per_1k is None or completion_per_1k is None:
             missing_pricing += 1
+            if entry_updated:
+                updated += 1
             continue
 
         costs = entry.get("costs")
@@ -142,6 +152,9 @@ def sync_catalog_models_pricing(
         old_prompt = _coerce_number(costs.get("input_per_1k"))
         old_completion = _coerce_number(costs.get("output_per_1k"))
         if old_prompt == prompt_per_1k and old_completion == completion_per_1k:
+            if entry_updated:
+                updated += 1
+                continue
             unchanged += 1
             continue
 
@@ -172,6 +185,35 @@ def _extract_costs_per_1k(remote_model: dict[str, Any]) -> tuple[float | None, f
 
     # Keep stable decimal output for YAML and comparisons.
     return round(prompt_per_token * 1000.0, 12), round(completion_per_token * 1000.0, 12)
+
+
+def _extract_created_timestamp(remote_model: dict[str, Any]) -> int | None:
+    created = _coerce_int(remote_model.get("created"))
+    if created is None:
+        return None
+    if created < 0:
+        return None
+    return created
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    return None
 
 
 def _coerce_number(value: Any) -> float | None:

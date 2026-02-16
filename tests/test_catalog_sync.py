@@ -31,14 +31,17 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_m
         {
             "id": "openai/gpt-5.2",
             "pricing": {"prompt": "0.0000019", "completion": "0.0000067"},
+            "created": 1770000001,
         },
         {
             "id": "google/gemini-2.5-flash",
             "pricing": {"prompt": "0.0000002", "completion": "0.0000008"},
+            "created": 1770000002,
         },
         {
             "id": "qwen/qwen2.5-14b-instruct",
             "pricing": {"prompt": "0.00000008", "completion": "0.0000002"},
+            "created": 1770000003,
         },
     ]
 
@@ -60,6 +63,9 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases_and_suffix_m
     assert models[1]["costs"]["output_per_1k"] == 0.0008
     assert models[2]["costs"]["input_per_1k"] == 0.00008
     assert models[2]["costs"]["output_per_1k"] == 0.0002
+    assert models[0]["created"] == 1770000001
+    assert models[1]["created"] == 1770000002
+    assert models[2]["created"] == 1770000003
 
 
 def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing():
@@ -94,3 +100,29 @@ def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing()
     assert stats.unchanged == 0
     assert stats.missing_remote == 1
     assert stats.missing_pricing == 1
+
+
+def test_sync_catalog_models_pricing_updates_created_when_pricing_missing():
+    catalog_document = {
+        "version": 1,
+        "models": [
+            {
+                "id": "model-a",
+                "provider": "openai",
+                "aliases": [],
+                "costs": {"input_per_1k": 1.0, "output_per_1k": 1.0},
+            },
+        ],
+    }
+    openrouter_models = [
+        {"id": "openai/model-a", "pricing": {"prompt": "0.000001"}, "created": 1770000004},
+    ]
+
+    stats = sync_catalog_models_pricing(
+        catalog_document=catalog_document,
+        openrouter_models=openrouter_models,
+    )
+
+    assert stats.updated == 1
+    assert stats.missing_pricing == 1
+    assert catalog_document["models"][0]["created"] == 1770000004

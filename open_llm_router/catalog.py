@@ -86,6 +86,7 @@ class ModelCatalogEntry(BaseModel):
 
     id: str
     provider: str
+    created: int | None = None
     aliases: list[str] = Field(default_factory=list)
     costs: CatalogCost = Field(default_factory=CatalogCost)
     limits: CatalogLimits = Field(default_factory=CatalogLimits)

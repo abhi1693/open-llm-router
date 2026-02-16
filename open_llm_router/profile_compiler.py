@@ -286,6 +286,8 @@ def _materialize_model_catalog_data(
 
         metadata.setdefault("id", entry.id)
         metadata.setdefault("provider", entry.provider)
+        if isinstance(entry.created, int):
+            metadata.setdefault("created", entry.created)
         metadata.setdefault("aliases", list(entry.aliases))
         metadata.setdefault("costs", entry.costs.model_dump(mode="python"))
         metadata.setdefault("limits", entry.limits.model_dump(mode="python"))
