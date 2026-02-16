@@ -44,6 +44,30 @@ Health check:
 curl http://localhost:8000/health
 ```
 
+## Docker (Local)
+
+Build image:
+
+```bash
+docker build -t open-llm-router:local .
+```
+
+Run with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Then call:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Notes:
+- `router.profile.yaml` is mounted read-only into the container.
+- Logs are written to `./logs` on the host.
+
 ## Client usage
 
 Point your OpenAI client to:

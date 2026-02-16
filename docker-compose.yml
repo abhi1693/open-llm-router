@@ -1,0 +1,24 @@
+name: open-llm-router-local
+
+services:
+  router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: open-llm-router
+    ports:
+      - "8000:8000"
+    environment:
+      ROUTING_CONFIG_PATH: /app/router.profile.yaml
+      INGRESS_AUTH_REQUIRED: ${INGRESS_AUTH_REQUIRED:-false}
+      INGRESS_API_KEYS: ${INGRESS_API_KEYS:-}
+      ROUTER_AUDIT_LOG_ENABLED: ${ROUTER_AUDIT_LOG_ENABLED:-true}
+      ROUTER_AUDIT_LOG_PATH: /app/logs/router_decisions.jsonl
+      ROUTER_RUNTIME_OVERRIDES_PATH: /app/logs/router.runtime.overrides.yaml
+      LIVE_METRICS_ENABLED: ${LIVE_METRICS_ENABLED:-true}
+      LIVE_METRICS_UPDATE_INTERVAL_SECONDS: ${LIVE_METRICS_UPDATE_INTERVAL_SECONDS:-30}
+      LIVE_METRICS_MIN_SAMPLES: ${LIVE_METRICS_MIN_SAMPLES:-30}
+    volumes:
+      - ./router.profile.yaml:/app/router.profile.yaml:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
