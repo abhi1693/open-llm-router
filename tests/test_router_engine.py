@@ -24,7 +24,7 @@ def _router() -> SmartModelRouter:
                     "low": "code-7b",
                     "medium": "code-14b",
                     "high": "code-32b",
-                    "xhigh": "codex-1",
+                    "xhigh": "code-70b",
                 },
                 "thinking": {
                     "low": "think-14b",
@@ -69,7 +69,7 @@ def test_respects_explicit_provider_qualified_model():
     config = RoutingConfig.model_validate(
         {
             "default_model": "general-14b",
-            "models": ["openai/codex-1", "general-14b"],
+            "models": ["openai-codex/gpt-5.2-codex", "general-14b"],
             "complexity": {"low_max_chars": 100, "medium_max_chars": 500, "high_max_chars": 2000},
             "task_routes": {},
             "fallback_models": ["general-14b", "general-32b"],
@@ -77,11 +77,11 @@ def test_respects_explicit_provider_qualified_model():
     )
     router = SmartModelRouter(config)
     payload = {
-        "model": "openai/codex-1",
+        "model": "openai-codex/gpt-5.2-codex",
         "messages": [{"role": "user", "content": "hello"}],
     }
     decision = router.decide(payload, "/v1/chat/completions")
-    assert decision.selected_model == "openai/codex-1"
+    assert decision.selected_model == "openai-codex/gpt-5.2-codex"
     assert decision.source == "request"
 
 
@@ -100,15 +100,15 @@ def test_treats_openrouter_auto_alias_as_auto_routing():
 def test_allowed_models_filters_auto_route_candidates():
     config = RoutingConfig.model_validate(
         {
-            "default_model": "openai/codex-1",
+            "default_model": "openai-codex/gpt-5.2-codex",
             "task_routes": {
                 "general": {
-                    "low": ["openai/codex-1", "gemini/gemini-2.5-flash"],
+                    "low": ["openai-codex/gpt-5.2-codex", "gemini/gemini-2.5-flash"],
                 },
             },
             "fallback_models": [],
             "models": {
-                "openai/codex-1": {"capabilities": ["chat"]},
+                "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
         }
@@ -127,17 +127,17 @@ def test_allowed_models_filters_auto_route_candidates():
 def test_allowed_models_rejects_explicit_model_when_disallowed():
     config = RoutingConfig.model_validate(
         {
-            "default_model": "openai/codex-1",
-            "task_routes": {"general": {"default": "openai/codex-1"}},
+            "default_model": "openai-codex/gpt-5.2-codex",
+            "task_routes": {"general": {"default": "openai-codex/gpt-5.2-codex"}},
             "models": {
-                "openai/codex-1": {"capabilities": ["chat"]},
+                "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
         }
     )
     router = SmartModelRouter(config)
     payload = {
-        "model": "openai/codex-1",
+        "model": "openai-codex/gpt-5.2-codex",
         "allowed_models": ["gemini/*"],
         "messages": [{"role": "user", "content": "hello"}],
     }
@@ -150,15 +150,15 @@ def test_allowed_models_rejects_explicit_model_when_disallowed():
 def test_allowed_models_raises_when_no_auto_candidates_match():
     config = RoutingConfig.model_validate(
         {
-            "default_model": "openai/codex-1",
+            "default_model": "openai-codex/gpt-5.2-codex",
             "task_routes": {
                 "general": {
-                    "low": ["openai/codex-1", "openai/gpt-5.2"],
+                    "low": ["openai-codex/gpt-5.2-codex", "openai/gpt-5.2"],
                 },
             },
             "fallback_models": [],
             "models": {
-                "openai/codex-1": {"capabilities": ["chat"]},
+                "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
             },
         }
@@ -229,7 +229,7 @@ def test_routes_auto_coding_request_prefers_multi_model_route_order():
                     "low": ["code-7b", "code-14b"],
                     "medium": ["code-14b", "code-32b"],
                     "high": ["code-32b"],
-                    "xhigh": ["codex-1"],
+                    "xhigh": ["code-70b"],
                 },
             },
             "fallback_models": ["general-14b", "general-32b"],

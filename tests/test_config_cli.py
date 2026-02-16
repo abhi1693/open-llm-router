@@ -38,7 +38,7 @@ def test_cli_add_account_and_route(tmp_path):
                 "--api-key-env",
                 "OPENCLAW_ACCOUNT_A_KEY",
                 "--models",
-                "gpt-5.2,codex-1",
+                "gpt-5.2",
                 "--set-default",
             ]
         )
@@ -56,7 +56,7 @@ def test_cli_add_account_and_route(tmp_path):
                 "--tier",
                 "xhigh",
                 "--model",
-                "codex-1",
+                "gpt-5.2",
             ]
         )
         == 0
@@ -66,12 +66,10 @@ def test_cli_add_account_and_route(tmp_path):
     assert config["default_model"] == "openai/gpt-5.2"
     assert config["accounts"][0]["name"] == "openclaw-a"
     assert config["accounts"][0]["provider"] == "openai"
-    assert "openai/codex-1" in config["accounts"][0]["models"]
-    assert config["task_routes"]["coding"]["xhigh"] == ["codex-1"]
+    assert "openai/gpt-5.2" in config["accounts"][0]["models"]
+    assert config["task_routes"]["coding"]["xhigh"] == ["gpt-5.2"]
     assert isinstance(config["models"], dict)
-    assert "codex-1" in config["models"]
     assert config["models"]["openai/gpt-5.2"]["id"] == "gpt-5.2"
-    assert config["models"]["codex-1"]["id"] == "codex-1"
 
 
 def test_cli_set_route_accepts_multiple_models(tmp_path):
@@ -174,7 +172,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path):
                 str(config_path),
                 "set-profile",
                 "--model",
-                "codex-1",
+                "openai-codex/gpt-5.2-codex",
                 "--quality-bias",
                 "0.65",
                 "--quality-sensitivity",
@@ -201,7 +199,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path):
                 "--task",
                 "coding",
                 "--models",
-                "openai-codex/gpt-5.2-codex,gemini/gemini-2.5-flash,codex-1",
+                "openai-codex/gpt-5.2-codex,gemini/gemini-2.5-flash,openai/gpt-5.2",
                 "--enable",
             ]
         )
@@ -232,11 +230,11 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path):
     )
 
     config = _load(config_path)
-    profile = config["model_profiles"]["codex-1"]
+    profile = config["model_profiles"]["openai-codex/gpt-5.2-codex"]
     assert profile["quality_bias"] == 0.65
     assert profile["cost_output_per_1k"] == 0.004
     assert config["learned_routing"]["enabled"] is True
-    assert config["learned_routing"]["task_candidates"]["coding"][-1] == "codex-1"
+    assert config["learned_routing"]["task_candidates"]["coding"][-1] == "openai/gpt-5.2"
     assert config["learned_routing"]["feature_weights"]["complexity_score"] == 1.4
 
 

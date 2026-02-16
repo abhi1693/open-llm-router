@@ -13,7 +13,7 @@ profiles:
           - openai-codex/gpt-5.2
       coding:
         low:
-          - openai/codex-1
+          - openai-codex/gpt-5.2
         medium:
           - openai-codex/gpt-5.2
         high:
@@ -58,9 +58,9 @@ profiles:
           - gemini/gemini-2.5-flash
           - openai-codex/gpt-5.2
         coding:
-          - openai/codex-1
           - openai-codex/gpt-5.2
           - openai-codex/gpt-5.2-codex
+          - openai-codex/gpt-5.3-codex-spark
           - openai-codex/gpt-5.3-codex
         thinking:
           - openai-codex/gpt-5.2
@@ -81,7 +81,7 @@ profiles:
           - openai-codex/gpt-5.2
       coding:
         medium:
-          - openai/codex-1
+          - openai-codex/gpt-5.2
         high:
           - openai-codex/gpt-5.2-codex
       thinking:
@@ -101,7 +101,7 @@ profiles:
         task_thinking: 0.7
       task_candidates:
         coding:
-          - openai/codex-1
+          - openai-codex/gpt-5.2
           - openai-codex/gpt-5.2-codex
 
   cost:
@@ -167,7 +167,7 @@ profiles:
           - gemini/gemini-2.5-flash-lite
       coding:
         default:
-          - openai/codex-1
+          - openai-codex/gpt-5.3-codex-spark
       thinking:
         default:
           - gemini/gemini-2.5-flash

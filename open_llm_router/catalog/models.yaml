@@ -24,8 +24,7 @@ models:
   created: 1765389775
 - id: gpt-5.2-codex
   provider: openai-codex
-  aliases:
-  - codex-1
+  aliases: []
   costs:
     input_per_1k: 0.00175
     output_per_1k: 0.014
@@ -130,27 +129,6 @@ models:
     latency_ms: 1080
     failure_rate: 0.028
   created: 1765389775
-- id: codex-1
-  provider: openai
-  aliases: []
-  costs:
-    input_per_1k: 0.0017
-    output_per_1k: 0.0062
-  limits:
-    context_tokens: 200000
-    max_output_tokens: 16384
-    min_input_chars: 1
-  capabilities:
-  - chat
-  - tool_use
-  - reasoning
-  - streaming
-  - json_mode
-  priors:
-    quality_bias: 0.7
-    quality_sensitivity: 2.05
-    latency_ms: 1020
-    failure_rate: 0.028
 - id: gemini-2.5-flash
   provider: gemini
   aliases: []

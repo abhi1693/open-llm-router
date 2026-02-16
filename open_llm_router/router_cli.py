@@ -34,7 +34,7 @@ from open_llm_router.scoring import build_routing_features, score_model
 
 LOGIN_CHATGPT_DEFAULT_PROVIDER = "openai-codex"
 LOGIN_CHATGPT_DEFAULT_MODELS = "gpt-5.2,gpt-5.2-codex"
-OPENAI_APIKEY_DEFAULT_MODELS = "openai/gpt-5.2,openai/codex-1"
+OPENAI_APIKEY_DEFAULT_MODELS = "openai/gpt-5.2"
 OPENAI_APIKEY_DEFAULT_KEY_ENV = "OPENAI_API_KEY"
 GEMINI_APIKEY_DEFAULT_MODELS = "gemini/gemini-2.5-flash,gemini/gemini-2.5-flash-lite"
 GEMINI_APIKEY_DEFAULT_KEY_ENV = "GEMINI_API_KEY"
