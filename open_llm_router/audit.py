@@ -64,6 +64,7 @@ class JsonlAuditLogger:
                     queue.task_done()
                     break
                 handle.write(item + "\n")
+                handle.flush()
                 queue.task_done()
             dropped = 0
             with self._lock:
@@ -84,3 +85,4 @@ class JsonlAuditLogger:
                     )
                     + "\n"
                 )
+                handle.flush()
