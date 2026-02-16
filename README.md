@@ -184,14 +184,21 @@ router provider login openai --kind apikey --name openai-work
 # Gemini via API key (apikey is default kind)
 router provider login gemini --name gemini-work
 
+# NVIDIA NIM via API key (apikey is default kind)
+router provider login nvidia --name nvidia-work
+
 # Inline key instead of env var
 router provider login openai --kind apikey --name openai-work --apikey sk-...
 
 # Explicit env-var name (alias: --api-key-env)
 router provider login gemini --name gemini-work --apikey-env GEMINI_API_KEY
+router provider login nvidia --name nvidia-work --apikey-env NVIDIA_API_KEY
 ```
 
-This stores provider-qualified model keys like `gemini/gemini-2.5-pro` and defaults model metadata `id` to `gemini-2.5-pro`.
+This stores provider-qualified model keys like `gemini/gemini-2.5-pro` or `nvidia/z-ai/glm5` and defaults model metadata `id` to the provider-local model id.
+For NVIDIA models that include `/` in the model id (for example `moonshotai/kimi-k2.5`), configure them under the NVIDIA provider as either:
+- provider-qualified: `nvidia/moonshotai/kimi-k2.5`
+- provider-local in account models: `moonshotai/kimi-k2.5`
 
 ## Supported routes
 

@@ -176,6 +176,7 @@ def _build_upstream_headers(
     oauth_account_id: str | None,
     organization: str | None,
     project: str | None,
+    stream: bool = False,
     allow_passthrough_auth: bool = False,
 ) -> dict[str, str]:
     passthrough = {
@@ -221,7 +222,7 @@ def _build_upstream_headers(
     if not any(key.lower() == "content-type" for key in headers):
         headers["Content-Type"] = "application/json"
     if not any(key.lower() == "accept" for key in headers):
-        headers["Accept"] = "application/json"
+        headers["Accept"] = "text/event-stream" if stream else "application/json"
     return headers
 
 
@@ -1011,6 +1012,7 @@ class BackendProxy:
                 oauth_account_id=self._resolve_oauth_account_id(target.account),
                 organization=target.organization,
                 project=target.project,
+                stream=request_spec.stream,
                 allow_passthrough_auth=target.account.allows_passthrough_auth(),
             )
 

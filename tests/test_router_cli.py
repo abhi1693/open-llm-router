@@ -181,6 +181,31 @@ def test_router_provider_login_gemini_defaults_to_apikey(tmp_path):
     assert account["api_key_env"] == "GEMINI_API_KEY"
 
 
+def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path):
+    profile_path = tmp_path / "router.profile.yaml"
+    assert (
+        main(
+            [
+                "provider",
+                "login",
+                "nvidia",
+                "--name",
+                "nvidia-work",
+                "--path",
+                str(profile_path),
+            ]
+        )
+        == 0
+    )
+    payload = _load(profile_path)
+    account = payload["accounts"][0]
+    assert account["provider"] == "nvidia"
+    assert account["auth_mode"] == "api_key"
+    assert account["api_key_env"] == "NVIDIA_API_KEY"
+    assert "nvidia/z-ai/glm5" in account["models"]
+    assert "nvidia/moonshotai/kimi-k2.5" in account["models"]
+
+
 def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path):
     profile_path = tmp_path / "router.profile.yaml"
     assert (
@@ -250,6 +275,27 @@ def test_router_provider_login_accepts_gemeni_alias(tmp_path):
     payload = _load(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "gemini"
+
+
+def test_router_provider_login_accepts_nim_alias(tmp_path):
+    profile_path = tmp_path / "router.profile.yaml"
+    assert (
+        main(
+            [
+                "provider",
+                "login",
+                "nim",
+                "--name",
+                "nvidia-work-2",
+                "--path",
+                str(profile_path),
+            ]
+        )
+        == 0
+    )
+    payload = _load(profile_path)
+    account = payload["accounts"][0]
+    assert account["provider"] == "nvidia"
 
 
 def test_provider_login_rejects_raw_schema_path(tmp_path):

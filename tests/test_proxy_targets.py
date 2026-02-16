@@ -919,6 +919,20 @@ def test_build_upstream_headers_adds_codex_account_headers():
     assert headers["originator"] == "pi"
 
 
+def test_build_upstream_headers_defaults_accept_to_sse_for_streaming_requests():
+    headers = _build_upstream_headers(
+        incoming_headers=Headers({"content-type": "application/json"}),
+        bearer_token="token-1",
+        provider="nvidia",
+        oauth_account_id=None,
+        organization=None,
+        project=None,
+        stream=True,
+    )
+
+    assert headers["Accept"] == "text/event-stream"
+
+
 def test_prepare_upstream_request_maps_chat_completions_to_codex_responses():
     payload = {
         "model": "gpt-5.2-codex",
@@ -1128,6 +1142,29 @@ def test_prepare_upstream_request_sanitizes_gemini_chat_payload():
     assert "tool_choice" not in prepared.payload
     assert "reasoning_effort" not in prepared.payload
     assert "parallel_tool_calls" not in prepared.payload
+
+
+def test_prepare_upstream_request_keeps_nvidia_chat_payload_passthrough():
+    payload = {
+        "model": "z-ai/glm5",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "temperature": 1,
+        "top_p": 1,
+        "max_tokens": 16384,
+        "seed": 42,
+        "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False},
+    }
+
+    prepared = _prepare_upstream_request(
+        path="/v1/chat/completions",
+        payload=payload,
+        provider="nvidia",
+        stream=True,
+    )
+
+    assert prepared.path == "/v1/chat/completions"
+    assert prepared.stream is True
+    assert prepared.payload == payload
 
 
 def test_parse_retry_after_seconds_numeric():

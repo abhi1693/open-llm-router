@@ -40,3 +40,16 @@ providers:
     reliability_priors:
       latency_ms: 750
       failure_rate: 0.025
+
+  - id: nvidia
+    display_name: NVIDIA NIM
+    base_url: https://integrate.api.nvidia.com
+    auth_modes:
+      - api_key
+      - passthrough
+    endpoint_defaults:
+      chat_completions: /v1/chat/completions
+      responses: /v1/responses
+    reliability_priors:
+      latency_ms: 950
+      failure_rate: 0.03

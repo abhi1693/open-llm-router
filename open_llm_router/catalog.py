@@ -140,6 +140,11 @@ class RouterCatalog:
         normalized_provider_hint = None
         if provider_hint:
             normalized_provider_hint = self.resolve_provider_id(provider_hint)
+            # Some providers expose model ids that include "/" (for example "z-ai/glm5").
+            # When a provider hint exists, prefer exact scoped lookup before splitting by "/".
+            hinted_key = f"{normalized_provider_hint}/{normalized}"
+            if hinted_key in self.models:
+                return hinted_key
 
         provider, model_id = _split_model_ref(normalized)
         if provider is not None:

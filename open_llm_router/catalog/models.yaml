@@ -173,3 +173,428 @@ models:
     latency_ms: 520
     failure_rate: 0.022
   created: 1753200276
+- id: z-ai/glm5
+  provider: nvidia
+  aliases:
+  - glm5
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 16384
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.8
+    latency_ms: 950
+    failure_rate: 0.03
+- id: moonshotai/kimi-k2.5
+  provider: nvidia
+  aliases:
+  - kimi-k2.5
+  costs:
+    input_per_1k: 0.00023
+    output_per_1k: 0.003
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 16384
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.67
+    quality_sensitivity: 1.95
+    latency_ms: 980
+    failure_rate: 0.03
+  created: 1769487076
+- id: deepseek-ai/deepseek-v3.2
+  provider: nvidia
+  aliases:
+  - deepseek-v3.2
+  costs:
+    input_per_1k: 0.00026
+    output_per_1k: 0.00038
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 8192
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.69
+    quality_sensitivity: 2.0
+    latency_ms: 1020
+    failure_rate: 0.03
+  created: 1764594642
+- id: deepseek-ai/deepseek-v3.1-terminus
+  provider: nvidia
+  aliases:
+  - deepseek-v3.1-terminus
+  costs:
+    input_per_1k: 0.00021
+    output_per_1k: 0.00079
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 8192
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.66
+    quality_sensitivity: 1.95
+    latency_ms: 1040
+    failure_rate: 0.03
+  created: 1758548275
+- id: deepseek-ai/deepseek-v3.1
+  provider: nvidia
+  aliases:
+  - deepseek-v3.1
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 8192
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.65
+    quality_sensitivity: 1.9
+    latency_ms: 1010
+    failure_rate: 0.03
+- id: z-ai/glm4.7
+  provider: nvidia
+  aliases:
+  - glm4.7
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 16384
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.64
+    quality_sensitivity: 1.85
+    latency_ms: 1000
+    failure_rate: 0.03
+- id: minimaxai/minimax-m2.1
+  provider: nvidia
+  aliases:
+  - minimax-m2.1
+  costs:
+    input_per_1k: 0.00027
+    output_per_1k: 0.00095
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 8192
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.63
+    quality_sensitivity: 1.8
+    latency_ms: 990
+    failure_rate: 0.03
+  created: 1766454997
+- id: minimaxai/minimax-m2
+  provider: nvidia
+  aliases:
+  - minimax-m2
+  costs:
+    input_per_1k: 0.000255
+    output_per_1k: 0.001
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 8192
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.75
+    latency_ms: 985
+    failure_rate: 0.03
+  created: 1761252093
+- id: moonshotai/kimi-k2-thinking
+  provider: nvidia
+  aliases:
+  - kimi-k2-thinking
+  costs:
+    input_per_1k: 0.0004
+    output_per_1k: 0.00175
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 16384
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.68
+    quality_sensitivity: 2.0
+    latency_ms: 995
+    failure_rate: 0.03
+  created: 1762440622
+- id: moonshotai/kimi-k2-instruct-0905
+  provider: nvidia
+  aliases:
+  - kimi-k2-instruct-0905
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.66
+    quality_sensitivity: 1.9
+    latency_ms: 980
+    failure_rate: 0.03
+- id: moonshotai/kimi-k2-instruct
+  provider: nvidia
+  aliases:
+  - kimi-k2-instruct
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.65
+    quality_sensitivity: 1.85
+    latency_ms: 975
+    failure_rate: 0.03
+- id: qwen/qwen3.5-397b-a17b
+  provider: nvidia
+  aliases:
+  - qwen3.5-397b-a17b
+  costs:
+    input_per_1k: 0.0006
+    output_per_1k: 0.0036
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 16384
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.7
+    quality_sensitivity: 2.05
+    latency_ms: 1030
+    failure_rate: 0.03
+  created: 1771223018
+- id: qwen/qwen3-next-80b-a3b-instruct
+  provider: nvidia
+  aliases:
+  - qwen3-next-80b-a3b-instruct
+  costs:
+    input_per_1k: 9.0e-05
+    output_per_1k: 0.0011
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.67
+    quality_sensitivity: 1.95
+    latency_ms: 980
+    failure_rate: 0.03
+  created: 1757612213
+- id: qwen/qwen3-next-80b-a3b-thinking
+  provider: nvidia
+  aliases:
+  - qwen3-next-80b-a3b-thinking
+  costs:
+    input_per_1k: 0.00015
+    output_per_1k: 0.0012
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.69
+    quality_sensitivity: 2.0
+    latency_ms: 995
+    failure_rate: 0.03
+  created: 1757612284
+- id: qwen/qwen3-coder-480b-a35b-instruct
+  provider: nvidia
+  aliases:
+  - qwen3-coder-480b-a35b-instruct
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - code
+  - streaming
+  priors:
+    quality_bias: 0.72
+    quality_sensitivity: 2.1
+    latency_ms: 1040
+    failure_rate: 0.03
+- id: qwen/qwen3-235b-a22b
+  provider: nvidia
+  aliases:
+  - qwen3-235b-a22b
+  costs:
+    input_per_1k: 0.0003
+    output_per_1k: 0.0012
+  limits:
+    context_tokens: 128000
+    max_output_tokens: 8192
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.71
+    quality_sensitivity: 2.05
+    latency_ms: 1015
+    failure_rate: 0.03
+  created: 1745875757
+- id: qwen/qwen2.5-coder-32b-instruct
+  provider: nvidia
+  aliases:
+  - qwen2.5-coder-32b-instruct
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 131072
+    max_output_tokens: 1024
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - code
+  - streaming
+  priors:
+    quality_bias: 0.6
+    quality_sensitivity: 1.75
+    latency_ms: 900
+    failure_rate: 0.03
+- id: qwen/qwq-32b
+  provider: nvidia
+  aliases:
+  - qwq-32b
+  costs:
+    input_per_1k: 0.00015
+    output_per_1k: 0.0004
+  limits:
+    context_tokens: 131072
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - reasoning
+  - streaming
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.85
+    latency_ms: 930
+    failure_rate: 0.03
+  created: 1741208814
+- id: qwen/qwen2-7b-instruct
+  provider: nvidia
+  aliases:
+  - qwen2-7b-instruct
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 32768
+    max_output_tokens: 4096
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.48
+    quality_sensitivity: 1.35
+    latency_ms: 720
+    failure_rate: 0.03
+- id: qwen/qwen2.5-7b-instruct
+  provider: nvidia
+  aliases:
+  - qwen2.5-7b-instruct
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  limits:
+    context_tokens: 131072
+    max_output_tokens: 1024
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - streaming
+  priors:
+    quality_bias: 0.53
+    quality_sensitivity: 1.45
+    latency_ms: 740
+    failure_rate: 0.03
+- id: qwen/qwen2.5-coder-7b-instruct
+  provider: nvidia
+  aliases:
+  - qwen2.5-coder-7b-instruct
+  costs:
+    input_per_1k: 3.0e-05
+    output_per_1k: 9.0e-05
+  limits:
+    context_tokens: 131072
+    max_output_tokens: 1024
+    min_input_chars: 1
+  capabilities:
+  - chat
+  - code
+  - streaming
+  priors:
+    quality_bias: 0.56
+    quality_sensitivity: 1.55
+    latency_ms: 760
+    failure_rate: 0.03
+  created: 1744734887
