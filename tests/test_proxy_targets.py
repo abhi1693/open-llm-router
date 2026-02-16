@@ -13,6 +13,7 @@ from open_llm_router.proxy import (
     _build_upstream_headers,
     _parse_retry_after_seconds,
     _prepare_upstream_request,
+    _request_error_details,
 )
 from open_llm_router.router_engine import RouteDecision
 
@@ -475,6 +476,20 @@ def test_prepare_upstream_request_maps_chat_tools_for_responses_api():
         }
     ]
     assert prepared.payload["tool_choice"] == {"type": "function", "name": "list_files"}
+
+
+def test_request_error_details_include_type_repr_and_request_metadata():
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    exc = httpx.ConnectTimeout("", request=request)
+
+    details = _request_error_details(exc)
+
+    assert details["error_type"] == "ConnectTimeout"
+    assert details["error"]
+    assert details["error_repr"]
+    assert details["is_timeout"] is True
+    assert details["request_method"] == "POST"
+    assert details["request_url"] == "https://example.com/v1/chat/completions"
 
 
 def test_prepare_upstream_request_sanitizes_gemini_chat_payload():

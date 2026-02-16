@@ -33,6 +33,22 @@ HOP_BY_HOP_RESPONSE_HEADERS = {
 logger = logging.getLogger("uvicorn.error")
 
 
+def _request_error_details(exc: httpx.RequestError) -> dict[str, Any]:
+    error_repr = repr(exc)
+    error_message = str(exc).strip() or error_repr
+    details: dict[str, Any] = {
+        "error": error_message,
+        "error_type": exc.__class__.__name__,
+        "error_repr": error_repr,
+        "is_timeout": isinstance(exc, httpx.TimeoutException),
+    }
+    request = getattr(exc, "request", None)
+    if isinstance(request, httpx.Request):
+        details["request_method"] = request.method
+        details["request_url"] = str(request.url)
+    return details
+
+
 @dataclass(slots=True)
 class BackendTarget:
     account: BackendAccount
@@ -687,6 +703,7 @@ class BackendProxy:
             )
 
         attempted_targets: list[str] = []
+        attempted_upstream_models: list[str] = []
 
         for index, target in enumerate(candidate_targets):
             breaker_key = f"{target.account_name}:{target.provider}"
@@ -726,6 +743,7 @@ class BackendProxy:
                 )
                 continue
             attempted_targets.append(target.label)
+            attempted_upstream_models.append(target.upstream_model)
             logger.info(
                 "proxy_attempt request_id=%s attempt=%d/%d target=%s provider=%s auth_mode=%s",
                 rid,
@@ -744,6 +762,7 @@ class BackendProxy:
                 account=target.account_name,
                 provider=target.provider,
                 model=target.model,
+                upstream_model=target.upstream_model,
                 auth_mode=target.auth_mode,
             )
             trial_payload = dict(payload)
@@ -767,6 +786,7 @@ class BackendProxy:
                     target=target.label,
                     account=target.account_name,
                     model=target.model,
+                    upstream_model=target.upstream_model,
                 )
                 if index < len(candidate_targets) - 1:
                     continue
@@ -776,10 +796,11 @@ class BackendProxy:
                         "error": {
                             "type": "oauth_credentials_unavailable",
                             "message": (
-                                "Selected OAuth-backed target has no usable access token "
-                                "and could not refresh one."
-                            ),
+                            "Selected OAuth-backed target has no usable access token "
+                            "and could not refresh one."
+                        ),
                             "attempted_targets": attempted_targets,
+                            "attempted_upstream_models": attempted_upstream_models,
                         }
                     },
                 )
@@ -816,17 +837,20 @@ class BackendProxy:
                     target=target.label,
                     account=target.account_name,
                     model=target.model,
+                    upstream_model=target.upstream_model,
                     connect_ms=round(connect_latency_ms, 3),
                     status=upstream.status_code,
                 )
             except httpx.RequestError as exc:
+                error_details = _request_error_details(exc)
                 if self._circuit_breakers is not None:
                     self._circuit_breakers.on_failure(breaker_key)
                 logger.warning(
-                    "proxy_request_error request_id=%s target=%s error=%s",
+                    "proxy_request_error request_id=%s target=%s error_type=%s error=%s",
                     rid,
                     target.label,
-                    exc,
+                    error_details["error_type"],
+                    error_details["error"],
                 )
                 self._audit(
                     "proxy_request_error",
@@ -834,7 +858,8 @@ class BackendProxy:
                     target=target.label,
                     account=target.account_name,
                     model=target.model,
-                    error=str(exc),
+                    upstream_model=target.upstream_model,
+                    **error_details,
                 )
                 if index < len(candidate_targets) - 1:
                     continue
@@ -843,8 +868,13 @@ class BackendProxy:
                     content={
                         "error": {
                             "type": "upstream_connection_error",
-                            "message": f"Could not reach backend: {exc}",
+                            "message": (
+                                "Could not reach backend "
+                                f"({error_details['error_type']}): {error_details['error']}"
+                            ),
+                            "error_type": error_details["error_type"],
                             "attempted_targets": attempted_targets,
+                            "attempted_upstream_models": attempted_upstream_models,
                         }
                     },
                 )
@@ -873,6 +903,7 @@ class BackendProxy:
                     target=target.label,
                     account=target.account_name,
                     model=target.model,
+                    upstream_model=target.upstream_model,
                     status=upstream.status_code,
                 )
                 await upstream.aclose()
@@ -884,6 +915,7 @@ class BackendProxy:
                 upstream_stream=request_spec.stream,
                 target=target,
                 attempted_targets=attempted_targets,
+                attempted_upstream_models=attempted_upstream_models,
                 route_decision=route_decision,
                 request_id=rid,
                 adapter=request_spec.adapter,
@@ -899,6 +931,7 @@ class BackendProxy:
             "proxy_exhausted",
             request_id=rid,
             attempted_targets=attempted_targets,
+            attempted_upstream_models=attempted_upstream_models,
         )
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -907,6 +940,7 @@ class BackendProxy:
                     "type": "routing_exhausted",
                     "message": "All model/account targets failed.",
                     "attempted_targets": attempted_targets,
+                    "attempted_upstream_models": attempted_upstream_models,
                 }
             },
         )
@@ -918,6 +952,7 @@ class BackendProxy:
         upstream_stream: bool,
         target: BackendTarget,
         attempted_targets: list[str],
+        attempted_upstream_models: list[str],
         route_decision: RouteDecision,
         request_id: str,
         adapter: Literal["passthrough", "chat_completions"],
@@ -929,6 +964,7 @@ class BackendProxy:
         response_headers["x-router-account"] = target.account_name
         response_headers["x-router-provider"] = target.provider
         response_headers["x-router-auth-mode"] = target.auth_mode
+        response_headers["x-router-upstream-model"] = target.upstream_model
         response_headers["x-router-task"] = route_decision.task
         response_headers["x-router-complexity"] = route_decision.complexity
         response_headers["x-router-source"] = route_decision.source
@@ -956,9 +992,11 @@ class BackendProxy:
                         "account": target.account_name,
                         "provider": target.provider,
                         "model": target.model,
+                        "upstream_model": target.upstream_model,
                         "status": upstream.status_code,
                         "attempts": len(attempted_targets),
                         "attempted_targets": attempted_targets,
+                        "attempted_upstream_models": attempted_upstream_models,
                     }
                 )
             except Exception:
