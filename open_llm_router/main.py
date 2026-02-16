@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -44,6 +45,46 @@ app = FastAPI(
 )
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _clear_logs_on_startup(audit_log_path: str, runtime_overrides_path: str | None) -> None:
+    audit_path = Path(audit_log_path)
+    configured_paths: list[Path] = [audit_path]
+    if runtime_overrides_path:
+        configured_paths.append(Path(runtime_overrides_path))
+
+    # Clear every file under configured logs/ directories. For non-logs paths,
+    # only clear the explicitly configured file to avoid broad filesystem wipes.
+    clear_roots: set[Path] = set()
+    explicit_files: set[Path] = set(configured_paths)
+    for path in configured_paths:
+        parent = path.parent
+        if parent.name.lower() == "logs":
+            clear_roots.add(parent)
+
+    cleared_files = 0
+    for root in sorted(clear_roots):
+        if not root.exists() or not root.is_dir():
+            continue
+        for child in root.rglob("*"):
+            if not child.is_file():
+                continue
+            child.unlink(missing_ok=True)
+            cleared_files += 1
+
+    for file_path in sorted(explicit_files):
+        if file_path in clear_roots:
+            # When an explicit file is a root path file itself (unlikely), keep behavior simple.
+            continue
+        if file_path.exists() and file_path.is_file():
+            file_path.unlink(missing_ok=True)
+            cleared_files += 1
+
+    logger.info(
+        "startup_log_reset cleared_files=%d clear_roots=%s",
+        cleared_files,
+        [str(path) for path in sorted(clear_roots)],
+    )
 
 
 @app.middleware("http")
@@ -386,6 +427,10 @@ def _runtime_policy_snapshot(config: RoutingConfig) -> dict[str, dict[str, float
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
+    _clear_logs_on_startup(
+        audit_log_path=settings.router_audit_log_path,
+        runtime_overrides_path=settings.router_runtime_overrides_path,
+    )
     routing_config, explain_metadata = load_routing_config_with_metadata(
         settings.routing_config_path
     )

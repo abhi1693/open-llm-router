@@ -594,6 +594,84 @@ def test_forward_with_fallback_retries_next_target_when_fallbacks_enabled():
     asyncio.run(proxy.close())
 
 
+def test_proxy_request_error_audit_contains_attempt_and_status_fields():
+    captured_events: list[dict] = []
+
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[500],
+        audit_hook=lambda event: captured_events.append(event),
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+    asyncio.run(proxy.client.aclose())
+
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise httpx.ConnectTimeout("connect timeout", request=request)
+        return httpx.Response(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            json={"ok": True},
+            request=request,
+        )
+
+    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision(
+                "m1",
+                [],
+                provider_preferences={
+                    "allow_fallbacks": True,
+                    "order": ["openai", "gemini"],
+                },
+            ),
+            stream=False,
+            request_id="req-error-audit-fields",
+        )
+    )
+
+    assert response.status_code == 200
+    error_events = [event for event in captured_events if event.get("event") == "proxy_request_error"]
+    assert len(error_events) == 1
+
+    event = error_events[0]
+    assert event["attempt"] == 1
+    assert event["total_attempts"] == 2
+    assert event["status_code"] is None
+    assert event["error_type"] == "ConnectTimeout"
+    assert event["is_timeout"] is True
+    assert event["error"]
+    asyncio.run(proxy.close())
+
+
 def test_forward_with_fallback_does_not_retry_when_fallbacks_disabled():
     proxy = BackendProxy(
         base_url="http://legacy",
@@ -1111,6 +1189,7 @@ def test_request_error_details_include_type_repr_and_request_metadata():
     assert details["error"]
     assert details["error_repr"]
     assert details["is_timeout"] is True
+    assert details["status_code"] is None
     assert details["request_method"] == "POST"
     assert details["request_url"] == "https://example.com/v1/chat/completions"
 

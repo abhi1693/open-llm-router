@@ -191,3 +191,53 @@ def test_main_writes_json_report(tmp_path: Path) -> None:
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["routing"]["total_decisions"] == 1
     assert payload["routing"]["selected_models"]["gemini/gemini-2.5-flash-lite"] == 1
+
+
+def test_consistency_prefers_runtime_selected_model_from_proxy_start(tmp_path: Path) -> None:
+    log_path = tmp_path / "router_decisions.jsonl"
+    _write_log(
+        log_path,
+        [
+            {
+                "ts": 100,
+                "event": "route_decision",
+                "request_id": "r1",
+                "selected_model": "openai/codex-1",
+                "task": "coding",
+                "complexity": "xhigh",
+            },
+            {
+                "ts": 101,
+                "event": "proxy_start",
+                "request_id": "r1",
+                "selected_model": "openai-codex/gpt-5.2-codex",
+            },
+            {
+                "ts": 101,
+                "event": "proxy_attempt",
+                "request_id": "r1",
+                "attempt": 1,
+                "target": "acct-a:gpt-5.2-codex",
+            },
+            {
+                "ts": 102,
+                "event": "proxy_response",
+                "request_id": "r1",
+                "model": "openai-codex/gpt-5.2-codex",
+                "status": 200,
+                "attempts": 1,
+            },
+        ],
+    )
+
+    summary = summarize_log(log_path, top_n=5)
+    selected_vs_used = summary["consistency"]["selected_vs_used_model"]
+    selected_vs_target = summary["consistency"]["selected_vs_first_attempt_target"]
+
+    assert selected_vs_used["matched"] == 1
+    assert selected_vs_used["mismatched"] == 0
+    assert selected_vs_used["top_mismatched_pairs"] == {}
+
+    assert selected_vs_target["rough_match"] == 1
+    assert selected_vs_target["rough_mismatch"] == 0
+    assert selected_vs_target["top_rough_mismatched_pairs"] == {}

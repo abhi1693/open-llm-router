@@ -25,6 +25,7 @@ class AggregationState:
     max_ts: float | None = None
 
     selected_by_request_id: dict[str, str] = field(default_factory=dict)
+    runtime_selected_by_request_id: dict[str, str] = field(default_factory=dict)
     route_task_by_request_id: dict[str, str] = field(default_factory=dict)
     route_complexity_by_request_id: dict[str, str] = field(default_factory=dict)
     used_model_by_request_id: dict[str, str] = field(default_factory=dict)
@@ -276,6 +277,13 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
                 state.first_attempt_target_by_request_id[request_id] = target_label
         return
 
+    if event_name == "proxy_start":
+        if isinstance(request_id, str) and request_id.strip():
+            selected_model = event.get("selected_model")
+            if isinstance(selected_model, str) and selected_model.strip():
+                state.runtime_selected_by_request_id[request_id] = selected_model
+        return
+
     if event_name == "proxy_response":
         status_code = _safe_int(event.get("status"))
         status_key = "unknown" if status_code is None else str(status_code)
@@ -352,14 +360,17 @@ def _build_consistency_summary(state: AggregationState, *, top_n: int) -> dict[s
     selected_target_mismatch_pairs: Counter[str] = Counter()
 
     for request_id, selected_model in state.selected_by_request_id.items():
+        effective_selected_model = (
+            state.runtime_selected_by_request_id.get(request_id) or selected_model
+        )
         used_model = state.used_model_by_request_id.get(request_id)
         if used_model is None:
             missing += 1
-        elif selected_model == used_model:
+        elif effective_selected_model == used_model:
             matched += 1
         else:
             mismatched += 1
-            pair = f"selected={selected_model} used={used_model}"
+            pair = f"selected={effective_selected_model} used={used_model}"
             selected_used_mismatch_pairs[pair] += 1
 
         first_attempt_target = state.first_attempt_target_by_request_id.get(request_id)
@@ -367,11 +378,14 @@ def _build_consistency_summary(state: AggregationState, *, top_n: int) -> dict[s
             attempt_missing += 1
         else:
             target_model = _target_model_name(first_attempt_target)
-            if _rough_model_match(selected_model, target_model):
+            if _rough_model_match(effective_selected_model, target_model):
                 attempt_match += 1
             else:
                 attempt_mismatch += 1
-                pair = f"selected={selected_model} first_target={first_attempt_target}"
+                pair = (
+                    f"selected={effective_selected_model} "
+                    f"first_target={first_attempt_target}"
+                )
                 selected_target_mismatch_pairs[pair] += 1
 
     return {

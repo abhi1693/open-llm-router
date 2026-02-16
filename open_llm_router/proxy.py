@@ -36,16 +36,21 @@ logger = logging.getLogger("uvicorn.error")
 def _request_error_details(exc: httpx.RequestError) -> dict[str, Any]:
     error_repr = repr(exc)
     error_message = str(exc).strip() or error_repr
+    error_type = exc.__class__.__name__.strip() or "RequestError"
     details: dict[str, Any] = {
         "error": error_message,
-        "error_type": exc.__class__.__name__,
+        "error_type": error_type,
         "error_repr": error_repr,
         "is_timeout": isinstance(exc, httpx.TimeoutException),
+        "status_code": None,
     }
     request = getattr(exc, "request", None)
     if isinstance(request, httpx.Request):
         details["request_method"] = request.method
         details["request_url"] = str(request.url)
+    response = getattr(exc, "response", None)
+    if isinstance(response, httpx.Response):
+        details["status_code"] = response.status_code
     return details
 
 
@@ -774,9 +779,14 @@ class BackendProxy:
             self._audit(
                 "proxy_fallbacks_disabled",
                 request_id=rid,
-                selected_model=route_decision.selected_model,
+                selected_model=primary_target.model,
                 primary_target=primary_target.label,
             )
+        effective_model_chain = _dedupe_preserving_order([target.model for target in candidate_targets])
+        effective_selected_model = (
+            effective_model_chain[0] if effective_model_chain else route_decision.selected_model
+        )
+        effective_fallback_models = effective_model_chain[1:] if effective_model_chain else []
         request_started = time.perf_counter()
         logger.info(
             (
@@ -785,7 +795,7 @@ class BackendProxy:
             ),
             rid,
             path,
-            route_decision.selected_model,
+            effective_selected_model,
             stream,
             len(candidate_targets),
         )
@@ -793,12 +803,12 @@ class BackendProxy:
             "proxy_start",
             request_id=rid,
             path=path,
-            selected_model=route_decision.selected_model,
+            selected_model=effective_selected_model,
             source=route_decision.source,
             task=route_decision.task,
             complexity=route_decision.complexity,
             requested_model=route_decision.requested_model,
-            fallback_models=route_decision.fallback_models,
+            fallback_models=effective_fallback_models,
             provider_preferences=route_decision.provider_preferences,
             stream=stream,
             candidate_targets=len(candidate_targets),
@@ -1045,13 +1055,21 @@ class BackendProxy:
                 )
             except httpx.RequestError as exc:
                 error_details = _request_error_details(exc)
+                attempt_number = index + 1
+                total_attempts = len(candidate_targets)
                 if self._circuit_breakers is not None:
                     self._circuit_breakers.on_failure(breaker_key)
                 logger.warning(
-                    "proxy_request_error request_id=%s target=%s error_type=%s error=%s",
+                    (
+                        "proxy_request_error request_id=%s target=%s "
+                        "attempt=%d/%d error_type=%s status_code=%s error=%s"
+                    ),
                     rid,
                     target.label,
+                    attempt_number,
+                    total_attempts,
                     error_details["error_type"],
+                    error_details.get("status_code"),
                     error_details["error"],
                 )
                 self._audit(
@@ -1061,6 +1079,8 @@ class BackendProxy:
                     account=target.account_name,
                     model=target.model,
                     upstream_model=target.upstream_model,
+                    attempt=attempt_number,
+                    total_attempts=total_attempts,
                     attempt_latency_ms=round((time.perf_counter() - attempt_started) * 1000.0, 3),
                     **error_details,
                 )
