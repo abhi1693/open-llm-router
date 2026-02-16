@@ -131,6 +131,10 @@ async def startup() -> None:
     app.state.backend_proxy = BackendProxy(
         base_url=settings.backend_base_url,
         timeout_seconds=settings.backend_timeout_seconds,
+        connect_timeout_seconds=settings.backend_connect_timeout_seconds,
+        read_timeout_seconds=settings.backend_read_timeout_seconds,
+        write_timeout_seconds=settings.backend_write_timeout_seconds,
+        pool_timeout_seconds=settings.backend_pool_timeout_seconds,
         backend_api_key=settings.backend_api_key,
         retry_statuses=routing_config.retry_statuses,
         accounts=routing_config.accounts,

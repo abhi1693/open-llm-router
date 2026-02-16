@@ -53,6 +53,9 @@ SKIP_TEXT_KEYS = {
     "finish_reason",
 }
 
+MAX_USER_MESSAGES_FOR_CLASSIFICATION = 8
+MAX_USER_TEXT_CHARS_FOR_CLASSIFICATION = 8000
+
 
 def _bump_complexity(level: str) -> str:
     if level == "low":
@@ -123,6 +126,18 @@ def _collect_user_message_texts(payload: dict[str, Any], signals: dict[str, Any]
     return user_texts
 
 
+def _scoped_user_text_blob(user_texts: list[str]) -> tuple[str, bool]:
+    if not user_texts:
+        return "", False
+    considered = user_texts[-MAX_USER_MESSAGES_FOR_CLASSIFICATION:]
+    blob = " ".join(considered).strip()
+    if len(blob) <= MAX_USER_TEXT_CHARS_FOR_CLASSIFICATION:
+        return blob, len(considered) != len(user_texts)
+
+    trimmed_blob = blob[-MAX_USER_TEXT_CHARS_FOR_CLASSIFICATION:]
+    return trimmed_blob, True
+
+
 def classify_request(
     payload: dict[str, Any],
     endpoint: str,
@@ -136,10 +151,11 @@ def classify_request(
     user_texts = _collect_user_message_texts(payload, signals)
     if user_texts:
         text_scope = "user_messages"
-        text_blob = " ".join(user_texts).strip()
+        text_blob, user_scope_truncated = _scoped_user_text_blob(user_texts)
     else:
         text_scope = "payload"
         text_blob = full_text_blob
+        user_scope_truncated = False
 
     text_lower = text_blob.lower()
     text_length = len(text_blob)
@@ -207,6 +223,13 @@ def classify_request(
             "text_scope": text_scope,
             "text_length": text_length,
             "text_length_total": full_text_length,
+            "user_messages_count_total": len(user_texts),
+            "user_messages_count_considered": (
+                min(len(user_texts), MAX_USER_MESSAGES_FOR_CLASSIFICATION)
+                if user_texts
+                else 0
+            ),
+            "user_text_scope_truncated": user_scope_truncated,
             "code_score": code_score,
             "think_score": think_score,
             "instruction_score": instruction_score,

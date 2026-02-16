@@ -270,6 +270,8 @@ class SmartModelRouter:
 
         for model in candidate_models:
             reasons: list[str] = []
+            if not self._is_model_available_for_any_enabled_account(model):
+                reasons.append("no_enabled_account_supports_model")
             metadata = self.config.models.get(model) or {}
             capabilities = _extract_capabilities(metadata)
             if required_capabilities and capabilities:
@@ -309,6 +311,14 @@ class SmartModelRouter:
             return accepted, rejected
         # If all candidates were rejected, keep original chain to avoid complete outage.
         return candidate_models, rejected
+
+    def _is_model_available_for_any_enabled_account(self, model: str) -> bool:
+        if not self.config.accounts:
+            return True
+        return any(
+            account.enabled and account.supports_model(model)
+            for account in self.config.accounts
+        )
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:

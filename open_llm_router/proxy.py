@@ -574,11 +574,41 @@ class BackendProxy:
         model_registry: dict[str, dict[str, Any]] | None = None,
         audit_hook: Callable[[dict[str, Any]], None] | None = None,
         circuit_breakers: CircuitBreakerRegistry | None = None,
+        connect_timeout_seconds: float | None = None,
+        read_timeout_seconds: float | None = None,
+        write_timeout_seconds: float | None = None,
+        pool_timeout_seconds: float | None = None,
     ) -> None:
         self.retry_statuses = set(retry_statuses)
+        connect_timeout = (
+            max(0.1, float(connect_timeout_seconds))
+            if connect_timeout_seconds is not None
+            else max(0.1, min(5.0, timeout_seconds))
+        )
+        read_timeout = (
+            max(0.1, float(read_timeout_seconds))
+            if read_timeout_seconds is not None
+            else max(0.1, float(timeout_seconds))
+        )
+        write_timeout = (
+            max(0.1, float(write_timeout_seconds))
+            if write_timeout_seconds is not None
+            else max(0.1, float(timeout_seconds))
+        )
+        pool_timeout = (
+            max(0.1, float(pool_timeout_seconds))
+            if pool_timeout_seconds is not None
+            else connect_timeout
+        )
         http2_enabled = _can_enable_http2()
         self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout_seconds, connect=min(5.0, timeout_seconds)),
+            timeout=httpx.Timeout(
+                timeout=None,
+                connect=connect_timeout,
+                read=read_timeout,
+                write=write_timeout,
+                pool=pool_timeout,
+            ),
             limits=httpx.Limits(max_connections=512, max_keepalive_connections=128),
             http2=http2_enabled,
         )

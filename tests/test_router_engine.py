@@ -257,3 +257,67 @@ def test_hard_constraints_filter_models_that_exceed_output_token_limit():
 
     decision = router.decide(payload, "/v1/chat/completions")
     assert decision.selected_model == "large-model"
+
+
+def test_hard_constraints_filter_models_without_enabled_account_support():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "supported-model",
+            "task_routes": {
+                "general": {
+                    "low": ["unsupported-model", "supported-model"],
+                },
+            },
+            "models": {
+                "unsupported-model": {"capabilities": ["chat"]},
+                "supported-model": {"capabilities": ["chat"]},
+            },
+            "learned_routing": {
+                "enabled": True,
+                "task_candidates": {
+                    "general": ["unsupported-model", "supported-model"],
+                },
+            },
+            "model_profiles": {
+                "unsupported-model": {"quality_bias": 1.0, "quality_sensitivity": 2.0},
+                "supported-model": {"quality_bias": 0.2, "quality_sensitivity": 1.0},
+            },
+            "accounts": [
+                {
+                    "name": "only-supported",
+                    "provider": "openai",
+                    "base_url": "http://localhost:8000",
+                    "auth_mode": "passthrough",
+                    "models": ["supported-model"],
+                    "enabled": True,
+                }
+            ],
+        }
+    )
+    router = SmartModelRouter(config)
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        endpoint="/v1/chat/completions",
+    )
+    assert decision.selected_model == "supported-model"
+    assert (
+        "no_enabled_account_supports_model"
+        in decision.decision_trace["hard_constraint_rejections"]["unsupported-model"]
+    )
+
+
+def test_classifier_uses_recent_user_window_instead_of_full_history():
+    router = _router()
+    very_long_old_message = "reason analyze architect design plan " * 120
+    messages = [{"role": "user", "content": very_long_old_message} for _ in range(30)]
+    messages.extend([{"role": "user", "content": "ok"} for _ in range(10)])
+    decision = router.decide(
+        payload={"model": "auto", "messages": messages},
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "general"
+    assert decision.complexity == "low"

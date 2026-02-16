@@ -85,7 +85,10 @@ def score_model(
     z = learned_cfg.bias + profile.quality_bias + profile.quality_sensitivity * weighted_feature_sum
     quality_probability = _sigmoid(z)
 
-    input_tokens = max(1.0, float(signals.get("text_length", 0)) / 4.0)
+    input_char_count = float(
+        signals.get("text_length_total", signals.get("text_length", 0))
+    )
+    input_tokens = max(1.0, input_char_count / 4.0)
     max_output_tokens = payload.get("max_output_tokens")
     if max_output_tokens is None:
         max_output_tokens = payload.get("max_tokens")
@@ -120,4 +123,3 @@ def _sigmoid(value: float) -> float:
         return 1.0 / (1.0 + exp_neg)
     exp_pos = exp(value)
     return exp_pos / (1.0 + exp_pos)
-

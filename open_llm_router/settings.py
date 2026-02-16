@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     backend_base_url: str = "http://localhost:11434"
     backend_api_key: str | None = None
     backend_timeout_seconds: float = 120.0
+    backend_connect_timeout_seconds: float = 5.0
+    backend_read_timeout_seconds: float = 30.0
+    backend_write_timeout_seconds: float = 30.0
+    backend_pool_timeout_seconds: float = 5.0
     routing_config_path: str = "router.profile.yaml"
     ingress_auth_required: bool = False
     ingress_api_keys: str = ""

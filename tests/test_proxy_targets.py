@@ -132,6 +132,27 @@ def test_build_targets_uses_model_registry_id_for_upstream_model():
     asyncio.run(proxy.close())
 
 
+def test_backend_proxy_applies_explicit_timeout_configuration():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[],
+        connect_timeout_seconds=1.5,
+        read_timeout_seconds=12.0,
+        write_timeout_seconds=8.0,
+        pool_timeout_seconds=2.5,
+    )
+
+    timeout = proxy.client.timeout
+    assert timeout.connect == 1.5
+    assert timeout.read == 12.0
+    assert timeout.write == 8.0
+    assert timeout.pool == 2.5
+    asyncio.run(proxy.close())
+
+
 def test_build_targets_request_source_ignores_fallbacks():
     proxy = BackendProxy(
         base_url="http://legacy",
