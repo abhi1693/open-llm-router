@@ -27,7 +27,8 @@ def test_v1_models_allows_when_auth_disabled(monkeypatch):
         assert response.status_code == 200
         body = response.json()
         ids = [item["id"] for item in body.get("data", [])]
-        assert ids == ["auto"]
+        assert "auto" in ids
+        assert len(ids) >= 1
 
 
 def test_v1_models_rejects_without_token_when_auth_required(monkeypatch):

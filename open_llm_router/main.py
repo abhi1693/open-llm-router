@@ -61,16 +61,282 @@ async def auth_middleware(request: Request, call_next):
 
 
 def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
+    no_data_markers = {"n/a", "null", "none", "undefined"}
+
+    def _prune_empty_fields(value: Any) -> Any:
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            if normalized.lower() in no_data_markers:
+                return None
+            return normalized
+        if isinstance(value, dict):
+            cleaned: dict[str, Any] = {}
+            for key, raw in value.items():
+                normalized = _prune_empty_fields(raw)
+                if normalized is None:
+                    continue
+                if isinstance(normalized, (list, dict)) and not normalized:
+                    continue
+                cleaned[key] = normalized
+            return cleaned
+        if isinstance(value, list):
+            cleaned_list: list[Any] = []
+            for item in value:
+                normalized = _prune_empty_fields(item)
+                if normalized is None:
+                    continue
+                if isinstance(normalized, (list, dict)) and not normalized:
+                    continue
+                cleaned_list.append(normalized)
+            return cleaned_list
+        return value
+
+    def _format_price(value: Any) -> str:
+        if not isinstance(value, (int, float)):
+            return "0"
+        parsed = float(value)
+        if parsed <= 0:
+            return "0"
+        if parsed >= 1:
+            text = f"{parsed:.6f}"
+        else:
+            text = f"{parsed:.12f}"
+        return text.rstrip("0").rstrip(".")
+
+    def _provider_for_model(model_id: str, metadata: dict[str, Any]) -> str:
+        provider = metadata.get("provider")
+        if isinstance(provider, str) and provider.strip():
+            return provider.strip()
+        if "/" in model_id:
+            prefix, _, _ = model_id.partition("/")
+            if prefix.strip():
+                return prefix.strip()
+        return "open-llm-router"
+
+    def _supported_parameters(metadata: dict[str, Any]) -> list[str]:
+        raw = metadata.get("supported_parameters")
+        if isinstance(raw, list):
+            deduped: list[str] = []
+            seen: set[str] = set()
+            for item in raw:
+                if not isinstance(item, str):
+                    continue
+                normalized = item.strip()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                deduped.append(normalized)
+            if deduped:
+                return deduped
+
+        capabilities = metadata.get("capabilities")
+        if not isinstance(capabilities, list):
+            return []
+        capability_set = {
+            item.strip().lower()
+            for item in capabilities
+            if isinstance(item, str) and item.strip()
+        }
+        supported = {"max_tokens", "temperature", "top_p"}
+        if "tool_use" in capability_set:
+            supported.update({"tools", "tool_choice"})
+        if "reasoning" in capability_set:
+            supported.update({"reasoning", "include_reasoning"})
+        if "json_mode" in capability_set:
+            supported.update({"structured_outputs", "response_format"})
+        return sorted(supported)
+
+    def _architecture(
+        model_id: str, metadata: dict[str, Any], supported_parameters: list[str]
+    ) -> dict[str, Any]:
+        raw = metadata.get("architecture")
+        if isinstance(raw, dict):
+            input_modalities = raw.get("input_modalities")
+            output_modalities = raw.get("output_modalities")
+            tokenizer = raw.get("tokenizer")
+            instruct_type = raw.get("instruct_type")
+            modality = raw.get("modality")
+            if not isinstance(input_modalities, list):
+                input_modalities = ["text"]
+            if not isinstance(output_modalities, list):
+                output_modalities = ["text"]
+            if not isinstance(tokenizer, str) or not tokenizer.strip():
+                tokenizer = "Other"
+            if not isinstance(modality, str) or not modality.strip():
+                modality = f"{'+'.join(input_modalities)}->{'+'.join(output_modalities)}"
+            if not isinstance(instruct_type, str):
+                instruct_type = None
+            return {
+                "modality": modality,
+                "input_modalities": input_modalities,
+                "output_modalities": output_modalities,
+                "tokenizer": tokenizer,
+                "instruct_type": instruct_type,
+            }
+
+        capabilities = metadata.get("capabilities")
+        capability_values = capabilities if isinstance(capabilities, list) else []
+        capability_set = {
+            item.strip().lower()
+            for item in capability_values
+            if isinstance(item, str) and item.strip()
+        }
+        input_modalities = ["text"]
+        if "vision" in capability_set or "image" in capability_set:
+            input_modalities.append("image")
+        output_modalities = ["text"]
+        return {
+            "modality": f"{'+'.join(input_modalities)}->{'+'.join(output_modalities)}",
+            "input_modalities": input_modalities,
+            "output_modalities": output_modalities,
+            "tokenizer": "Other",
+            "instruct_type": "chat" if "tools" in supported_parameters else None,
+        }
+
+    def _pricing(metadata: dict[str, Any]) -> dict[str, str]:
+        raw = metadata.get("pricing")
+        if isinstance(raw, dict):
+            output: dict[str, str] = {}
+            for key, value in raw.items():
+                if not isinstance(key, str):
+                    continue
+                output[key] = _format_price(value)
+            if output:
+                return output
+
+        costs = metadata.get("costs")
+        if not isinstance(costs, dict):
+            return {"prompt": "0", "completion": "0"}
+        prompt_per_1k = costs.get("input_per_1k")
+        completion_per_1k = costs.get("output_per_1k")
+        prompt = float(prompt_per_1k) / 1000.0 if isinstance(prompt_per_1k, (int, float)) else 0.0
+        completion = (
+            float(completion_per_1k) / 1000.0
+            if isinstance(completion_per_1k, (int, float))
+            else 0.0
+        )
+        return {"prompt": _format_price(prompt), "completion": _format_price(completion)}
+
+    def _top_provider(context_length: int, metadata: dict[str, Any]) -> dict[str, Any]:
+        raw = metadata.get("top_provider")
+        if isinstance(raw, dict):
+            value = dict(raw)
+            value.setdefault("context_length", context_length)
+            value.setdefault("max_completion_tokens", None)
+            value.setdefault("is_moderated", False)
+            return value
+
+        limits = metadata.get("limits")
+        max_completion_tokens: int | None = None
+        if isinstance(limits, dict):
+            raw_limit = limits.get("max_output_tokens")
+            if isinstance(raw_limit, int):
+                max_completion_tokens = raw_limit
+        return {
+            "context_length": context_length,
+            "max_completion_tokens": max_completion_tokens,
+            "is_moderated": False,
+        }
+
+    def _build_model_entry(model_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        provider = _provider_for_model(model_id, metadata)
+        canonical_slug = metadata.get("canonical_slug")
+        if not isinstance(canonical_slug, str) or not canonical_slug.strip():
+            canonical_slug = model_id
+
+        name = metadata.get("name")
+        if not isinstance(name, str) or not name.strip():
+            name = model_id
+
+        created = metadata.get("created")
+        if not isinstance(created, int):
+            created = 0
+
+        limits = metadata.get("limits")
+        context_length = metadata.get("context_length")
+        if not isinstance(context_length, int) and isinstance(limits, dict):
+            maybe_context = limits.get("context_tokens")
+            if isinstance(maybe_context, int):
+                context_length = maybe_context
+        if not isinstance(context_length, int):
+            context_length = 0
+
+        supported_parameters = _supported_parameters(metadata)
+        entry = {
+            "id": model_id,
+            "object": "model",
+            "owned_by": provider,
+            "canonical_slug": canonical_slug,
+            "name": name,
+            "created": created,
+            "description": str(metadata.get("description") or ""),
+            "context_length": context_length,
+            "architecture": _architecture(model_id, metadata, supported_parameters),
+            "pricing": _pricing(metadata),
+            "top_provider": _top_provider(context_length, metadata),
+            "per_request_limits": metadata.get("per_request_limits"),
+            "supported_parameters": supported_parameters,
+            "default_parameters": metadata.get("default_parameters")
+            if isinstance(metadata.get("default_parameters"), dict)
+            else {
+                "temperature": None,
+                "top_p": None,
+                "frequency_penalty": None,
+            },
+            "hugging_face_id": metadata.get("hugging_face_id")
+            if isinstance(metadata.get("hugging_face_id"), str)
+            else "",
+            "expiration_date": metadata.get("expiration_date"),
+        }
+        return _prune_empty_fields(entry)
+
+    auto_entry = _prune_empty_fields(
+        {
+        "id": "auto",
+        "object": "model",
+        "owned_by": "open-llm-router",
+        "canonical_slug": "auto",
+        "name": "Auto Router",
+        "created": 0,
+        "description": "Automatically routes requests across configured models.",
+        "context_length": 0,
+        "architecture": {
+            "modality": "text->text",
+            "input_modalities": ["text"],
+            "output_modalities": ["text"],
+            "tokenizer": "Other",
+            "instruct_type": None,
+        },
+        "pricing": {"prompt": "0", "completion": "0"},
+        "top_provider": {
+            "context_length": 0,
+            "max_completion_tokens": None,
+            "is_moderated": False,
+        },
+        "per_request_limits": None,
+        "supported_parameters": [],
+        "default_parameters": {"temperature": None, "top_p": None, "frequency_penalty": None},
+        "hugging_face_id": "",
+        "expiration_date": None,
+        }
+    )
+
+    seen: set[str] = {"auto"}
+    data: list[dict[str, Any]] = [auto_entry]
+    for model_id in config.available_models():
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        metadata = config.models.get(model_id)
+        if not isinstance(metadata, dict):
+            metadata = {}
+        data.append(_build_model_entry(model_id, metadata))
+
     return {
         "object": "list",
-        "data": [
-            {
-                "id": "auto",
-                "object": "model",
-                "created": 0,
-                "owned_by": "open-llm-router",
-            }
-        ],
+        "data": data,
     }
 
 
