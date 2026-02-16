@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     oauth_clock_skew_seconds: int = 30
     router_audit_log_enabled: bool = True
     router_audit_log_path: str = "logs/router_decisions.jsonl"
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_failure_threshold: int = 5
+    circuit_breaker_recovery_timeout_seconds: float = 30.0
+    circuit_breaker_half_open_max_requests: int = 1
+    idempotency_enabled: bool = True
+    idempotency_ttl_seconds: int = 120
+    idempotency_wait_timeout_seconds: float = 30.0
+    redis_url: str | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="",

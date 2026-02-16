@@ -89,3 +89,74 @@ def test_learned_router_prefers_stronger_model_for_hard_coding_prompt():
     assert decision.complexity == "xhigh"
     assert decision.selected_model == "strong-model"
     assert decision.ranked_models[0] == "strong-model"
+
+
+def test_learned_router_keeps_candidates_within_rule_chain():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "cheap-model",
+            "task_routes": {
+                "coding": {
+                    "low": "cheap-model",
+                    "medium": "medium-model",
+                    "high": "strong-model",
+                    "xhigh": "xhigh-model",
+                },
+            },
+            "fallback_models": ["medium-model"],
+            "learned_routing": {
+                "enabled": True,
+                "task_candidates": {
+                    # Includes xhigh-model, but low-complexity routing should stay on
+                    # the rule-chain candidate set.
+                    "coding": ["cheap-model", "medium-model", "strong-model", "xhigh-model"],
+                },
+            },
+            "model_profiles": {
+                "cheap-model": {
+                    "quality_bias": 0.1,
+                    "quality_sensitivity": 0.7,
+                    "cost_input_per_1k": 0.0001,
+                    "cost_output_per_1k": 0.0003,
+                    "latency_ms": 300,
+                    "failure_rate": 0.02,
+                },
+                "medium-model": {
+                    "quality_bias": 0.35,
+                    "quality_sensitivity": 1.3,
+                    "cost_input_per_1k": 0.0006,
+                    "cost_output_per_1k": 0.0018,
+                    "latency_ms": 900,
+                    "failure_rate": 0.03,
+                },
+                "strong-model": {
+                    "quality_bias": 0.7,
+                    "quality_sensitivity": 2.0,
+                    "cost_input_per_1k": 0.0012,
+                    "cost_output_per_1k": 0.004,
+                    "latency_ms": 1400,
+                    "failure_rate": 0.03,
+                },
+                "xhigh-model": {
+                    "quality_bias": 0.9,
+                    "quality_sensitivity": 2.3,
+                    "cost_input_per_1k": 0.0022,
+                    "cost_output_per_1k": 0.0072,
+                    "latency_ms": 1600,
+                    "failure_rate": 0.035,
+                },
+            },
+        }
+    )
+
+    router = SmartModelRouter(config)
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "Write a tiny python helper"}],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.complexity == "low"
+    assert "xhigh-model" not in decision.ranked_models

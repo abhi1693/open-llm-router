@@ -5,13 +5,20 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
+from open_llm_router.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
+)
+from open_llm_router.idempotency import (
+    IdempotencyBackend,
+    IdempotencyConfig,
+    build_idempotency_store,
+    build_idempotency_cache_key,
 )
 from open_llm_router.proxy import BackendProxy
 from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
@@ -104,6 +111,23 @@ async def startup() -> None:
         enabled=settings.router_audit_log_enabled,
     )
     app.state.audit_logger = audit_logger
+    app.state.circuit_breakers = CircuitBreakerRegistry(
+        CircuitBreakerConfig(
+            enabled=settings.circuit_breaker_enabled,
+            failure_threshold=max(1, settings.circuit_breaker_failure_threshold),
+            recovery_timeout_seconds=max(1.0, settings.circuit_breaker_recovery_timeout_seconds),
+            half_open_max_requests=max(1, settings.circuit_breaker_half_open_max_requests),
+        )
+    )
+    app.state.idempotency_store = build_idempotency_store(
+        config=IdempotencyConfig(
+            enabled=settings.idempotency_enabled,
+            ttl_seconds=max(1, settings.idempotency_ttl_seconds),
+            wait_timeout_seconds=max(0.1, settings.idempotency_wait_timeout_seconds),
+        ),
+        redis_url=settings.redis_url,
+        logger=logger,
+    )
     app.state.backend_proxy = BackendProxy(
         base_url=settings.backend_base_url,
         timeout_seconds=settings.backend_timeout_seconds,
@@ -112,6 +136,7 @@ async def startup() -> None:
         accounts=routing_config.accounts,
         model_registry=routing_config.models,
         audit_hook=audit_logger.log,
+        circuit_breakers=app.state.circuit_breakers,
     )
     logger.info(
         (
@@ -159,15 +184,43 @@ async def _proxy_json_request(request: Request, path: str):
 
     router: SmartModelRouter = app.state.smart_router
     proxy: BackendProxy = app.state.backend_proxy
+    idempotency_store: IdempotencyBackend = app.state.idempotency_store
 
     request_id = (
         request.headers.get("x-request-id")
         or request.headers.get("x-correlation-id")
         or uuid4().hex[:12]
     )
+    is_stream = bool(payload.get("stream"))
+    idempotency_key = request.headers.get("Idempotency-Key")
+    idempotency_result = None
+    cache_key: str | None = None
+    is_leader = False
+    if idempotency_key and not is_stream:
+        tenant_id = (
+            request.headers.get("OpenAI-Organization")
+            or request.headers.get("X-Tenant-Id")
+            or "default"
+        )
+        cache_key = build_idempotency_cache_key(
+            idempotency_key=idempotency_key.strip(),
+            tenant_id=tenant_id.strip(),
+            path=path,
+            payload=payload,
+        )
+        idempotency_result = await idempotency_store.begin(cache_key)
+        if idempotency_result.mode == "replay" and idempotency_result.cached is not None:
+            return idempotency_result.cached.to_fastapi_response()
+        if idempotency_result.mode == "wait":
+            cached = await idempotency_store.wait_for_existing(idempotency_result)
+            if cached is not None:
+                return cached.to_fastapi_response()
+        is_leader = idempotency_result.mode == "leader"
     try:
         route_decision = router.decide(payload=payload, endpoint=path)
     except InvalidModelError as exc:
+        if cache_key and is_leader:
+            await idempotency_store.release_without_store(cache_key)
         logger.info(
             "invalid_model request_id=%s requested_model=%s available_models=%d",
             request_id,
@@ -228,15 +281,45 @@ async def _proxy_json_request(request: Request, path: str):
             }
         )
 
-    stream = bool(payload.get("stream"))
-    return await proxy.forward_with_fallback(
-        path=path,
-        payload=payload,
-        incoming_headers=request.headers,
-        route_decision=route_decision,
-        stream=stream,
-        request_id=request_id,
-    )
+    try:
+        response: Response = await proxy.forward_with_fallback(
+            path=path,
+            payload=payload,
+            incoming_headers=request.headers,
+            route_decision=route_decision,
+            stream=is_stream,
+            request_id=request_id,
+        )
+    except Exception:
+        if cache_key and is_leader:
+            # If upstream call crashes before we can cache a final response,
+            # unblock waiters so they can retry.
+            await idempotency_store.release_without_store(cache_key)
+        raise
+
+    if cache_key and is_leader:
+        try:
+            if isinstance(response, StreamingResponse):
+                await idempotency_store.release_without_store(cache_key)
+            else:
+                response_body = bytes(getattr(response, "body", b""))
+                cache_headers = {
+                    key: value
+                    for key, value in response.headers.items()
+                    if key.lower() in {"content-type", "x-router-model", "x-router-provider"}
+                }
+                await idempotency_store.store(
+                    key=cache_key,
+                    status_code=response.status_code,
+                    headers=cache_headers,
+                    body=response_body,
+                )
+                response.headers["x-router-idempotency-status"] = "stored"
+        except Exception:
+            await idempotency_store.release_without_store(cache_key)
+            raise
+
+    return response
 
 
 @app.post("/v1/chat/completions")

@@ -194,3 +194,66 @@ def test_routes_xhigh_for_reasoning_effort_high():
     assert decision.task == "thinking"
     assert decision.complexity == "xhigh"
     assert decision.selected_model == "think-codex"
+
+
+def test_hard_constraints_filter_models_without_required_tool_capability():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "text-model",
+            "task_routes": {
+                "general": {
+                    "low": ["text-model", "tool-model"],
+                },
+            },
+            "models": {
+                "text-model": {"capabilities": ["chat", "streaming"]},
+                "tool-model": {"capabilities": ["chat", "streaming", "tool_use"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "messages": [{"role": "user", "content": "Call the weather tool"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "get_weather", "parameters": {"type": "object"}},
+            }
+        ],
+    }
+
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "tool-model"
+
+
+def test_hard_constraints_filter_models_that_exceed_output_token_limit():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "small-model",
+            "task_routes": {
+                "general": {
+                    "low": ["small-model", "large-model"],
+                },
+            },
+            "models": {
+                "small-model": {
+                    "capabilities": ["chat", "streaming"],
+                    "limits": {"max_output_tokens": 128, "context_tokens": 4096},
+                },
+                "large-model": {
+                    "capabilities": ["chat", "streaming"],
+                    "limits": {"max_output_tokens": 2048, "context_tokens": 32768},
+                },
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "messages": [{"role": "user", "content": "Generate a long answer"}],
+        "max_tokens": 500,
+    }
+
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "large-model"

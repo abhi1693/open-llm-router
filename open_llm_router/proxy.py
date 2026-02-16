@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -15,6 +14,7 @@ from fastapi import status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.datastructures import Headers
 
+from open_llm_router.circuit_breaker import CircuitBreakerRegistry
 from open_llm_router.config import BackendAccount
 from open_llm_router.router_engine import RouteDecision
 
@@ -557,14 +557,21 @@ class BackendProxy:
         accounts: list[BackendAccount] | None = None,
         model_registry: dict[str, dict[str, Any]] | None = None,
         audit_hook: Callable[[dict[str, Any]], None] | None = None,
+        circuit_breakers: CircuitBreakerRegistry | None = None,
     ) -> None:
         self.retry_statuses = set(retry_statuses)
-        self.client = httpx.AsyncClient(timeout=timeout_seconds)
+        http2_enabled = _can_enable_http2()
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_seconds, connect=min(5.0, timeout_seconds)),
+            limits=httpx.Limits(max_connections=512, max_keepalive_connections=128),
+            http2=http2_enabled,
+        )
         self._oauth_runtime: dict[str, OAuthRuntimeState] = {}
         self._oauth_refresh_locks: dict[str, asyncio.Lock] = {}
         self._rate_limited_until: dict[str, float] = {}
         self._model_registry = model_registry or {}
         self._audit_hook = audit_hook
+        self._circuit_breakers = circuit_breakers
         if accounts:
             self.accounts = [account for account in accounts if account.enabled]
         else:
@@ -682,6 +689,28 @@ class BackendProxy:
         attempted_targets: list[str] = []
 
         for index, target in enumerate(candidate_targets):
+            breaker_key = f"{target.account_name}:{target.provider}"
+            if (
+                self._circuit_breakers is not None
+                and not self._circuit_breakers.allow_request(breaker_key)
+            ):
+                snapshot = self._circuit_breakers.snapshot(breaker_key)
+                logger.info(
+                    "proxy_skip_circuit_open request_id=%s target=%s state=%s failures=%s",
+                    rid,
+                    target.label,
+                    snapshot.get("state"),
+                    snapshot.get("failure_count"),
+                )
+                self._audit(
+                    "proxy_skip_circuit_open",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                    breaker=snapshot,
+                )
+                continue
             if self._is_temporarily_rate_limited(target.account_name):
                 logger.info(
                     "proxy_skip_rate_limited request_id=%s target=%s",
@@ -717,7 +746,7 @@ class BackendProxy:
                 model=target.model,
                 auth_mode=target.auth_mode,
             )
-            trial_payload = deepcopy(payload)
+            trial_payload = dict(payload)
             trial_payload["model"] = target.upstream_model
             request_spec = _prepare_upstream_request(
                 path=path,
@@ -765,6 +794,7 @@ class BackendProxy:
             )
 
             try:
+                attempt_started = time.perf_counter()
                 request = self.client.build_request(
                     method="POST",
                     url=f"{target.base_url.rstrip('/')}{request_spec.path}",
@@ -772,7 +802,26 @@ class BackendProxy:
                     headers=headers,
                 )
                 upstream = await self.client.send(request, stream=request_spec.stream)
+                connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
+                logger.info(
+                    "proxy_upstream_connected request_id=%s target=%s connect_ms=%.2f status=%d",
+                    rid,
+                    target.label,
+                    connect_latency_ms,
+                    upstream.status_code,
+                )
+                self._audit(
+                    "proxy_upstream_connected",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                    connect_ms=round(connect_latency_ms, 3),
+                    status=upstream.status_code,
+                )
             except httpx.RequestError as exc:
+                if self._circuit_breakers is not None:
+                    self._circuit_breakers.on_failure(breaker_key)
                 logger.warning(
                     "proxy_request_error request_id=%s target=%s error=%s",
                     rid,
@@ -804,6 +853,11 @@ class BackendProxy:
                 upstream.status_code in self.retry_statuses
                 and index < len(candidate_targets) - 1
             )
+            if upstream.status_code < 500 and upstream.status_code != 429:
+                if self._circuit_breakers is not None:
+                    self._circuit_breakers.on_success(breaker_key)
+            elif upstream.status_code in self.retry_statuses and self._circuit_breakers is not None:
+                self._circuit_breakers.on_failure(breaker_key)
             if upstream.status_code == 429:
                 self._mark_rate_limited(target.account_name, upstream.headers)
             if should_retry:
@@ -1705,6 +1759,14 @@ def _dedupe_preserving_order(values: list[str]) -> list[str]:
         seen.add(value)
         output.append(value)
     return output
+
+
+def _can_enable_http2() -> bool:
+    try:
+        import h2  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def _is_token_expiring(expires_at: int | None, skew_seconds: int = 60) -> bool:
