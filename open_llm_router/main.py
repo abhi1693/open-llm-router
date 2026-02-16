@@ -30,7 +30,11 @@ from open_llm_router.policy_updater import (
     apply_runtime_overrides,
 )
 from open_llm_router.proxy import BackendProxy
-from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
+from open_llm_router.router_engine import (
+    InvalidModelError,
+    RoutingConstraintError,
+    SmartModelRouter,
+)
 from open_llm_router.settings import get_settings
 
 app = FastAPI(
@@ -337,6 +341,23 @@ async def _proxy_json_request(request: Request, path: str):
                 "message": str(exc),
                 "requested_model": exc.requested_model,
                 "available_models": sorted(exc.available_models),
+            },
+        ) from exc
+    except RoutingConstraintError as exc:
+        if cache_key and is_leader:
+            await idempotency_store.release_without_store(cache_key)
+        logger.info(
+            "routing_constraints_unsatisfied request_id=%s constraint=%s",
+            request_id,
+            exc.constraint,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "type": "routing_constraints_unsatisfied",
+                "message": str(exc),
+                "constraint": exc.constraint,
+                "details": exc.details,
             },
         ) from exc
     logger.info(

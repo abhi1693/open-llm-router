@@ -682,6 +682,17 @@ class BackendProxy:
         request_id: str | None = None,
     ) -> Response:
         candidate_targets = self._build_candidate_targets(route_decision)
+        parameter_rejections: dict[str, list[str]] = {}
+        requested_parameters: list[str] = []
+        if self._requires_parameter_compatibility(route_decision.provider_preferences):
+            (
+                candidate_targets,
+                parameter_rejections,
+                requested_parameters,
+            ) = self._filter_targets_by_parameter_support(
+                candidate_targets=candidate_targets,
+                payload=payload,
+            )
         request_started = time.perf_counter()
         rid = request_id or "-"
         logger.info(
@@ -705,9 +716,48 @@ class BackendProxy:
             complexity=route_decision.complexity,
             requested_model=route_decision.requested_model,
             fallback_models=route_decision.fallback_models,
+            provider_preferences=route_decision.provider_preferences,
             stream=stream,
             candidate_targets=len(candidate_targets),
         )
+        if parameter_rejections:
+            self._audit(
+                "proxy_parameter_compatibility_filter",
+                request_id=rid,
+                requested_parameters=requested_parameters,
+                rejections=parameter_rejections,
+            )
+        if (
+            self._requires_parameter_compatibility(route_decision.provider_preferences)
+            and not candidate_targets
+        ):
+            logger.warning(
+                "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
+                rid,
+                ",".join(requested_parameters),
+            )
+            self._audit(
+                "proxy_require_parameters_no_target",
+                request_id=rid,
+                requested_parameters=requested_parameters,
+                rejections=parameter_rejections,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "type": "routing_constraints_unsatisfied",
+                        "message": (
+                            "No provider/account targets satisfy require_parameters constraints."
+                        ),
+                        "constraint": "require_parameters",
+                        "details": {
+                            "requested_parameters": requested_parameters,
+                            "rejections": parameter_rejections,
+                        },
+                    }
+                },
+            )
         if not candidate_targets:
             logger.warning(
                 "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
@@ -1636,11 +1686,14 @@ class BackendProxy:
             model_chain = _dedupe_preserving_order(
                 [route_decision.selected_model, *route_decision.fallback_models]
             )
-        targets: list[BackendTarget] = []
+        provider_preferences = route_decision.provider_preferences or {}
+        partition = self._provider_partition_mode(provider_preferences)
+        grouped_targets: list[list[BackendTarget]] = []
         for model in model_chain:
+            model_targets: list[BackendTarget] = []
             for account in self.accounts:
                 if account.enabled and account.supports_model(model):
-                    targets.append(
+                    model_targets.append(
                         BackendTarget(
                             account=account,
                             account_name=account.name,
@@ -1653,7 +1706,214 @@ class BackendProxy:
                             project=account.project,
                         )
                     )
+            grouped_targets.append(model_targets)
+
+        if partition == "none":
+            flattened_targets = [target for group in grouped_targets for target in group]
+            return self._sort_model_targets(
+                model_targets=flattened_targets,
+                provider_preferences=provider_preferences,
+            )
+
+        targets: list[BackendTarget] = []
+        for model_targets in grouped_targets:
+            sorted_targets = self._sort_model_targets(
+                model_targets=model_targets,
+                provider_preferences=provider_preferences,
+            )
+            targets.extend(sorted_targets)
         return targets
+
+    @staticmethod
+    def _provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
+        partition = str(provider_preferences.get("partition") or "").strip().lower()
+        if partition == "none":
+            return "none"
+        return "model"
+
+    @staticmethod
+    def _requires_parameter_compatibility(provider_preferences: dict[str, Any]) -> bool:
+        return bool(provider_preferences.get("require_parameters"))
+
+    def _sort_model_targets(
+        self,
+        *,
+        model_targets: list[BackendTarget],
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        if len(model_targets) <= 1 or not provider_preferences:
+            return model_targets
+
+        order_index = self._provider_order_index_map(
+            provider_preferences.get("order")
+        )
+        sort_by = str(provider_preferences.get("sort") or "").strip().lower()
+        if sort_by not in {"price", "latency", "throughput"}:
+            sort_by = ""
+
+        def _sort_key(target: BackendTarget) -> tuple[float, float, str]:
+            order_rank = float(order_index.get(target.provider.strip().lower(), 10_000))
+            if order_rank >= 10_000:
+                order_rank = float(
+                    order_index.get(target.account_name.strip().lower(), 10_000)
+                )
+
+            metric = 0.0
+            if sort_by == "price":
+                metric = self._target_effective_price(target)
+            elif sort_by == "latency":
+                metric = self._target_latency_ms(target)
+            elif sort_by == "throughput":
+                metric = -self._target_throughput(target)
+
+            return (
+                order_rank,
+                metric,
+                target.account_name,
+            )
+
+        return sorted(model_targets, key=_sort_key)
+
+    @staticmethod
+    def _provider_order_index_map(raw_order: Any) -> dict[str, int]:
+        if not isinstance(raw_order, list):
+            return {}
+        output: dict[str, int] = {}
+        for index, item in enumerate(raw_order):
+            if not isinstance(item, str):
+                continue
+            normalized = item.strip().lower()
+            if not normalized:
+                continue
+            output.setdefault(normalized, index)
+        return output
+
+    def _target_metadata(self, target: BackendTarget) -> dict[str, Any]:
+        metadata = self._model_registry.get(target.model)
+        if isinstance(metadata, dict):
+            return metadata
+
+        if "/" not in target.model:
+            provider_key = f"{target.provider.strip().lower()}/{target.model.strip()}"
+            provider_metadata = self._model_registry.get(provider_key)
+            if isinstance(provider_metadata, dict):
+                return provider_metadata
+
+        return {}
+
+    @staticmethod
+    def _extract_request_parameter_names(payload: dict[str, Any]) -> set[str]:
+        ignored_keys = {
+            "model",
+            "messages",
+            "input",
+            "prompt",
+            "stream",
+            "provider",
+            "allowed_models",
+            "plugins",
+        }
+        output: set[str] = set()
+        for raw_key in payload:
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip().lower()
+            if not key or key in ignored_keys:
+                continue
+            output.add(key)
+        return output
+
+    @staticmethod
+    def _normalize_parameter_set(raw: Any) -> set[str]:
+        if not isinstance(raw, list):
+            return set()
+        output: set[str] = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            normalized = item.strip().lower()
+            if normalized:
+                output.add(normalized)
+        return output
+
+    def _filter_targets_by_parameter_support(
+        self,
+        *,
+        candidate_targets: list[BackendTarget],
+        payload: dict[str, Any],
+    ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
+        requested = self._extract_request_parameter_names(payload)
+        requested_parameters = sorted(requested)
+        if not requested:
+            return candidate_targets, {}, requested_parameters
+
+        accepted: list[BackendTarget] = []
+        rejected: dict[str, list[str]] = {}
+        for target in candidate_targets:
+            metadata = self._target_metadata(target)
+            supported = self._normalize_parameter_set(metadata.get("supported_parameters"))
+            unsupported = self._normalize_parameter_set(metadata.get("unsupported_parameters"))
+
+            reasons: list[str] = []
+            if supported:
+                missing = sorted(requested - supported)
+                if missing:
+                    reasons.append(f"missing_supported_parameters:{','.join(missing)}")
+
+            blocked = sorted(requested & unsupported)
+            if blocked:
+                reasons.append(f"unsupported_parameters:{','.join(blocked)}")
+
+            if reasons:
+                rejected[target.label] = reasons
+                continue
+            accepted.append(target)
+
+        if accepted:
+            return accepted, rejected, requested_parameters
+        return [], rejected, requested_parameters
+
+    @staticmethod
+    def _as_non_negative_float(value: Any, default: float = 0.0) -> float:
+        if not isinstance(value, (int, float)):
+            return default
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed >= 0.0 else default
+
+    def _target_effective_price(self, target: BackendTarget) -> float:
+        metadata = self._target_metadata(target)
+        costs = metadata.get("costs")
+        if not isinstance(costs, dict):
+            return float("inf")
+        input_cost = self._as_non_negative_float(costs.get("input_per_1k"), default=0.0)
+        output_cost = self._as_non_negative_float(costs.get("output_per_1k"), default=0.0)
+        if input_cost <= 0.0 and output_cost <= 0.0:
+            return float("inf")
+        return input_cost + output_cost
+
+    def _target_latency_ms(self, target: BackendTarget) -> float:
+        metadata = self._target_metadata(target)
+        priors = metadata.get("priors")
+        if not isinstance(priors, dict):
+            return float("inf")
+        latency_ms = self._as_non_negative_float(priors.get("latency_ms"), default=0.0)
+        return latency_ms if latency_ms > 0.0 else float("inf")
+
+    def _target_throughput(self, target: BackendTarget) -> float:
+        metadata = self._target_metadata(target)
+        priors = metadata.get("priors")
+        if isinstance(priors, dict):
+            throughput = self._as_non_negative_float(priors.get("throughput_tps"), default=0.0)
+            if throughput > 0.0:
+                return throughput
+
+        latency_ms = self._target_latency_ms(target)
+        if latency_ms == float("inf") or latency_ms <= 0.0:
+            return 0.0
+        return 1000.0 / latency_ms
 
     def _is_temporarily_rate_limited(self, account_name: str) -> bool:
         until = self._rate_limited_until.get(account_name)

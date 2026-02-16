@@ -303,7 +303,8 @@ class RoutingConfig(BaseModel):
     def should_auto_route(self, requested_model: str | None) -> bool:
         if not requested_model or not requested_model.strip():
             return True
-        return requested_model.strip().lower() == "auto"
+        normalized = requested_model.strip().lower()
+        return normalized in {"auto", "openrouter/auto"}
 
     def route_for(self, task: str, complexity: str) -> list[str]:
         route = self.task_routes.get(task) or self.task_routes.get("general")

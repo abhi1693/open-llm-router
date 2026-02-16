@@ -1,7 +1,11 @@
 from open_llm_router.config import RoutingConfig
 import pytest
 
-from open_llm_router.router_engine import InvalidModelError, SmartModelRouter
+from open_llm_router.router_engine import (
+    InvalidModelError,
+    RoutingConstraintError,
+    SmartModelRouter,
+)
 
 
 def _router() -> SmartModelRouter:
@@ -79,6 +83,117 @@ def test_respects_explicit_provider_qualified_model():
     decision = router.decide(payload, "/v1/chat/completions")
     assert decision.selected_model == "openai/codex-1"
     assert decision.source == "request"
+
+
+def test_treats_openrouter_auto_alias_as_auto_routing():
+    router = _router()
+    payload = {
+        "model": "openrouter/auto",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.source == "auto"
+    assert decision.task == "general"
+    assert decision.selected_model == "general-7b"
+
+
+def test_allowed_models_filters_auto_route_candidates():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/codex-1",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/codex-1", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "fallback_models": [],
+            "models": {
+                "openai/codex-1": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "allowed_models": ["gemini/*"],
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "gemini/gemini-2.5-flash"
+
+
+def test_allowed_models_rejects_explicit_model_when_disallowed():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/codex-1",
+            "task_routes": {"general": {"default": "openai/codex-1"}},
+            "models": {
+                "openai/codex-1": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "openai/codex-1",
+        "allowed_models": ["gemini/*"],
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    with pytest.raises(RoutingConstraintError) as exc:
+        router.decide(payload, "/v1/chat/completions")
+    assert exc.value.constraint == "allowed_models"
+
+
+def test_allowed_models_raises_when_no_auto_candidates_match():
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/codex-1",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/codex-1", "openai/gpt-5.2"],
+                },
+            },
+            "fallback_models": [],
+            "models": {
+                "openai/codex-1": {"capabilities": ["chat"]},
+                "openai/gpt-5.2": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "allowed_models": ["gemini/*"],
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    with pytest.raises(RoutingConstraintError) as exc:
+        router.decide(payload, "/v1/chat/completions")
+    assert exc.value.constraint == "allowed_models"
+
+
+def test_provider_preferences_are_carried_in_route_decision():
+    router = _router()
+    payload = {
+        "model": "auto",
+        "provider": {
+            "order": ["gemini", "openai"],
+            "sort": "price",
+            "partition": "none",
+            "require_parameters": True,
+        },
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.provider_preferences == {
+        "order": ["gemini", "openai"],
+        "sort": "price",
+        "partition": "none",
+        "require_parameters": True,
+    }
 
 
 def test_routes_auto_coding_request():

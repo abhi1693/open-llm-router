@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from typing import Any
 
 from open_llm_router.classifier import classify_request
@@ -18,6 +19,13 @@ class InvalidModelError(ValueError):
         )
 
 
+class RoutingConstraintError(ValueError):
+    def __init__(self, *, constraint: str, message: str, details: dict[str, Any] | None = None):
+        self.constraint = constraint
+        self.details = details or {}
+        super().__init__(message)
+
+
 @dataclass(slots=True)
 class RouteDecision:
     selected_model: str
@@ -30,10 +38,12 @@ class RouteDecision:
     ranked_models: list[str] = field(default_factory=list)
     candidate_scores: list[dict[str, Any]] = field(default_factory=list)
     decision_trace: dict[str, Any] = field(default_factory=dict)
+    provider_preferences: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [
     "InvalidModelError",
+    "RoutingConstraintError",
     "RouteDecision",
     "SmartModelRouter",
 ]
@@ -60,6 +70,8 @@ class SmartModelRouter:
 
     def decide(self, payload: dict[str, Any], endpoint: str) -> RouteDecision:
         requested_model = self._normalize_requested_model(payload.get("model"))
+        allowed_model_patterns = _extract_allowed_model_patterns(payload)
+        provider_preferences = _extract_provider_preferences(payload)
         if self.config.should_auto_route(requested_model):
             task, complexity, signals = classify_request(
                 payload=payload,
@@ -75,8 +87,21 @@ class SmartModelRouter:
             candidate_chain = _dedupe_preserving_order(
                 [*routed_models, *self.config.fallback_models]
             )
-            default_chain, hard_constraint_trace = self._apply_hard_constraints(
+            allowed_filtered_chain = _filter_models_by_patterns(
                 candidate_models=candidate_chain,
+                patterns=allowed_model_patterns,
+            )
+            if allowed_model_patterns and not allowed_filtered_chain:
+                raise RoutingConstraintError(
+                    constraint="allowed_models",
+                    message="No route candidates match allowed_models constraints.",
+                    details={
+                        "allowed_models": allowed_model_patterns,
+                        "candidate_chain": candidate_chain,
+                    },
+                )
+            default_chain, hard_constraint_trace = self._apply_hard_constraints(
+                candidate_models=allowed_filtered_chain,
                 required_capabilities=required_capabilities,
                 payload=payload,
                 signals=signals,
@@ -89,9 +114,12 @@ class SmartModelRouter:
                 "route_models": list(routed_models),
                 "fallback_config": list(self.config.fallback_models),
                 "default_chain": list(candidate_chain),
+                "allowed_models": list(allowed_model_patterns),
+                "allowed_model_filtered_chain": list(allowed_filtered_chain),
                 "hard_constraint_required_capabilities": sorted(required_capabilities),
                 "hard_constraint_filtered_chain": list(default_chain),
                 "hard_constraint_rejections": hard_constraint_trace,
+                "provider_preferences": dict(provider_preferences),
             }
             if self.config.learned_routing.enabled:
                 (
@@ -129,11 +157,29 @@ class SmartModelRouter:
             source = "auto"
         else:
             self._require_known_model(requested_model=requested_model)
+            if allowed_model_patterns and not _model_matches_any_pattern(
+                model=requested_model,
+                patterns=allowed_model_patterns,
+            ):
+                raise RoutingConstraintError(
+                    constraint="allowed_models",
+                    message=(
+                        "Requested explicit model does not match allowed_models constraints."
+                    ),
+                    details={
+                        "requested_model": requested_model,
+                        "allowed_models": allowed_model_patterns,
+                    },
+                )
             task = "explicit"
             complexity = "n/a"
             signals = {}
             selected_model = requested_model
             fallbacks = [model for model in self.config.fallback_models if model != selected_model]
+            fallbacks = _filter_models_by_patterns(
+                candidate_models=fallbacks,
+                patterns=allowed_model_patterns,
+            )
             ranked_models = [selected_model, *fallbacks]
             candidate_scores = []
             source = "request"
@@ -141,6 +187,8 @@ class SmartModelRouter:
                 "auto": False,
                 "selected_reason": "explicit_model_request",
                 "fallback_config": list(self.config.fallback_models),
+                "allowed_models": list(allowed_model_patterns),
+                "provider_preferences": dict(provider_preferences),
             }
 
         return RouteDecision(
@@ -154,6 +202,7 @@ class SmartModelRouter:
             ranked_models=ranked_models,
             candidate_scores=candidate_scores,
             decision_trace=decision_trace,
+            provider_preferences=provider_preferences,
         )
 
     def _decide_learned(
@@ -367,3 +416,99 @@ def _as_positive_int(value: Any) -> int | None:
     if parsed <= 0:
         return None
     return parsed
+
+
+def _extract_allowed_model_patterns(payload: dict[str, Any]) -> list[str]:
+    patterns: list[str] = []
+
+    direct_patterns = payload.get("allowed_models")
+    if isinstance(direct_patterns, list):
+        patterns.extend(_coerce_string_list(direct_patterns))
+
+    plugins = payload.get("plugins")
+    if isinstance(plugins, list):
+        for plugin in plugins:
+            if not isinstance(plugin, dict):
+                continue
+            plugin_id = str(plugin.get("id") or "").strip().lower()
+            if plugin_id not in {"auto-router", "auto_router"}:
+                continue
+            allowed_models = plugin.get("allowed_models")
+            if isinstance(allowed_models, list):
+                patterns.extend(_coerce_string_list(allowed_models))
+
+    return _dedupe_preserving_order(patterns)
+
+
+def _extract_provider_preferences(payload: dict[str, Any]) -> dict[str, Any]:
+    raw = payload.get("provider")
+    if not isinstance(raw, dict):
+        return {}
+
+    output: dict[str, Any] = {}
+
+    order = raw.get("order")
+    if isinstance(order, list):
+        normalized_order = _coerce_string_list(order)
+        if normalized_order:
+            output["order"] = normalized_order
+
+    partition = raw.get("partition")
+    if isinstance(partition, str):
+        normalized_partition = partition.strip().lower()
+        if normalized_partition in {"model", "none"}:
+            output["partition"] = normalized_partition
+
+    require_parameters = raw.get("require_parameters")
+    if isinstance(require_parameters, bool):
+        output["require_parameters"] = require_parameters
+
+    raw_sort = raw.get("sort")
+    if isinstance(raw_sort, str):
+        normalized_sort = raw_sort.strip().lower()
+        if normalized_sort in {"price", "latency", "throughput"}:
+            output["sort"] = normalized_sort
+    elif isinstance(raw_sort, dict):
+        sort_by = raw_sort.get("by")
+        if isinstance(sort_by, str):
+            normalized_sort = sort_by.strip().lower()
+            if normalized_sort in {"price", "latency", "throughput"}:
+                output["sort"] = normalized_sort
+        partition = raw_sort.get("partition")
+        if isinstance(partition, str):
+            normalized_partition = partition.strip().lower()
+            if normalized_partition in {"model", "none"}:
+                output["partition"] = normalized_partition
+
+    return output
+
+
+def _filter_models_by_patterns(candidate_models: list[str], patterns: list[str]) -> list[str]:
+    if not patterns:
+        return list(candidate_models)
+    return [
+        model
+        for model in candidate_models
+        if _model_matches_any_pattern(model=model, patterns=patterns)
+    ]
+
+
+def _model_matches_any_pattern(model: str, patterns: list[str]) -> bool:
+    _, _, model_id = model.partition("/")
+    for pattern in patterns:
+        if fnmatch(model, pattern):
+            return True
+        if "/" not in pattern and model_id and fnmatch(model_id, pattern):
+            return True
+    return False
+
+
+def _coerce_string_list(values: list[Any]) -> list[str]:
+    output: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if normalized:
+            output.append(normalized)
+    return output

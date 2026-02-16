@@ -22,6 +22,7 @@ def _decision(
     selected: str,
     fallbacks: list[str],
     source: str = "auto",
+    provider_preferences: dict | None = None,
 ) -> RouteDecision:
     return RouteDecision(
         selected_model=selected,
@@ -31,6 +32,7 @@ def _decision(
         requested_model="auto",
         fallback_models=fallbacks,
         signals={},
+        provider_preferences=provider_preferences or {},
     )
 
 
@@ -71,6 +73,335 @@ def test_build_targets_across_accounts_and_fallback_models():
         "acct-a:m2",
         "acct-b:m3",
     ]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_applies_provider_order_preference():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            [],
+            provider_preferences={"order": ["gemini", "openai"]},
+        )
+    )
+    assert [target.account_name for target in targets] == ["acct-gemini", "acct-openai"]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_applies_provider_sort_price():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai/m1": {
+                "costs": {"input_per_1k": 0.0020, "output_per_1k": 0.0040},
+                "priors": {"latency_ms": 700},
+            },
+            "gemini/m1": {
+                "costs": {"input_per_1k": 0.0002, "output_per_1k": 0.0008},
+                "priors": {"latency_ms": 900},
+            },
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            [],
+            provider_preferences={"sort": "price"},
+        )
+    )
+    assert [target.account_name for target in targets] == ["acct-gemini", "acct-openai"]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_applies_provider_sort_latency():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai/m1": {
+                "costs": {"input_per_1k": 0.0020, "output_per_1k": 0.0040},
+                "priors": {"latency_ms": 450},
+            },
+            "gemini/m1": {
+                "costs": {"input_per_1k": 0.0002, "output_per_1k": 0.0008},
+                "priors": {"latency_ms": 900},
+            },
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            [],
+            provider_preferences={"sort": "latency"},
+        )
+    )
+    assert [target.account_name for target in targets] == ["acct-openai", "acct-gemini"]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_partition_model_keeps_model_grouping():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai/m1": {"priors": {"latency_ms": 700}},
+            "gemini/m1": {"priors": {"latency_ms": 900}},
+            "openai/m2": {"priors": {"latency_ms": 300}},
+            "gemini/m2": {"priors": {"latency_ms": 500}},
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1", "openai/m2"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1", "gemini/m2"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            ["m2"],
+            provider_preferences={"sort": "latency", "partition": "model"},
+        )
+    )
+    assert [(target.model, target.account_name) for target in targets] == [
+        ("m1", "acct-openai"),
+        ("m1", "acct-gemini"),
+        ("m2", "acct-openai"),
+        ("m2", "acct-gemini"),
+    ]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_partition_none_applies_global_sort():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai/m1": {"priors": {"latency_ms": 700}},
+            "gemini/m1": {"priors": {"latency_ms": 900}},
+            "openai/m2": {"priors": {"latency_ms": 300}},
+            "gemini/m2": {"priors": {"latency_ms": 500}},
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1", "openai/m2"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1", "gemini/m2"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            ["m2"],
+            provider_preferences={"sort": "latency", "partition": "none"},
+        )
+    )
+    assert [(target.model, target.account_name) for target in targets] == [
+        ("m2", "acct-openai"),
+        ("m2", "acct-gemini"),
+        ("m1", "acct-openai"),
+        ("m1", "acct-gemini"),
+    ]
+    asyncio.run(proxy.close())
+
+
+def test_filter_targets_by_parameter_support_keeps_compatible_targets():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai/m1": {
+                "supported_parameters": ["temperature", "response_format"],
+            },
+            "gemini/m1": {
+                "supported_parameters": ["temperature"],
+            },
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            [],
+            provider_preferences={"require_parameters": True},
+        )
+    )
+    accepted, rejected, requested = proxy._filter_targets_by_parameter_support(
+        candidate_targets=targets,
+        payload={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+        },
+    )
+
+    assert requested == ["response_format", "temperature"]
+    assert [target.account_name for target in accepted] == ["acct-openai"]
+    assert "acct-gemini:m1" in rejected
+    asyncio.run(proxy.close())
+
+
+def test_forward_with_fallback_returns_400_when_require_parameters_excludes_all_targets():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        model_registry={
+            "openai/m1": {
+                "supported_parameters": ["temperature"],
+            },
+            "gemini/m1": {
+                "supported_parameters": ["temperature"],
+            },
+        },
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"type": "json_object"},
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision(
+                "m1",
+                [],
+                provider_preferences={"require_parameters": True},
+            ),
+            stream=False,
+            request_id="req-require-params",
+        )
+    )
+
+    assert response.status_code == 400
+    body = json.loads(response.body.decode("utf-8"))
+    assert body["error"]["constraint"] == "require_parameters"
     asyncio.run(proxy.close())
 
 
