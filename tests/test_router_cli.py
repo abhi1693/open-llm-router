@@ -307,3 +307,87 @@ def test_provider_login_rejects_apikey_and_api_key_env_together():
         assert exc.code == 2
     else:  # pragma: no cover
         raise AssertionError("Expected failure when both --apikey and --api-key-env are set")
+
+
+def test_catalog_sync_dry_run_does_not_write_catalog(monkeypatch, tmp_path, capsys):
+    catalog_path = tmp_path / "models.yaml"
+    initial_payload = {
+        "version": 1,
+        "models": [
+            {
+                "id": "gpt-5.2",
+                "provider": "openai-codex",
+                "aliases": [],
+                "costs": {"input_per_1k": 1.23, "output_per_1k": 4.56},
+            }
+        ],
+    }
+    _save(catalog_path, initial_payload)
+
+    monkeypatch.setattr(
+        router_cli,
+        "fetch_openrouter_models",
+        lambda **_kwargs: [
+            {
+                "id": "openai/gpt-5.2",
+                "pricing": {"prompt": "0.0000019", "completion": "0.0000067"},
+            }
+        ],
+    )
+
+    assert (
+        main(
+            [
+                "catalog",
+                "sync",
+                "--catalog-path",
+                str(catalog_path),
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "Dry run: catalog not written." in output
+    assert "updated: 1" in output
+
+    # file should remain unchanged in dry-run mode
+    payload_after = _load(catalog_path)
+    assert payload_after == initial_payload
+
+
+def test_catalog_sync_writes_catalog(monkeypatch, tmp_path):
+    catalog_path = tmp_path / "models.yaml"
+    _save(
+        catalog_path,
+        {
+            "version": 1,
+            "models": [
+                {
+                    "id": "gpt-5.2",
+                    "provider": "openai-codex",
+                    "aliases": [],
+                    "costs": {"input_per_1k": 0.0, "output_per_1k": 0.0},
+                }
+            ],
+        },
+    )
+
+    monkeypatch.setattr(
+        router_cli,
+        "fetch_openrouter_models",
+        lambda **_kwargs: [
+            {
+                "id": "openai/gpt-5.2",
+                "pricing": {"prompt": "0.0000019", "completion": "0.0000067"},
+            }
+        ],
+    )
+
+    assert main(["catalog", "sync", "--catalog-path", str(catalog_path)]) == 0
+
+    payload_after = _load(catalog_path)
+    model = payload_after["models"][0]
+    assert model["costs"]["input_per_1k"] == 0.0019
+    assert model["costs"]["output_per_1k"] == 0.0067

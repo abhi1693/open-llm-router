@@ -10,6 +10,14 @@ from open_llm_router.catalog import (
     load_internal_catalog,
     validate_routing_document_against_catalog,
 )
+from open_llm_router.catalog_sync import (
+    DEFAULT_CATALOG_MODELS_PATH,
+    OPENROUTER_MODELS_URL,
+    fetch_openrouter_models,
+    load_catalog_models_document,
+    sync_catalog_models_pricing,
+    write_catalog_models_document,
+)
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
@@ -422,6 +430,42 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_catalog_sync(args: argparse.Namespace) -> int:
+    catalog_path = Path(args.catalog_path)
+    catalog_document = load_catalog_models_document(catalog_path)
+    remote_models = fetch_openrouter_models(
+        source_url=args.source_url,
+        timeout_seconds=float(args.timeout_seconds),
+    )
+    stats = sync_catalog_models_pricing(
+        catalog_document=catalog_document,
+        openrouter_models=remote_models,
+    )
+
+    if args.dry_run:
+        print("Dry run: catalog not written.")
+    else:
+        write_catalog_models_document(catalog_path, catalog_document)
+        print(f"Wrote catalog: {catalog_path}")
+
+    print(
+        yaml.safe_dump(
+            {
+                "total_local_models": stats.total_local_models,
+                "updated": stats.updated,
+                "unchanged": stats.unchanged,
+                "missing_remote": stats.missing_remote,
+                "missing_pricing": stats.missing_pricing,
+                "source_url": args.source_url,
+                "catalog_path": str(catalog_path),
+                "dry_run": bool(args.dry_run),
+            },
+            sort_keys=False,
+        ).rstrip()
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="router",
@@ -530,6 +574,35 @@ def build_parser() -> argparse.ArgumentParser:
     provider_login_cmd.add_argument("--no-browser", action="store_true")
     provider_login_cmd.add_argument("--no-local-callback", action="store_true")
     provider_login_cmd.set_defaults(handler=cmd_provider_login)
+
+    catalog_cmd = subparsers.add_parser(
+        "catalog",
+        help="Catalog maintenance commands.",
+    )
+    catalog_subparsers = catalog_cmd.add_subparsers(dest="catalog_command", required=True)
+
+    catalog_sync_cmd = catalog_subparsers.add_parser(
+        "sync",
+        help="Sync local model pricing from OpenRouter models API.",
+    )
+    catalog_sync_cmd.add_argument(
+        "--source-url",
+        default=OPENROUTER_MODELS_URL,
+        help="OpenRouter models API URL.",
+    )
+    catalog_sync_cmd.add_argument(
+        "--catalog-path",
+        default=str(DEFAULT_CATALOG_MODELS_PATH),
+        help="Path to local catalog models.yaml file.",
+    )
+    catalog_sync_cmd.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=30.0,
+        help="HTTP timeout in seconds for the source API.",
+    )
+    catalog_sync_cmd.add_argument("--dry-run", action="store_true")
+    catalog_sync_cmd.set_defaults(handler=cmd_catalog_sync)
 
     return parser
 
