@@ -97,6 +97,78 @@ def _filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
     return filtered
 
 
+def _response_content_type(response_headers: dict[str, str]) -> str | None:
+    for name, value in response_headers.items():
+        if name.lower() == "content-type":
+            return value
+    return None
+
+
+def _is_json_content_type(content_type: str | None) -> bool:
+    if not content_type:
+        return False
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type == "application/json" or media_type.endswith("+json")
+
+
+def _build_routing_diagnostics(
+    *,
+    request_id: str,
+    target: BackendTarget,
+    route_decision: RouteDecision,
+    request_latency_ms: float,
+    attempted_targets: list[str],
+    attempted_upstream_models: list[str],
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "request_id": request_id,
+        "selected_model": target.model,
+        "upstream_model": target.upstream_model,
+        "provider": target.provider,
+        "account": target.account_name,
+        "auth_mode": target.auth_mode,
+        "task": route_decision.task,
+        "complexity": route_decision.complexity,
+        "source": route_decision.source,
+        "request_latency_ms": round(request_latency_ms, 3),
+        "attempted_targets": list(attempted_targets),
+        "attempted_upstream_models": list(attempted_upstream_models),
+    }
+    if route_decision.ranked_models:
+        diagnostics["ranked_models"] = list(route_decision.ranked_models)
+    if route_decision.candidate_scores:
+        top = route_decision.candidate_scores[0]
+        diagnostics["top_candidate_model"] = top.get("model")
+        diagnostics["top_utility"] = top.get("utility")
+    if route_decision.provider_preferences:
+        diagnostics["provider_preferences"] = dict(route_decision.provider_preferences)
+    return diagnostics
+
+
+def _json_response_with_routing_diagnostics(
+    *,
+    status_code: int,
+    body: bytes,
+    response_headers: dict[str, str],
+    routing_diagnostics: dict[str, Any],
+) -> JSONResponse | None:
+    if not _is_json_content_type(_response_content_type(response_headers)):
+        return None
+    if not body:
+        return None
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    parsed["_router"] = routing_diagnostics
+    for name in list(response_headers.keys()):
+        if name.lower() == "content-type":
+            response_headers.pop(name, None)
+    return JSONResponse(status_code=status_code, content=parsed, headers=response_headers)
+
+
 def _build_upstream_headers(
     incoming_headers: Headers,
     bearer_token: str | None,
@@ -693,8 +765,18 @@ class BackendProxy:
                 candidate_targets=candidate_targets,
                 payload=payload,
             )
-        request_started = time.perf_counter()
         rid = request_id or "-"
+        allow_fallbacks = self._allows_fallbacks(route_decision.provider_preferences)
+        if not allow_fallbacks and len(candidate_targets) > 1:
+            primary_target = candidate_targets[0]
+            candidate_targets = [primary_target]
+            self._audit(
+                "proxy_fallbacks_disabled",
+                request_id=rid,
+                selected_model=route_decision.selected_model,
+                primary_target=primary_target.label,
+            )
+        request_started = time.perf_counter()
         logger.info(
             (
                 "proxy_start request_id=%s path=%s selected_model=%s stream=%s "
@@ -754,6 +836,43 @@ class BackendProxy:
                         "details": {
                             "requested_parameters": requested_parameters,
                             "rejections": parameter_rejections,
+                        },
+                    }
+                },
+            )
+        if self._has_provider_filters(route_decision.provider_preferences) and not candidate_targets:
+            only = self._normalized_provider_filter_values(
+                route_decision.provider_preferences.get("only")
+            )
+            ignore = self._normalized_provider_filter_values(
+                route_decision.provider_preferences.get("ignore")
+            )
+            logger.warning(
+                "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
+                rid,
+                ",".join(only),
+                ",".join(ignore),
+            )
+            self._audit(
+                "proxy_provider_filters_no_target",
+                request_id=rid,
+                selected_model=route_decision.selected_model,
+                fallback_models=route_decision.fallback_models,
+                only=only,
+                ignore=ignore,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "type": "routing_constraints_unsatisfied",
+                        "message": (
+                            "No provider/account targets satisfy provider only/ignore constraints."
+                        ),
+                        "constraint": "provider",
+                        "details": {
+                            "only": only,
+                            "ignore": ignore,
                         },
                     }
                 },
@@ -1059,6 +1178,14 @@ class BackendProxy:
         if route_decision.candidate_scores:
             top = route_decision.candidate_scores[0]
             response_headers["x-router-top-utility"] = str(top.get("utility", ""))
+        routing_diagnostics = _build_routing_diagnostics(
+            request_id=request_id,
+            target=target,
+            route_decision=route_decision,
+            request_latency_ms=request_latency_ms,
+            attempted_targets=attempted_targets,
+            attempted_upstream_models=attempted_upstream_models,
+        )
 
         logger.info(
             "proxy_response request_id=%s target=%s status=%d attempts=%d",
@@ -1096,6 +1223,7 @@ class BackendProxy:
                 model=target.model,
                 request_id=request_id,
                 audit_hook=audit_hook,
+                routing_diagnostics=routing_diagnostics,
             )
 
         if stream:
@@ -1122,6 +1250,14 @@ class BackendProxy:
 
         body = await upstream.aread()
         await upstream.aclose()
+        diagnostics_response = _json_response_with_routing_diagnostics(
+            status_code=upstream.status_code,
+            body=body,
+            response_headers=response_headers,
+            routing_diagnostics=routing_diagnostics,
+        )
+        if diagnostics_response is not None:
+            return diagnostics_response
         return Response(
             content=body,
             status_code=upstream.status_code,
@@ -1242,6 +1378,7 @@ class BackendProxy:
         model: str,
         request_id: str,
         audit_hook: Callable[[dict[str, Any]], None] | None,
+        routing_diagnostics: dict[str, Any],
     ) -> Response:
         if upstream.status_code >= 400:
             body = await upstream.aread()
@@ -1648,6 +1785,7 @@ class BackendProxy:
                 }
             ],
         }
+        body["_router"] = routing_diagnostics
         logger.info(
             "proxy_chat_result request_id=%s model=%s stream=%s text_chars=%d tool_calls=%d finish_reason=%s",
             request_id,
@@ -1706,6 +1844,10 @@ class BackendProxy:
                             project=account.project,
                         )
                     )
+            model_targets = self._filter_targets_by_provider_preferences(
+                model_targets=model_targets,
+                provider_preferences=provider_preferences,
+            )
             grouped_targets.append(model_targets)
 
         if partition == "none":
@@ -1734,6 +1876,57 @@ class BackendProxy:
     @staticmethod
     def _requires_parameter_compatibility(provider_preferences: dict[str, Any]) -> bool:
         return bool(provider_preferences.get("require_parameters"))
+
+    @staticmethod
+    def _allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
+        value = provider_preferences.get("allow_fallbacks")
+        if isinstance(value, bool):
+            return value
+        return True
+
+    @staticmethod
+    def _normalized_provider_filter_values(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        output: list[str] = []
+        seen: set[str] = set()
+        for value in raw:
+            if not isinstance(value, str):
+                continue
+            normalized = value.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            output.append(normalized)
+        return output
+
+    @staticmethod
+    def _has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
+        return bool(provider_preferences.get("only")) or bool(provider_preferences.get("ignore"))
+
+    def _filter_targets_by_provider_preferences(
+        self,
+        *,
+        model_targets: list[BackendTarget],
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        only = set(self._normalized_provider_filter_values(provider_preferences.get("only")))
+        ignore = set(self._normalized_provider_filter_values(provider_preferences.get("ignore")))
+        if not only and not ignore:
+            return model_targets
+
+        filtered: list[BackendTarget] = []
+        for target in model_targets:
+            provider = target.provider.strip().lower()
+            account = target.account_name.strip().lower()
+
+            if only and provider not in only and account not in only:
+                continue
+            if provider in ignore or account in ignore:
+                continue
+
+            filtered.append(target)
+        return filtered
 
     def _sort_model_targets(
         self,

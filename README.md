@@ -64,6 +64,41 @@ curl -s http://localhost:8000/v1/chat/completions \
   }'
 ```
 
+### Routing diagnostics in JSON responses
+
+For non-stream JSON responses, the router appends a top-level `_router` object with routing metadata (request id, selected provider/account/model, attempt history, and latency).
+
+Example shape:
+
+```json
+{
+  "id": "chatcmpl-...",
+  "model": "openai-codex/gpt-5.2",
+  "_router": {
+    "request_id": "abc123def456",
+    "selected_model": "openai-codex/gpt-5.2",
+    "upstream_model": "gpt-5.2",
+    "provider": "openai-codex",
+    "account": "openai-codex-work",
+    "attempted_targets": ["openai-codex-work:gpt-5.2"]
+  }
+}
+```
+
+Streaming responses keep transport-level diagnostics in `x-router-*` headers.
+
+### Provider routing controls
+
+The request `provider` object supports OpenRouter-style target controls:
+
+- `order`: preferred provider order
+- `sort`: `price`, `latency`, or `throughput`
+- `partition`: `model` (default) or `none`
+- `allow_fallbacks`: when `false`, only the primary target is attempted
+- `require_parameters`: only keep targets that support all request params
+- `only`: allow-list specific providers/accounts for this request
+- `ignore`: deny-list specific providers/accounts for this request
+
 ## Routing config
 
 Routing behavior is driven by `ROUTING_CONFIG_PATH`.

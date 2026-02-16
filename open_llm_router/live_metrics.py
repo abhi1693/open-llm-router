@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+TARGET_METRICS_KEY_PREFIX = "target::"
+
 
 @dataclass(slots=True)
 class ModelMetricsSnapshot:
@@ -23,18 +25,43 @@ class ModelMetricsSnapshot:
 
 
 class LiveMetricsStore(Protocol):
-    async def record_route_decision(self, model: str, task: str, complexity: str) -> None: ...
+    async def record_route_decision(
+        self,
+        model: str,
+        task: str,
+        complexity: str,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None: ...
 
-    async def record_connect(self, model: str, connect_ms: float) -> None: ...
+    async def record_connect(
+        self,
+        model: str,
+        connect_ms: float,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None: ...
 
     async def record_response(
         self,
         model: str,
         status: int,
         request_latency_ms: float | None,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
     ) -> None: ...
 
-    async def record_error(self, model: str, error_type: str | None = None) -> None: ...
+    async def record_error(
+        self,
+        model: str,
+        error_type: str | None = None,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None: ...
 
     async def snapshot_all(self) -> dict[str, ModelMetricsSnapshot]: ...
 
@@ -75,74 +102,155 @@ def _is_failure_status(status: int) -> bool:
     return status == 429 or status >= 500
 
 
+def _normalize_dimension(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def build_target_metrics_key(
+    *,
+    model: str,
+    provider: str | None,
+    account: str | None,
+) -> str | None:
+    normalized_model = model.strip()
+    if not normalized_model:
+        return None
+    normalized_provider = _normalize_dimension(provider)
+    normalized_account = _normalize_dimension(account)
+    if not normalized_provider or not normalized_account:
+        return None
+    return (
+        f"{TARGET_METRICS_KEY_PREFIX}"
+        f"{normalized_provider}::{normalized_account}::{normalized_model}"
+    )
+
+
+def is_target_metrics_key(key: str) -> bool:
+    return isinstance(key, str) and key.startswith(TARGET_METRICS_KEY_PREFIX)
+
+
+def _metric_keys(
+    *,
+    model: str,
+    provider: str | None,
+    account: str | None,
+) -> list[str]:
+    normalized_model = model.strip()
+    if not normalized_model:
+        return []
+
+    keys = [normalized_model]
+    target_key = build_target_metrics_key(
+        model=normalized_model,
+        provider=provider,
+        account=account,
+    )
+    if target_key:
+        keys.append(target_key)
+    return keys
+
+
 class InMemoryLiveMetricsStore:
     def __init__(self, *, alpha: float = 0.2) -> None:
         self._alpha = max(0.01, min(1.0, alpha))
         self._lock = asyncio.Lock()
         self._models: dict[str, _ModelMetricsState] = {}
 
-    async def record_route_decision(self, model: str, task: str, complexity: str) -> None:
+    async def record_route_decision(
+        self,
+        model: str,
+        task: str,
+        complexity: str,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None:
+        del provider, account
         del task, complexity
-        key = model.strip()
-        if not key:
+        keys = _metric_keys(model=model, provider=None, account=None)
+        if not keys:
             return
         now = time.time()
         async with self._lock:
-            state = self._models.setdefault(key, _ModelMetricsState(model=key))
-            state.route_decisions += 1
-            state.last_updated_epoch = now
+            for key in keys:
+                state = self._models.setdefault(key, _ModelMetricsState(model=key))
+                state.route_decisions += 1
+                state.last_updated_epoch = now
 
-    async def record_connect(self, model: str, connect_ms: float) -> None:
-        key = model.strip()
-        if not key:
+    async def record_connect(
+        self,
+        model: str,
+        connect_ms: float,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None:
+        keys = _metric_keys(model=model, provider=provider, account=account)
+        if not keys:
             return
         now = time.time()
         value = max(0.0, float(connect_ms))
         async with self._lock:
-            state = self._models.setdefault(key, _ModelMetricsState(model=key))
-            state.samples += 1
-            state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
-            state.last_updated_epoch = now
+            for key in keys:
+                state = self._models.setdefault(key, _ModelMetricsState(model=key))
+                state.samples += 1
+                state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
+                state.last_updated_epoch = now
 
     async def record_response(
         self,
         model: str,
         status: int,
         request_latency_ms: float | None,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
     ) -> None:
-        key = model.strip()
-        if not key:
+        keys = _metric_keys(model=model, provider=provider, account=account)
+        if not keys:
             return
         now = time.time()
         async with self._lock:
-            state = self._models.setdefault(key, _ModelMetricsState(model=key))
-            state.responses += 1
-            state.samples += 1
-            failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
-            state.ewma_failure_rate = _ewma(state.ewma_failure_rate, failure_flag, self._alpha)
-            if failure_flag > 0:
-                state.errors += 1
-            if request_latency_ms is not None:
-                latency = max(0.0, float(request_latency_ms))
-                state.ewma_request_latency_ms = _ewma(
-                    state.ewma_request_latency_ms,
-                    latency,
-                    self._alpha,
-                )
-            state.last_updated_epoch = now
+            for key in keys:
+                state = self._models.setdefault(key, _ModelMetricsState(model=key))
+                state.responses += 1
+                state.samples += 1
+                failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
+                state.ewma_failure_rate = _ewma(state.ewma_failure_rate, failure_flag, self._alpha)
+                if failure_flag > 0:
+                    state.errors += 1
+                if request_latency_ms is not None:
+                    latency = max(0.0, float(request_latency_ms))
+                    state.ewma_request_latency_ms = _ewma(
+                        state.ewma_request_latency_ms,
+                        latency,
+                        self._alpha,
+                    )
+                state.last_updated_epoch = now
 
-    async def record_error(self, model: str, error_type: str | None = None) -> None:
+    async def record_error(
+        self,
+        model: str,
+        error_type: str | None = None,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None:
         del error_type
-        key = model.strip()
-        if not key:
+        keys = _metric_keys(model=model, provider=provider, account=account)
+        if not keys:
             return
         now = time.time()
         async with self._lock:
-            state = self._models.setdefault(key, _ModelMetricsState(model=key))
-            state.errors += 1
-            state.samples += 1
-            state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
-            state.last_updated_epoch = now
+            for key in keys:
+                state = self._models.setdefault(key, _ModelMetricsState(model=key))
+                state.errors += 1
+                state.samples += 1
+                state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
+                state.last_updated_epoch = now
 
     async def snapshot_all(self) -> dict[str, ModelMetricsSnapshot]:
         async with self._lock:
@@ -237,64 +345,98 @@ class RedisLiveMetricsStore:
         await self._redis.hset(key, mapping=payload)
         await self._redis.expire(key, self._key_ttl_seconds)
 
-    async def record_route_decision(self, model: str, task: str, complexity: str) -> None:
+    async def record_route_decision(
+        self,
+        model: str,
+        task: str,
+        complexity: str,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None:
+        del provider, account
         del task, complexity
-        key = model.strip()
-        if not key:
+        keys = _metric_keys(model=model, provider=None, account=None)
+        if not keys:
             return
-        state = await self._load_state(key)
-        state.route_decisions += 1
-        state.last_updated_epoch = time.time()
-        await self._save_state(state)
+        now = time.time()
+        for key in keys:
+            state = await self._load_state(key)
+            state.route_decisions += 1
+            state.last_updated_epoch = now
+            await self._save_state(state)
 
-    async def record_connect(self, model: str, connect_ms: float) -> None:
-        key = model.strip()
-        if not key:
+    async def record_connect(
+        self,
+        model: str,
+        connect_ms: float,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None:
+        keys = _metric_keys(model=model, provider=provider, account=account)
+        if not keys:
             return
         value = max(0.0, float(connect_ms))
-        state = await self._load_state(key)
-        state.samples += 1
-        state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
-        state.last_updated_epoch = time.time()
-        await self._save_state(state)
+        now = time.time()
+        for key in keys:
+            state = await self._load_state(key)
+            state.samples += 1
+            state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
+            state.last_updated_epoch = now
+            await self._save_state(state)
 
     async def record_response(
         self,
         model: str,
         status: int,
         request_latency_ms: float | None,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
     ) -> None:
-        key = model.strip()
-        if not key:
+        keys = _metric_keys(model=model, provider=provider, account=account)
+        if not keys:
             return
-        state = await self._load_state(key)
-        state.responses += 1
-        state.samples += 1
-        failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
-        state.ewma_failure_rate = _ewma(state.ewma_failure_rate, failure_flag, self._alpha)
-        if failure_flag > 0:
-            state.errors += 1
-        if request_latency_ms is not None:
-            latency = max(0.0, float(request_latency_ms))
-            state.ewma_request_latency_ms = _ewma(
-                state.ewma_request_latency_ms,
-                latency,
-                self._alpha,
-            )
-        state.last_updated_epoch = time.time()
-        await self._save_state(state)
+        now = time.time()
+        for key in keys:
+            state = await self._load_state(key)
+            state.responses += 1
+            state.samples += 1
+            failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
+            state.ewma_failure_rate = _ewma(state.ewma_failure_rate, failure_flag, self._alpha)
+            if failure_flag > 0:
+                state.errors += 1
+            if request_latency_ms is not None:
+                latency = max(0.0, float(request_latency_ms))
+                state.ewma_request_latency_ms = _ewma(
+                    state.ewma_request_latency_ms,
+                    latency,
+                    self._alpha,
+                )
+            state.last_updated_epoch = now
+            await self._save_state(state)
 
-    async def record_error(self, model: str, error_type: str | None = None) -> None:
+    async def record_error(
+        self,
+        model: str,
+        error_type: str | None = None,
+        *,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> None:
         del error_type
-        key = model.strip()
-        if not key:
+        keys = _metric_keys(model=model, provider=provider, account=account)
+        if not keys:
             return
-        state = await self._load_state(key)
-        state.errors += 1
-        state.samples += 1
-        state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
-        state.last_updated_epoch = time.time()
-        await self._save_state(state)
+        now = time.time()
+        for key in keys:
+            state = await self._load_state(key)
+            state.errors += 1
+            state.samples += 1
+            state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
+            state.last_updated_epoch = now
+            await self._save_state(state)
 
     async def snapshot_all(self) -> dict[str, ModelMetricsSnapshot]:
         output: dict[str, ModelMetricsSnapshot] = {}
@@ -406,6 +548,8 @@ class LiveMetricsCollector:
     async def _process_event(self, event: dict[str, Any]) -> None:
         event_name = str(event.get("event") or "")
         model = str(event.get("model") or "").strip()
+        provider = str(event.get("provider") or "").strip() or None
+        account = str(event.get("account") or "").strip() or None
 
         if event_name == "route_decision":
             selected_model = str(event.get("selected_model") or "").strip()
@@ -423,7 +567,12 @@ class LiveMetricsCollector:
         if event_name == "proxy_upstream_connected":
             connect_ms = event.get("connect_ms")
             if isinstance(connect_ms, (int, float)):
-                await self._store.record_connect(model=model, connect_ms=float(connect_ms))
+                await self._store.record_connect(
+                    model=model,
+                    connect_ms=float(connect_ms),
+                    provider=provider,
+                    account=account,
+                )
             return
 
         if event_name == "proxy_response":
@@ -436,6 +585,8 @@ class LiveMetricsCollector:
                 model=model,
                 status=status,
                 request_latency_ms=latency_value,
+                provider=provider,
+                account=account,
             )
             return
 
@@ -443,6 +594,8 @@ class LiveMetricsCollector:
             await self._store.record_error(
                 model=model,
                 error_type=(str(event.get("error_type")) if event.get("error_type") else None),
+                provider=provider,
+                account=account,
             )
 
 

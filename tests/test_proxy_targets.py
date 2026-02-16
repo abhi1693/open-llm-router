@@ -9,6 +9,7 @@ from starlette.datastructures import Headers
 
 from open_llm_router.config import BackendAccount
 from open_llm_router.proxy import (
+    BackendTarget,
     BackendProxy,
     _build_upstream_headers,
     _parse_retry_after_seconds,
@@ -108,6 +109,76 @@ def test_build_targets_applies_provider_order_preference():
         )
     )
     assert [target.account_name for target in targets] == ["acct-gemini", "acct-openai"]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_applies_provider_only_filter():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            [],
+            provider_preferences={"only": ["gemini"]},
+        )
+    )
+    assert [target.account_name for target in targets] == ["acct-gemini"]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_applies_provider_ignore_filter():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            [],
+            provider_preferences={"ignore": ["openai"]},
+        )
+    )
+    assert [target.account_name for target in targets] == ["acct-gemini"]
     asyncio.run(proxy.close())
 
 
@@ -402,6 +473,192 @@ def test_forward_with_fallback_returns_400_when_require_parameters_excludes_all_
     assert response.status_code == 400
     body = json.loads(response.body.decode("utf-8"))
     assert body["error"]["constraint"] == "require_parameters"
+    asyncio.run(proxy.close())
+
+
+def test_forward_with_fallback_returns_400_when_provider_filters_exclude_all_targets():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+        ],
+    )
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision(
+                "m1",
+                [],
+                provider_preferences={"only": ["gemini"], "ignore": ["openai"]},
+            ),
+            stream=False,
+            request_id="req-provider-filters",
+        )
+    )
+
+    assert response.status_code == 400
+    body = json.loads(response.body.decode("utf-8"))
+    assert body["error"]["constraint"] == "provider"
+    assert body["error"]["details"]["only"] == ["gemini"]
+    assert body["error"]["details"]["ignore"] == ["openai"]
+    asyncio.run(proxy.close())
+
+
+def test_forward_with_fallback_retries_next_target_when_fallbacks_enabled():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+    asyncio.run(proxy.client.aclose())
+
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return httpx.Response(
+                status_code=500,
+                headers={"Content-Type": "application/json"},
+                json={"error": "first target failed"},
+                request=request,
+            )
+        return httpx.Response(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            json={"ok": True},
+            request=request,
+        )
+
+    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision(
+                "m1",
+                [],
+                provider_preferences={
+                    "allow_fallbacks": True,
+                    "order": ["openai", "gemini"],
+                },
+            ),
+            stream=False,
+            request_id="req-fallbacks-on",
+        )
+    )
+
+    assert state["calls"] == 2
+    assert response.status_code == 200
+    assert response.headers["x-router-account"] == "acct-gemini"
+    body = json.loads(response.body.decode("utf-8"))
+    assert body["ok"] is True
+    assert body["_router"]["attempted_targets"] == ["acct-openai:m1", "acct-gemini:m1"]
+    asyncio.run(proxy.close())
+
+
+def test_forward_with_fallback_does_not_retry_when_fallbacks_disabled():
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[500],
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+            BackendAccount(
+                name="acct-gemini",
+                provider="gemini",
+                base_url="http://provider-gemini",
+                api_key="key-gemini",
+                models=["gemini/m1"],
+            ),
+        ],
+    )
+    asyncio.run(proxy.client.aclose())
+
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        return httpx.Response(
+            status_code=500,
+            headers={"Content-Type": "application/json"},
+            json={"error": "first target failed"},
+            request=request,
+        )
+
+    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision(
+                "m1",
+                [],
+                provider_preferences={
+                    "allow_fallbacks": False,
+                    "order": ["openai", "gemini"],
+                },
+            ),
+            stream=False,
+            request_id="req-fallbacks-off",
+        )
+    )
+
+    assert state["calls"] == 1
+    assert response.status_code == 500
+    assert response.headers["x-router-account"] == "acct-openai"
+    body = json.loads(response.body.decode("utf-8"))
+    assert body["error"] == "first target failed"
+    assert body["_router"]["attempted_targets"] == ["acct-openai:m1"]
     asyncio.run(proxy.close())
 
 
@@ -883,3 +1140,171 @@ def test_parse_retry_after_seconds_http_date():
     headers = httpx.Headers({"Retry-After": future.strftime("%a, %d %b %Y %H:%M:%S GMT")})
     value = _parse_retry_after_seconds(headers, default_seconds=30.0)
     assert 0 < value <= 8.5
+
+
+def test_to_fastapi_response_injects_router_diagnostics_into_json_payload():
+    account = BackendAccount(
+        name="acct-openai",
+        provider="openai",
+        base_url="http://provider-openai",
+        api_key="key-openai",
+        models=["openai/m1"],
+    )
+    target = BackendTarget(
+        account=account,
+        account_name="acct-openai",
+        provider="openai",
+        base_url="http://provider-openai",
+        model="openai/m1",
+        auth_mode="api_key",
+        organization=None,
+        project=None,
+        upstream_model="m1",
+    )
+    route_decision = RouteDecision(
+        selected_model="openai/m1",
+        source="auto",
+        task="general",
+        complexity="low",
+        requested_model="auto",
+        fallback_models=["openai/m2"],
+        signals={},
+        ranked_models=["openai/m1", "openai/m2"],
+        candidate_scores=[{"model": "openai/m1", "utility": 0.82}],
+        provider_preferences={"sort": "latency", "partition": "model"},
+    )
+    upstream = httpx.Response(
+        status_code=200,
+        headers={"Content-Type": "application/json"},
+        json={"id": "resp_1", "object": "response", "model": "m1"},
+        request=httpx.Request("POST", "https://provider-openai/v1/responses"),
+    )
+
+    response = asyncio.run(
+        BackendProxy._to_fastapi_response(
+            upstream=upstream,
+            stream=False,
+            upstream_stream=False,
+            target=target,
+            attempted_targets=["acct-openai:m1"],
+            attempted_upstream_models=["m1"],
+            request_latency_ms=123.4567,
+            route_decision=route_decision,
+            request_id="req_diag_1",
+            adapter="passthrough",
+            audit_hook=None,
+        )
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert body["_router"]["request_id"] == "req_diag_1"
+    assert body["_router"]["selected_model"] == "openai/m1"
+    assert body["_router"]["provider"] == "openai"
+    assert body["_router"]["account"] == "acct-openai"
+    assert body["_router"]["request_latency_ms"] == 123.457
+    assert body["_router"]["ranked_models"] == ["openai/m1", "openai/m2"]
+    assert body["_router"]["top_utility"] == 0.82
+
+
+def test_to_fastapi_response_keeps_non_json_body_unchanged():
+    account = BackendAccount(
+        name="acct-openai",
+        provider="openai",
+        base_url="http://provider-openai",
+        api_key="key-openai",
+        models=["openai/m1"],
+    )
+    target = BackendTarget(
+        account=account,
+        account_name="acct-openai",
+        provider="openai",
+        base_url="http://provider-openai",
+        model="openai/m1",
+        auth_mode="api_key",
+        organization=None,
+        project=None,
+        upstream_model="m1",
+    )
+    upstream = httpx.Response(
+        status_code=200,
+        headers={"Content-Type": "text/plain"},
+        content=b"plain text body",
+        request=httpx.Request("POST", "https://provider-openai/v1/responses"),
+    )
+
+    response = asyncio.run(
+        BackendProxy._to_fastapi_response(
+            upstream=upstream,
+            stream=False,
+            upstream_stream=False,
+            target=target,
+            attempted_targets=["acct-openai:m1"],
+            attempted_upstream_models=["m1"],
+            request_latency_ms=5.0,
+            route_decision=_decision("openai/m1", []),
+            request_id="req_diag_text",
+            adapter="passthrough",
+            audit_hook=None,
+        )
+    )
+
+    assert response.body == b"plain text body"
+    assert b"_router" not in response.body
+
+
+def test_chat_completions_adapter_includes_router_diagnostics_in_json_response():
+    account = BackendAccount(
+        name="acct-codex",
+        provider="openai-codex",
+        base_url="http://provider-codex",
+        api_key="key-codex",
+        models=["openai-codex/gpt-5.2"],
+    )
+    target = BackendTarget(
+        account=account,
+        account_name="acct-codex",
+        provider="openai-codex",
+        base_url="http://provider-codex",
+        model="openai-codex/gpt-5.2",
+        auth_mode="api_key",
+        organization=None,
+        project=None,
+        upstream_model="gpt-5.2",
+    )
+    sse_payload = "\n".join(
+        [
+            'data: {"type":"response.created","response":{"id":"resp_1","created_at":1700000000}}',
+            'data: {"type":"response.output_text.done","text":"Hello from codex"}',
+            'data: {"type":"response.completed"}',
+            "data: [DONE]",
+        ]
+    )
+    upstream = httpx.Response(
+        status_code=200,
+        headers={"Content-Type": "text/event-stream"},
+        content=sse_payload.encode("utf-8"),
+        request=httpx.Request("POST", "https://provider-codex/codex/responses"),
+    )
+
+    response = asyncio.run(
+        BackendProxy._to_fastapi_response(
+            upstream=upstream,
+            stream=False,
+            upstream_stream=True,
+            target=target,
+            attempted_targets=["acct-codex:gpt-5.2"],
+            attempted_upstream_models=["gpt-5.2"],
+            request_latency_ms=42.3,
+            route_decision=_decision("openai-codex/gpt-5.2", []),
+            request_id="req_diag_chat",
+            adapter="chat_completions",
+            audit_hook=None,
+        )
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert body["model"] == "openai-codex/gpt-5.2"
+    assert body["choices"][0]["message"]["content"] == "Hello from codex"
+    assert body["_router"]["request_id"] == "req_diag_chat"
+    assert body["_router"]["provider"] == "openai-codex"
+    assert body["_router"]["selected_model"] == "openai-codex/gpt-5.2"

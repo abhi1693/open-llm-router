@@ -10,7 +10,12 @@ from typing import Any
 import yaml
 
 from open_llm_router.config import ModelProfile, RoutingConfig
-from open_llm_router.live_metrics import LiveMetricsStore, ModelMetricsSnapshot, snapshot_to_dict
+from open_llm_router.live_metrics import (
+    LiveMetricsStore,
+    ModelMetricsSnapshot,
+    is_target_metrics_key,
+    snapshot_to_dict,
+)
 
 
 @dataclass(slots=True)
@@ -100,6 +105,8 @@ class RuntimePolicyUpdater:
     def _apply_snapshot(self, snapshot: dict[str, ModelMetricsSnapshot]) -> int:
         applied = 0
         for model, metrics in snapshot.items():
+            if is_target_metrics_key(model):
+                continue
             if metrics.samples < self._min_samples:
                 continue
 

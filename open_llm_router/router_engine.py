@@ -453,6 +453,18 @@ def _extract_provider_preferences(payload: dict[str, Any]) -> dict[str, Any]:
         if normalized_order:
             output["order"] = normalized_order
 
+    only = raw.get("only")
+    if isinstance(only, list):
+        normalized_only = _coerce_string_list(only)
+        if normalized_only:
+            output["only"] = normalized_only
+
+    ignore = raw.get("ignore")
+    if isinstance(ignore, list):
+        normalized_ignore = _coerce_string_list(ignore)
+        if normalized_ignore:
+            output["ignore"] = normalized_ignore
+
     partition = raw.get("partition")
     if isinstance(partition, str):
         normalized_partition = partition.strip().lower()
@@ -462,6 +474,10 @@ def _extract_provider_preferences(payload: dict[str, Any]) -> dict[str, Any]:
     require_parameters = raw.get("require_parameters")
     if isinstance(require_parameters, bool):
         output["require_parameters"] = require_parameters
+
+    allow_fallbacks = raw.get("allow_fallbacks")
+    if isinstance(allow_fallbacks, bool):
+        output["allow_fallbacks"] = allow_fallbacks
 
     raw_sort = raw.get("sort")
     if isinstance(raw_sort, str):

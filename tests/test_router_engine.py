@@ -181,18 +181,24 @@ def test_provider_preferences_are_carried_in_route_decision():
         "model": "auto",
         "provider": {
             "order": ["gemini", "openai"],
+            "only": ["gemini"],
+            "ignore": ["openai-backup"],
             "sort": "price",
             "partition": "none",
             "require_parameters": True,
+            "allow_fallbacks": False,
         },
         "messages": [{"role": "user", "content": "hello"}],
     }
     decision = router.decide(payload, "/v1/chat/completions")
     assert decision.provider_preferences == {
         "order": ["gemini", "openai"],
+        "only": ["gemini"],
+        "ignore": ["openai-backup"],
         "sort": "price",
         "partition": "none",
         "require_parameters": True,
+        "allow_fallbacks": False,
     }
 
 

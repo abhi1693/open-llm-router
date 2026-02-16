@@ -7,7 +7,11 @@ import pytest
 import yaml
 
 from open_llm_router.config import RoutingConfig
-from open_llm_router.live_metrics import InMemoryLiveMetricsStore, LiveMetricsCollector
+from open_llm_router.live_metrics import (
+    InMemoryLiveMetricsStore,
+    LiveMetricsCollector,
+    build_target_metrics_key,
+)
 from open_llm_router.policy_updater import RuntimePolicyUpdater, apply_runtime_overrides
 
 
@@ -101,6 +105,83 @@ def test_runtime_policy_updater_applies_bounded_adjustments() -> None:
         assert profile.latency_ms == 1100.0
         # bounded by -10% from 0.10 towards observed 0.0 -> 0.09
         assert profile.failure_rate == pytest.approx(0.09)
+
+    asyncio.run(_run())
+
+
+def test_live_metrics_collector_tracks_target_dimension_metrics() -> None:
+    async def _run() -> None:
+        store = InMemoryLiveMetricsStore(alpha=0.5)
+        collector = LiveMetricsCollector(store=store, enabled=True)
+        await collector.start()
+
+        collector.ingest(
+            {
+                "event": "proxy_response",
+                "model": "m1",
+                "provider": "openai",
+                "account": "acct-a",
+                "status": 200,
+                "request_latency_ms": 220.0,
+            }
+        )
+
+        await asyncio.sleep(0)
+        await collector.close()
+
+        snapshot = await store.snapshot_all()
+        target_key = build_target_metrics_key(
+            model="m1",
+            provider="openai",
+            account="acct-a",
+        )
+        assert target_key is not None
+        assert "m1" in snapshot
+        assert target_key in snapshot
+        assert snapshot["m1"].responses == 1
+        assert snapshot[target_key].responses == 1
+
+    asyncio.run(_run())
+
+
+def test_runtime_policy_updater_ignores_target_dimension_keys() -> None:
+    async def _run() -> None:
+        config = RoutingConfig.model_validate(
+            {
+                "default_model": "m1",
+                "task_routes": {"general": {"default": "m1"}},
+                "model_profiles": {
+                    "m1": {
+                        "latency_ms": 1000.0,
+                        "failure_rate": 0.10,
+                    }
+                },
+            }
+        )
+        store = InMemoryLiveMetricsStore(alpha=1.0)
+
+        for _ in range(12):
+            await store.record_response(
+                "m1",
+                status=200,
+                request_latency_ms=250.0,
+                provider="openai",
+                account="acct-a",
+            )
+
+        updater = RuntimePolicyUpdater(
+            routing_config=config,
+            metrics_store=store,
+            enabled=True,
+            interval_seconds=60.0,
+            min_samples=10,
+            max_adjustment_ratio=0.1,
+            overrides_path=None,
+        )
+        await updater.run_once()
+
+        assert "m1" in config.model_profiles
+        assert not any(key.startswith("target::") for key in config.model_profiles)
 
     asyncio.run(_run())
 
