@@ -140,6 +140,11 @@ def _normalize_optional(value: str | None) -> str | None:
     return stripped or None
 
 
+def _drop_none_fields(data: dict[str, Any]) -> None:
+    for key in [item_key for item_key, value in data.items() if value is None]:
+        data.pop(key, None)
+
+
 def _base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -523,6 +528,7 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.set_default and account_models:
         data["default_model"] = account_models[0]
 
+    _drop_none_fields(account)
     _ensure_default_model(data)
     return f"Account '{args.name}' saved."
 
@@ -569,6 +575,7 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
                 qualified_default = _qualify_model(args.provider, current_default)
                 if qualified_default in account["models"]:
                     data["default_model"] = qualified_default
+    _drop_none_fields(account)
     _ensure_default_model(data)
 
     account_id = account.get("oauth_account_id")

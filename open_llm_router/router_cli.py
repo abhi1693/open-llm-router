@@ -255,6 +255,10 @@ def _dedupe(values: list[str]) -> list[str]:
     return output
 
 
+def _without_none_values(data: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in data.items() if value is not None}
+
+
 def _normalize_provider_alias(provider: str) -> str:
     normalized = provider.strip().lower()
     if normalized == "gemeni":
@@ -312,19 +316,23 @@ def _upsert_profile_account(
     if not target_name:
         raise ValueError("Account payload missing required 'name'.")
 
+    clean_payload = _without_none_values(account_payload)
+
     for idx, entry in enumerate(accounts):
         if not isinstance(entry, dict):
             continue
         if str(entry.get("name") or "").strip() == target_name:
             merged = dict(entry)
-            merged.update(account_payload)
-            merged["models"] = _dedupe(
-                [str(m).strip() for m in merged.get("models", []) if str(m).strip()]
-            )
-            accounts[idx] = merged
+            merged.update(clean_payload)
+            merged_models = merged.get("models", [])
+            if isinstance(merged_models, list):
+                merged["models"] = _dedupe(
+                    [str(m).strip() for m in merged_models if str(m).strip()]
+                )
+            accounts[idx] = _without_none_values(merged)
             return
 
-    accounts.append(account_payload)
+    accounts.append(clean_payload)
 
 
 def _save_profile_payload(
