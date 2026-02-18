@@ -392,6 +392,84 @@ def test_hard_constraints_filter_models_that_exceed_output_token_limit() -> None
     assert decision.selected_model == "large-model"
 
 
+def test_hard_constraints_allow_small_context_overflow_with_tolerance() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "small-model",
+            "task_routes": {
+                "general": {
+                    "default": ["small-model", "large-model"],
+                },
+            },
+            "models": {
+                "small-model": {
+                    "capabilities": ["chat", "streaming"],
+                    "limits": {"context_tokens": 800},
+                },
+                "large-model": {
+                    "capabilities": ["chat", "streaming"],
+                    "limits": {"context_tokens": 1000},
+                },
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "messages": [{"role": "user", "content": "x" * 4200}],
+    }
+
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "large-model"
+    assert (
+        "context_window_exceeded:1050>800"
+        in decision.decision_trace["hard_constraint_rejections"]["small-model"]
+    )
+
+
+def test_hard_constraints_supplement_large_context_single_candidate_chain() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "primary-model",
+            "task_routes": {
+                "general": {
+                    "default": ["primary-model"],
+                },
+            },
+            "fallback_models": [],
+            "models": {
+                "primary-model": {
+                    "capabilities": ["chat", "streaming", "tool_use"],
+                    "limits": {"context_tokens": 500000},
+                },
+                "backup-model": {
+                    "capabilities": ["chat", "streaming", "tool_use"],
+                    "limits": {"context_tokens": 500000},
+                },
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "stream": True,
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "noop", "parameters": {"type": "object"}},
+            }
+        ],
+        "messages": [{"role": "user", "content": "x" * 500000}],
+    }
+
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "primary-model"
+    assert "backup-model" in decision.fallback_models
+    assert decision.decision_trace["hard_constraint_supplemented_models"] == [
+        "backup-model"
+    ]
+
+
 def test_hard_constraints_filter_models_without_enabled_account_support() -> None:
     config = RoutingConfig.model_validate(
         {

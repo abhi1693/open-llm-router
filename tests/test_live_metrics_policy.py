@@ -162,6 +162,60 @@ def test_live_metrics_collector_tracks_target_dimension_metrics() -> None:
     asyncio.run(_run())
 
 
+def test_live_metrics_collector_tracks_connect_latency_quantiles_and_alerts() -> None:
+    async def _run() -> None:
+        store = InMemoryLiveMetricsStore(alpha=0.5)
+        collector = LiveMetricsCollector(
+            store=store,
+            enabled=True,
+            connect_latency_window_size=16,
+            connect_latency_alert_threshold_ms=100.0,
+        )
+        await collector.start()
+
+        collector.ingest(
+            {
+                "event": "proxy_upstream_connected",
+                "model": "m1",
+                "provider": "openai",
+                "account": "acct-a",
+                "connect_ms": 50.0,
+            }
+        )
+        collector.ingest(
+            {
+                "event": "proxy_upstream_connected",
+                "model": "m1",
+                "provider": "openai",
+                "account": "acct-a",
+                "connect_ms": 120.0,
+            }
+        )
+        collector.ingest(
+            {
+                "event": "proxy_upstream_connected",
+                "model": "m1",
+                "provider": "openai",
+                "account": "acct-a",
+                "connect_ms": 130.0,
+            }
+        )
+
+        await asyncio.sleep(0)
+        await collector.close()
+
+        quantiles = collector.proxy_connect_latency_quantiles_by_target
+        key = ("openai", "acct-a", "m1")
+        assert key in quantiles
+        assert quantiles[key]["count"] == 3
+        assert quantiles[key]["p95"] == pytest.approx(130.0)
+        assert quantiles[key]["p99"] == pytest.approx(130.0)
+        assert collector.proxy_connect_latency_alerts_total == 1
+        assert collector.proxy_connect_latency_alerts_by_target[key] == 1
+
+    asyncio.run(_run())
+
+
 def test_runtime_policy_updater_ignores_target_dimension_keys() -> None:
     async def _run() -> None:
         config = RoutingConfig.model_validate(

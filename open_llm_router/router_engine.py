@@ -8,6 +8,10 @@ from open_llm_router.classifier import classify_request
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.scoring import build_routing_features, score_model
 
+_CONTEXT_WINDOW_OVERFLOW_TOLERANCE = 0.10
+_HIGH_CONTEXT_SUPPLEMENT_TOKENS = 120_000
+_MAX_SUPPLEMENTAL_MODELS = 2
+
 
 class InvalidModelError(ValueError):
     def __init__(self, requested_model: str, available_models: list[str]):
@@ -102,11 +106,16 @@ class SmartModelRouter:
                         "candidate_chain": candidate_chain,
                     },
                 )
-            default_chain, hard_constraint_trace = self._apply_hard_constraints(
+            (
+                default_chain,
+                hard_constraint_trace,
+                supplemented_models,
+            ) = self._apply_hard_constraints(
                 candidate_models=allowed_filtered_chain,
                 required_capabilities=required_capabilities,
                 payload=payload,
                 signals=signals,
+                allowed_model_patterns=allowed_model_patterns,
             )
             decision_trace: dict[str, Any] = {
                 "auto": True,
@@ -123,6 +132,10 @@ class SmartModelRouter:
                 "hard_constraint_rejections": hard_constraint_trace,
                 "provider_preferences": dict(provider_preferences),
             }
+            if supplemented_models:
+                decision_trace["hard_constraint_supplemented_models"] = list(
+                    supplemented_models
+                )
             if self.config.learned_routing.enabled:
                 (
                     selected_model,
@@ -319,9 +332,10 @@ class SmartModelRouter:
         required_capabilities: set[str],
         payload: dict[str, Any],
         signals: dict[str, Any],
-    ) -> tuple[list[str], dict[str, list[str]]]:
+        allowed_model_patterns: list[str],
+    ) -> tuple[list[str], dict[str, list[str]], list[str]]:
         if not candidate_models:
-            return [], {}
+            return [], {}, []
 
         requested_output_tokens = _extract_requested_output_tokens(payload)
         # Char-count is a cheap approximation and keeps routing on the fast path.
@@ -333,48 +347,121 @@ class SmartModelRouter:
         rejected: dict[str, list[str]] = {}
 
         for model in candidate_models:
-            reasons: list[str] = []
-            if not self._is_model_available_for_any_enabled_account(model):
-                reasons.append("no_enabled_account_supports_model")
-            metadata = self.config.models.get(model) or {}
-            capabilities = _extract_capabilities(metadata)
-            if required_capabilities and capabilities:
-                missing = sorted(required_capabilities - capabilities)
-                if missing:
-                    reasons.append(f"missing_capabilities:{','.join(missing)}")
-
-            limits = metadata.get("limits")
-            if isinstance(limits, dict):
-                max_output = _as_positive_int(limits.get("max_output_tokens"))
-                if (
-                    max_output is not None
-                    and requested_output_tokens is not None
-                    and requested_output_tokens > max_output
-                ):
-                    reasons.append(
-                        f"max_output_tokens_exceeded:{requested_output_tokens}>{max_output}"
-                    )
-
-                context_tokens = _as_positive_int(limits.get("context_tokens"))
-                if context_tokens is not None:
-                    output_budget = requested_output_tokens or 0
-                    if estimated_input_tokens + output_budget > context_tokens:
-                        reasons.append(
-                            (
-                                "context_window_exceeded:"
-                                f"{estimated_input_tokens + output_budget}>{context_tokens}"
-                            )
-                        )
-
+            reasons = self._constraint_reasons_for_model(
+                model=model,
+                required_capabilities=required_capabilities,
+                requested_output_tokens=requested_output_tokens,
+                estimated_input_tokens=estimated_input_tokens,
+            )
             if reasons:
                 rejected[model] = reasons
                 continue
             accepted.append(model)
 
         if accepted:
-            return accepted, rejected
+            supplemented = self._supplement_large_context_candidates(
+                accepted_models=accepted,
+                candidate_models=candidate_models,
+                required_capabilities=required_capabilities,
+                requested_output_tokens=requested_output_tokens,
+                estimated_input_tokens=estimated_input_tokens,
+                allowed_model_patterns=allowed_model_patterns,
+            )
+            return accepted, rejected, supplemented
         # If all candidates were rejected, keep original chain to avoid complete outage.
-        return candidate_models, rejected
+        return candidate_models, rejected, []
+
+    def _constraint_reasons_for_model(
+        self,
+        *,
+        model: str,
+        required_capabilities: set[str],
+        requested_output_tokens: int | None,
+        estimated_input_tokens: int,
+    ) -> list[str]:
+        reasons: list[str] = []
+        if not self._is_model_available_for_any_enabled_account(model):
+            reasons.append("no_enabled_account_supports_model")
+        metadata = self.config.models.get(model) or {}
+        capabilities = _extract_capabilities(metadata)
+        if required_capabilities and capabilities:
+            missing = sorted(required_capabilities - capabilities)
+            if missing:
+                reasons.append(f"missing_capabilities:{','.join(missing)}")
+
+        limits = metadata.get("limits")
+        if isinstance(limits, dict):
+            max_output = _as_positive_int(limits.get("max_output_tokens"))
+            if (
+                max_output is not None
+                and requested_output_tokens is not None
+                and requested_output_tokens > max_output
+            ):
+                reasons.append(
+                    f"max_output_tokens_exceeded:{requested_output_tokens}>{max_output}"
+                )
+
+            context_tokens = _as_positive_int(limits.get("context_tokens"))
+            if context_tokens is not None:
+                output_budget = requested_output_tokens or 0
+                estimated_total_tokens = estimated_input_tokens + output_budget
+                if estimated_total_tokens > context_tokens:
+                    overflow_ratio = (
+                        estimated_total_tokens - context_tokens
+                    ) / max(1, context_tokens)
+                    if overflow_ratio > _CONTEXT_WINDOW_OVERFLOW_TOLERANCE:
+                        reasons.append(
+                            (
+                                "context_window_exceeded:"
+                                f"{estimated_total_tokens}>{context_tokens}"
+                            )
+                        )
+        return reasons
+
+    def _supplement_large_context_candidates(
+        self,
+        *,
+        accepted_models: list[str],
+        candidate_models: list[str],
+        required_capabilities: set[str],
+        requested_output_tokens: int | None,
+        estimated_input_tokens: int,
+        allowed_model_patterns: list[str],
+    ) -> list[str]:
+        if len(accepted_models) >= 2:
+            return []
+        if estimated_input_tokens < _HIGH_CONTEXT_SUPPLEMENT_TOKENS:
+            return []
+
+        supplemental_pool = self.config.available_models()
+        if allowed_model_patterns:
+            supplemental_pool = _filter_models_by_patterns(
+                candidate_models=supplemental_pool,
+                patterns=allowed_model_patterns,
+            )
+
+        accepted_set = set(accepted_models)
+        candidate_set = set(candidate_models)
+        supplemented: list[str] = []
+
+        for model in supplemental_pool:
+            if model in accepted_set or model in candidate_set:
+                continue
+            reasons = self._constraint_reasons_for_model(
+                model=model,
+                required_capabilities=required_capabilities,
+                requested_output_tokens=requested_output_tokens,
+                estimated_input_tokens=estimated_input_tokens,
+            )
+            if reasons:
+                continue
+            accepted_models.append(model)
+            accepted_set.add(model)
+            supplemented.append(model)
+            if len(accepted_models) >= 2 or len(supplemented) >= _MAX_SUPPLEMENTAL_MODELS:
+                break
+
+        return supplemented
 
     def _is_model_available_for_any_enabled_account(self, model: str) -> bool:
         if not self.config.accounts:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
@@ -180,3 +181,146 @@ def test_build_idempotency_cache_key_is_hashed_and_stable() -> None:
     assert key_a == key_b
     assert "|sha256:" in key_a
     assert len(key_a.rsplit("|", 1)[-1]) == len("sha256:") + 64
+
+
+def test_proxy_terminal_event_emitted_for_success(monkeypatch: Any) -> None:
+    async def fake_forward_with_fallback(
+        self: Any,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Any,
+        route_decision: Any,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Any:
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    monkeypatch.setattr(
+        BackendProxy,
+        "forward_with_fallback",
+        fake_forward_with_fallback,
+    )
+
+    captured: list[dict[str, Any]] = []
+    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+        previous_hook = app.state.audit_event_hook
+        app.state.audit_event_hook = lambda event: captured.append(event)
+        app.state.audit_payload_summary_enabled = False
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "auto",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+        finally:
+            app.state.audit_event_hook = previous_hook
+
+    assert response.status_code == 200
+    terminal_events = [
+        event for event in captured if event.get("event") == "proxy_terminal"
+    ]
+    assert len(terminal_events) == 1
+    event = terminal_events[0]
+    assert event["outcome"] == "success"
+    assert event["status"] == 200
+    assert event["path"] == "/v1/chat/completions"
+
+
+def test_proxy_terminal_event_emitted_for_exhausted(monkeypatch: Any) -> None:
+    async def fake_forward_with_fallback(
+        self: Any,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Any,
+        route_decision: Any,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Any:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "type": "routing_exhausted",
+                    "message": "All model/account targets failed.",
+                }
+            },
+        )
+
+    monkeypatch.setattr(
+        BackendProxy,
+        "forward_with_fallback",
+        fake_forward_with_fallback,
+    )
+
+    captured: list[dict[str, Any]] = []
+    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+        previous_hook = app.state.audit_event_hook
+        app.state.audit_event_hook = lambda event: captured.append(event)
+        app.state.audit_payload_summary_enabled = False
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "auto",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+        finally:
+            app.state.audit_event_hook = previous_hook
+
+    assert response.status_code == 502
+    terminal_events = [
+        event for event in captured if event.get("event") == "proxy_terminal"
+    ]
+    assert len(terminal_events) == 1
+    event = terminal_events[0]
+    assert event["outcome"] == "exhausted"
+    assert event["status"] == 502
+    assert event["error_type"] == "routing_exhausted"
+
+
+def test_proxy_terminal_event_emitted_for_unhandled_error(monkeypatch: Any) -> None:
+    async def fake_forward_with_fallback(
+        self: Any,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Any,
+        route_decision: Any,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        BackendProxy,
+        "forward_with_fallback",
+        fake_forward_with_fallback,
+    )
+
+    captured: list[dict[str, Any]] = []
+    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+        previous_hook = app.state.audit_event_hook
+        app.state.audit_event_hook = lambda event: captured.append(event)
+        app.state.audit_payload_summary_enabled = False
+        try:
+            with pytest.raises(RuntimeError):
+                client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "auto",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    },
+                )
+        finally:
+            app.state.audit_event_hook = previous_hook
+
+    terminal_events = [
+        event for event in captured if event.get("event") == "proxy_terminal"
+    ]
+    assert len(terminal_events) == 1
+    event = terminal_events[0]
+    assert event["outcome"] == "error"
+    assert event["status"] == 500
+    assert event["error_type"] == "RuntimeError"

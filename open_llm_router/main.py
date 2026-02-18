@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from typing import Any, Awaitable, Callable, cast
 from uuid import uuid4
@@ -37,6 +39,7 @@ from open_llm_router.policy_updater import (
 from open_llm_router.proxy import BackendProxy
 from open_llm_router.router_engine import (
     InvalidModelError,
+    RouteDecision,
     RoutingConstraintError,
     SmartModelRouter,
 )
@@ -402,6 +405,70 @@ def _build_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _extract_error_type_from_response(response: Response) -> str | None:
+    if not isinstance(response, JSONResponse):
+        return None
+    body = bytes(getattr(response, "body", b""))
+    if not body:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    error_type = error.get("type")
+    if not isinstance(error_type, str):
+        return None
+    normalized = error_type.strip()
+    return normalized or None
+
+
+def _emit_proxy_terminal_event(
+    *,
+    audit_hook: Callable[[dict[str, Any]], None] | None,
+    request_id: str,
+    path: str,
+    stream: bool,
+    status: int,
+    outcome: str,
+    route_decision: RouteDecision | None = None,
+    error_type: str | None = None,
+    note: str | None = None,
+) -> None:
+    if audit_hook is None:
+        return
+    event: dict[str, Any] = {
+        "event": "proxy_terminal",
+        "request_id": request_id,
+        "path": path,
+        "stream": stream,
+        "status": int(status),
+        "outcome": outcome,
+    }
+    if route_decision is not None:
+        event.update(
+            {
+                "requested_model": route_decision.requested_model,
+                "selected_model": route_decision.selected_model,
+                "source": route_decision.source,
+                "task": route_decision.task,
+                "complexity": route_decision.complexity,
+            }
+        )
+    if error_type:
+        event["error_type"] = error_type
+    if note:
+        event["note"] = note
+    try:
+        audit_hook(event)
+    except Exception:
+        pass
+
+
 def _runtime_policy_snapshot(config: RoutingConfig) -> dict[str, dict[str, float]]:
     output: dict[str, dict[str, float]] = {}
     for model, profile in sorted(config.model_profiles.items()):
@@ -503,6 +570,17 @@ def _render_prometheus_metrics(
         _append_prometheus_metric(
             lines,
             declared,
+            name="router_proxy_connect_latency_slo_violations_total",
+            metric_type="counter",
+            help_text=(
+                "Total number of connect latency SLO threshold crossings based on "
+                "rolling p95 per target."
+            ),
+            value=collector.proxy_connect_latency_alerts_total,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
             name="router_proxy_attempt_latency_ms_sum",
             metric_type="counter",
             help_text="Sum of upstream attempt latencies (ms) captured on proxy errors.",
@@ -540,6 +618,64 @@ def _render_prometheus_metrics(
                 value=count,
                 labels={"provider": provider, "account": account},
             )
+        for (provider, account, model), count in sorted(
+            collector.proxy_connect_latency_alerts_by_target.items()
+        ):
+            _append_prometheus_metric(
+                lines,
+                declared,
+                name="router_proxy_connect_latency_slo_violations_by_target_total",
+                metric_type="counter",
+                help_text=(
+                    "Connect latency SLO threshold crossings by provider/account/model "
+                    "(rolling p95)."
+                ),
+                value=count,
+                labels={
+                    "provider": provider,
+                    "account": account,
+                    "model": model,
+                },
+            )
+        for (provider, account, model), values in sorted(
+            collector.proxy_connect_latency_quantiles_by_target.items()
+        ):
+            count = int(values.get("count", 0))
+            if count > 0:
+                _append_prometheus_metric(
+                    lines,
+                    declared,
+                    name="router_proxy_connect_latency_samples_by_target",
+                    metric_type="gauge",
+                    help_text="Rolling connect latency sample count by target.",
+                    value=count,
+                    labels={
+                        "provider": provider,
+                        "account": account,
+                        "model": model,
+                    },
+                )
+            for quantile in ("p50", "p95", "p99"):
+                quantile_value = values.get(quantile)
+                if not isinstance(quantile_value, (int, float)):
+                    continue
+                _append_prometheus_metric(
+                    lines,
+                    declared,
+                    name="router_proxy_connect_latency_ms_quantile",
+                    metric_type="gauge",
+                    help_text=(
+                        "Rolling connect latency quantiles by target "
+                        "(collector window)."
+                    ),
+                    value=float(quantile_value),
+                    labels={
+                        "provider": provider,
+                        "account": account,
+                        "model": model,
+                        "quantile": quantile,
+                    },
+                )
         for error_type, count in sorted(collector.proxy_errors_by_type.items()):
             _append_prometheus_metric(
                 lines,
@@ -704,6 +840,8 @@ async def startup() -> None:
         store=live_metrics_store,
         logger=logger,
         enabled=settings.live_metrics_enabled,
+        connect_latency_window_size=settings.live_metrics_connect_latency_window_size,
+        connect_latency_alert_threshold_ms=settings.live_metrics_connect_latency_alert_threshold_ms,
     )
     await live_metrics_collector.start()
     app.state.live_metrics_store = live_metrics_store
@@ -821,6 +959,31 @@ async def router_live_metrics() -> dict[str, Any]:
             status_code=503, detail="Live metrics collector is unavailable."
         )
     snapshot = await collector.snapshot()
+    connect_latency_quantiles = [
+        {
+            "provider": provider,
+            "account": account,
+            "model": model,
+            "count": int(values.get("count", 0)),
+            "p50_ms": float(values.get("p50", 0.0)),
+            "p95_ms": float(values.get("p95", 0.0)),
+            "p99_ms": float(values.get("p99", 0.0)),
+        }
+        for (provider, account, model), values in sorted(
+            collector.proxy_connect_latency_quantiles_by_target.items()
+        )
+    ]
+    connect_latency_alerts = [
+        {
+            "provider": provider,
+            "account": account,
+            "model": model,
+            "alerts": int(count),
+        }
+        for (provider, account, model), count in sorted(
+            collector.proxy_connect_latency_alerts_by_target.items()
+        )
+    ]
     return {
         "object": "router.live_metrics",
         "dropped_events": collector.dropped_events,
@@ -829,6 +992,11 @@ async def router_live_metrics() -> dict[str, Any]:
         "proxy_retries_total": collector.proxy_retries_total,
         "proxy_timeouts_total": collector.proxy_timeouts_total,
         "proxy_rate_limited_total": collector.proxy_rate_limited_total,
+        "proxy_connect_latency_window_size": collector.proxy_connect_latency_window_size,
+        "proxy_connect_latency_alert_threshold_ms": collector.proxy_connect_latency_alert_threshold_ms,
+        "proxy_connect_latency_slo_violations_total": collector.proxy_connect_latency_alerts_total,
+        "proxy_connect_latency_slo_violations_by_target": connect_latency_alerts,
+        "proxy_connect_latency_quantiles_by_target": connect_latency_quantiles,
         "proxy_attempt_latency_ms_sum": collector.proxy_attempt_latency_sum_ms,
         "proxy_attempt_latency_ms_count": collector.proxy_attempt_latency_count,
         "proxy_errors_by_type": collector.proxy_errors_by_type,
@@ -883,6 +1051,9 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
         or request.headers.get("x-correlation-id")
         or uuid4().hex[:12]
     )
+    audit_hook: Callable[[dict[str, Any]], None] | None = getattr(
+        app.state, "audit_event_hook", None
+    )
     is_stream = bool(payload.get("stream"))
     idempotency_key = request.headers.get("Idempotency-Key")
     idempotency_result = None
@@ -905,11 +1076,39 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
             idempotency_result.mode == "replay"
             and idempotency_result.cached is not None
         ):
-            return idempotency_result.cached.to_fastapi_response()
+            cached_response = idempotency_result.cached.to_fastapi_response()
+            _emit_proxy_terminal_event(
+                audit_hook=audit_hook,
+                request_id=request_id,
+                path=path,
+                stream=is_stream,
+                status=int(cached_response.status_code),
+                outcome=(
+                    "success" if int(cached_response.status_code) < 400 else "error"
+                ),
+                error_type=_extract_error_type_from_response(cached_response),
+                note="idempotency_replay",
+            )
+            return cached_response
         if idempotency_result.mode == "wait":
             cached = await idempotency_store.wait_for_existing(idempotency_result)
             if cached is not None:
-                return cached.to_fastapi_response()
+                cached_response = cached.to_fastapi_response()
+                _emit_proxy_terminal_event(
+                    audit_hook=audit_hook,
+                    request_id=request_id,
+                    path=path,
+                    stream=is_stream,
+                    status=int(cached_response.status_code),
+                    outcome=(
+                        "success"
+                        if int(cached_response.status_code) < 400
+                        else "error"
+                    ),
+                    error_type=_extract_error_type_from_response(cached_response),
+                    note="idempotency_wait_replay",
+                )
+                return cached_response
         is_leader = idempotency_result.mode == "leader"
     try:
         route_decision = router.decide(payload=payload, endpoint=path)
@@ -921,6 +1120,15 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
             request_id,
             exc.requested_model,
             len(exc.available_models),
+        )
+        _emit_proxy_terminal_event(
+            audit_hook=audit_hook,
+            request_id=request_id,
+            path=path,
+            stream=is_stream,
+            status=400,
+            outcome="error",
+            error_type="invalid_model",
         )
         raise HTTPException(
             status_code=400,
@@ -938,6 +1146,15 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
             "routing_constraints_unsatisfied request_id=%s constraint=%s",
             request_id,
             exc.constraint,
+        )
+        _emit_proxy_terminal_event(
+            audit_hook=audit_hook,
+            request_id=request_id,
+            path=path,
+            stream=is_stream,
+            status=400,
+            outcome="error",
+            error_type="routing_constraints_unsatisfied",
         )
         raise HTTPException(
             status_code=400,
@@ -972,9 +1189,6 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
             ",".join(route_decision.ranked_models[:5]),
         )
 
-    audit_hook: Callable[[dict[str, Any]], None] | None = getattr(
-        app.state, "audit_event_hook", None
-    )
     if audit_hook is not None:
         event: dict[str, Any] = {
             "event": "route_decision",
@@ -1004,11 +1218,35 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
             stream=is_stream,
             request_id=request_id,
         )
-    except Exception:
+    except asyncio.CancelledError:
+        if cache_key and is_leader:
+            await idempotency_store.release_without_store(cache_key)
+        _emit_proxy_terminal_event(
+            audit_hook=audit_hook,
+            request_id=request_id,
+            path=path,
+            stream=is_stream,
+            status=499,
+            outcome="cancelled",
+            route_decision=route_decision,
+            error_type="request_cancelled",
+        )
+        raise
+    except Exception as exc:
         if cache_key and is_leader:
             # If upstream call crashes before we can cache a final response,
             # unblock waiters so they can retry.
             await idempotency_store.release_without_store(cache_key)
+        _emit_proxy_terminal_event(
+            audit_hook=audit_hook,
+            request_id=request_id,
+            path=path,
+            stream=is_stream,
+            status=500,
+            outcome="error",
+            route_decision=route_decision,
+            error_type=exc.__class__.__name__,
+        )
         raise
 
     if cache_key and is_leader:
@@ -1033,6 +1271,23 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
         except Exception:
             await idempotency_store.release_without_store(cache_key)
             raise
+
+    terminal_error_type = _extract_error_type_from_response(response)
+    terminal_outcome = "success"
+    if terminal_error_type == "routing_exhausted":
+        terminal_outcome = "exhausted"
+    elif int(response.status_code) >= 400:
+        terminal_outcome = "error"
+    _emit_proxy_terminal_event(
+        audit_hook=audit_hook,
+        request_id=request_id,
+        path=path,
+        stream=is_stream,
+        status=int(response.status_code),
+        outcome=terminal_outcome,
+        route_decision=route_decision,
+        error_type=terminal_error_type,
+    )
 
     return response
 

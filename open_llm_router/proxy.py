@@ -995,6 +995,10 @@ class BackendProxy:
 
         attempted_targets: list[str] = []
         attempted_upstream_models: list[str] = []
+        candidate_targets_total = len(candidate_targets)
+        skipped_rate_limited = 0
+        skipped_circuit_open = 0
+        skipped_oauth_token_missing = 0
         trial_payload = dict(payload)
 
         for index, target in enumerate(candidate_targets):
@@ -1019,6 +1023,7 @@ class BackendProxy:
                     model=target.model,
                     breaker=snapshot,
                 )
+                skipped_circuit_open += 1
                 continue
             if self._is_temporarily_rate_limited(target.account_name):
                 logger.info(
@@ -1033,6 +1038,7 @@ class BackendProxy:
                     account=target.account_name,
                     model=target.model,
                 )
+                skipped_rate_limited += 1
                 continue
             attempted_targets.append(target.label)
             attempted_upstream_models.append(target.upstream_model)
@@ -1079,6 +1085,7 @@ class BackendProxy:
                     model=target.model,
                     upstream_model=target.upstream_model,
                 )
+                skipped_oauth_token_missing += 1
                 if index < len(candidate_targets) - 1:
                     continue
                 return JSONResponse(
@@ -1197,7 +1204,14 @@ class BackendProxy:
             ):
                 self._circuit_breakers.on_failure(breaker_key)
             if upstream.status_code == 429:
-                self._mark_rate_limited(target.account_name, upstream.headers)
+                self._mark_rate_limited(
+                    target.account_name,
+                    upstream.headers,
+                    request_id=rid,
+                    target=target.label,
+                    model=target.model,
+                    upstream_model=target.upstream_model,
+                )
             if should_retry:
                 logger.info(
                     "proxy_retry request_id=%s target=%s status=%d",
@@ -1234,15 +1248,28 @@ class BackendProxy:
             )
 
         logger.error(
-            "proxy_exhausted request_id=%s attempted_targets=%s",
+            (
+                "proxy_exhausted request_id=%s attempted_targets=%s "
+                "candidate_targets_total=%d skipped_rate_limited=%d "
+                "skipped_circuit_open=%d skipped_oauth_token_missing=%d"
+            ),
             rid,
             ",".join(attempted_targets),
+            candidate_targets_total,
+            skipped_rate_limited,
+            skipped_circuit_open,
+            skipped_oauth_token_missing,
         )
         self._audit(
             "proxy_exhausted",
             request_id=rid,
+            candidate_targets_total=candidate_targets_total,
+            attempted_count=len(attempted_targets),
             attempted_targets=attempted_targets,
             attempted_upstream_models=attempted_upstream_models,
+            skipped_rate_limited=skipped_rate_limited,
+            skipped_circuit_open=skipped_circuit_open,
+            skipped_oauth_token_missing=skipped_oauth_token_missing,
         )
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1250,8 +1277,13 @@ class BackendProxy:
                 "error": {
                     "type": "routing_exhausted",
                     "message": "All model/account targets failed.",
+                    "candidate_targets_total": candidate_targets_total,
+                    "attempted_count": len(attempted_targets),
                     "attempted_targets": attempted_targets,
                     "attempted_upstream_models": attempted_upstream_models,
+                    "skipped_rate_limited": skipped_rate_limited,
+                    "skipped_circuit_open": skipped_circuit_open,
+                    "skipped_oauth_token_missing": skipped_oauth_token_missing,
                 }
             },
         )
@@ -2002,14 +2034,23 @@ class BackendProxy:
             )
             grouped_targets.append(model_targets)
 
+        if (
+            route_decision.source != "request"
+            and self._allows_fallbacks(provider_preferences)
+        ):
+            grouped_targets = self._prioritize_model_groups_by_rate_limit(
+                grouped_targets
+            )
+
         if partition == "none":
             flattened_targets = [
                 target for group in grouped_targets for target in group
             ]
-            return self._sort_model_targets(
+            sorted_targets = self._sort_model_targets(
                 model_targets=flattened_targets,
                 provider_preferences=provider_preferences,
             )
+            return self._prioritize_targets_by_rate_limit(sorted_targets)
 
         targets: list[BackendTarget] = []
         for model_targets in grouped_targets:
@@ -2017,8 +2058,47 @@ class BackendProxy:
                 model_targets=model_targets,
                 provider_preferences=provider_preferences,
             )
-            targets.extend(sorted_targets)
+            targets.extend(self._prioritize_targets_by_rate_limit(sorted_targets))
         return targets
+
+    def _prioritize_model_groups_by_rate_limit(
+        self, grouped_targets: list[list[BackendTarget]]
+    ) -> list[list[BackendTarget]]:
+        if len(grouped_targets) <= 1:
+            return grouped_targets
+
+        healthy_groups: list[list[BackendTarget]] = []
+        limited_groups: list[list[BackendTarget]] = []
+        for model_targets in grouped_targets:
+            if any(
+                not self._is_temporarily_rate_limited(target.account_name)
+                for target in model_targets
+            ):
+                healthy_groups.append(model_targets)
+            else:
+                limited_groups.append(model_targets)
+
+        if not healthy_groups or not limited_groups:
+            return grouped_targets
+        return [*healthy_groups, *limited_groups]
+
+    def _prioritize_targets_by_rate_limit(
+        self, model_targets: list[BackendTarget]
+    ) -> list[BackendTarget]:
+        if len(model_targets) <= 1:
+            return model_targets
+
+        healthy_targets: list[BackendTarget] = []
+        limited_targets: list[BackendTarget] = []
+        for target in model_targets:
+            if self._is_temporarily_rate_limited(target.account_name):
+                limited_targets.append(target)
+            else:
+                healthy_targets.append(target)
+
+        if not healthy_targets or not limited_targets:
+            return model_targets
+        return [*healthy_targets, *limited_targets]
 
     @staticmethod
     def _provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
@@ -2286,23 +2366,45 @@ class BackendProxy:
             return False
         return True
 
-    def _mark_rate_limited(self, account_name: str, headers: httpx.Headers) -> None:
+    def _mark_rate_limited(
+        self,
+        account_name: str,
+        headers: httpx.Headers,
+        *,
+        request_id: str | None = None,
+        target: str | None = None,
+        model: str | None = None,
+        upstream_model: str | None = None,
+    ) -> None:
         retry_after_seconds = _parse_retry_after_seconds(headers)
         until = time.time() + retry_after_seconds
         current = self._rate_limited_until.get(account_name, 0.0)
         if until > current:
             self._rate_limited_until[account_name] = until
         logger.info(
-            "proxy_rate_limited account=%s retry_after_seconds=%.1f",
+            (
+                "proxy_rate_limited request_id=%s account=%s target=%s "
+                "retry_after_seconds=%.1f"
+            ),
+            request_id,
             account_name,
+            target,
             retry_after_seconds,
         )
-        self._audit(
-            "proxy_rate_limited",
-            account=account_name,
-            retry_after_seconds=retry_after_seconds,
-            until_epoch=until,
-        )
+        fields: dict[str, Any] = {
+            "account": account_name,
+            "retry_after_seconds": retry_after_seconds,
+            "until_epoch": until,
+        }
+        if request_id:
+            fields["request_id"] = request_id
+        if target:
+            fields["target"] = target
+        if model:
+            fields["model"] = model
+        if upstream_model:
+            fields["upstream_model"] = upstream_model
+        self._audit("proxy_rate_limited", **fields)
 
     async def _resolve_bearer_token(self, account: BackendAccount) -> str | None:
         if account.auth_mode == "api_key":

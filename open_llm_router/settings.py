@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     live_metrics_enabled: bool = True
     live_metrics_ewma_alpha: float = 0.2
+    live_metrics_connect_latency_window_size: int = 256
+    live_metrics_connect_latency_alert_threshold_ms: float = 8000.0
     live_metrics_update_interval_seconds: float = 30.0
     live_metrics_min_samples: int = 30
     runtime_policy_max_adjustment_ratio: float = 0.15

@@ -88,6 +88,79 @@ def test_build_targets_across_accounts_and_fallback_models() -> None:
     asyncio.run(proxy.close())
 
 
+def test_build_targets_prioritize_non_rate_limited_accounts() -> None:
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-primary",
+                provider="openai",
+                base_url="http://provider-a",
+                api_key="key-a",
+                models=["m1"],
+            ),
+            BackendAccount(
+                name="acct-fallback",
+                provider="openai",
+                base_url="http://provider-b",
+                api_key="key-b",
+                models=["m1"],
+            ),
+        ],
+    )
+    proxy._rate_limited_until["acct-primary"] = time.time() + 60.0
+
+    targets = proxy._build_candidate_targets(_decision("m1", []))
+    assert [target.label for target in targets] == [
+        "acct-fallback:m1",
+        "acct-primary:m1",
+    ]
+    asyncio.run(proxy.close())
+
+
+def test_build_targets_prioritize_models_with_healthy_accounts() -> None:
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[429, 500],
+        accounts=[
+            BackendAccount(
+                name="acct-primary",
+                provider="openai",
+                base_url="http://provider-a",
+                api_key="key-a",
+                models=["m1"],
+            ),
+            BackendAccount(
+                name="acct-fallback",
+                provider="openai",
+                base_url="http://provider-b",
+                api_key="key-b",
+                models=["m2"],
+            ),
+        ],
+    )
+    proxy._rate_limited_until["acct-primary"] = time.time() + 60.0
+
+    targets = proxy._build_candidate_targets(
+        _decision(
+            "m1",
+            ["m2"],
+            source="auto",
+            provider_preferences={"allow_fallbacks": True},
+        )
+    )
+    assert [target.label for target in targets] == [
+        "acct-fallback:m2",
+        "acct-primary:m1",
+    ]
+    asyncio.run(proxy.close())
+
+
 def test_build_targets_applies_provider_order_preference() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
@@ -692,6 +765,121 @@ def test_proxy_request_error_audit_contains_attempt_and_status_fields() -> None:
     assert event["error_type"] == "ConnectTimeout"
     assert event["is_timeout"] is True
     assert event["error"]
+    asyncio.run(proxy.close())
+
+
+def test_proxy_rate_limited_audit_contains_request_context_fields() -> None:
+    captured_events: list[dict[str, Any]] = []
+
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[500],
+        audit_hook=lambda event: captured_events.append(event),
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+        ],
+    )
+    asyncio.run(proxy.client.aclose())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=429,
+            headers={"Content-Type": "application/json", "Retry-After": "7"},
+            json={"error": "rate limited"},
+            request=request,
+        )
+
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision("openai/m1", []),
+            stream=False,
+            request_id="req-rate-context",
+        )
+    )
+
+    assert response.status_code == 429
+    events = [event for event in captured_events if event.get("event") == "proxy_rate_limited"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["request_id"] == "req-rate-context"
+    assert event["account"] == "acct-openai"
+    assert event["target"] == "acct-openai:m1"
+    assert event["model"] == "openai/m1"
+    assert event["upstream_model"] == "m1"
+    assert event["retry_after_seconds"] == 7.0
+    asyncio.run(proxy.close())
+
+
+def test_proxy_exhausted_audit_includes_skip_counters() -> None:
+    captured_events: list[dict[str, Any]] = []
+
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[500],
+        audit_hook=lambda event: captured_events.append(event),
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+        ],
+    )
+    proxy._rate_limited_until["acct-openai"] = time.time() + 60.0
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision("openai/m1", []),
+            stream=False,
+            request_id="req-exhausted-counters",
+        )
+    )
+
+    assert response.status_code == 502
+    body = json.loads(bytes(response.body).decode("utf-8"))
+    assert body["error"]["type"] == "routing_exhausted"
+    assert body["error"]["candidate_targets_total"] == 1
+    assert body["error"]["attempted_count"] == 0
+    assert body["error"]["skipped_rate_limited"] == 1
+    assert body["error"]["skipped_circuit_open"] == 0
+    assert body["error"]["skipped_oauth_token_missing"] == 0
+
+    exhausted_events = [event for event in captured_events if event.get("event") == "proxy_exhausted"]
+    assert len(exhausted_events) == 1
+    event = exhausted_events[0]
+    assert event["candidate_targets_total"] == 1
+    assert event["attempted_count"] == 0
+    assert event["skipped_rate_limited"] == 1
+    assert event["skipped_circuit_open"] == 0
+    assert event["skipped_oauth_token_missing"] == 0
     asyncio.run(proxy.close())
 
 

@@ -5,8 +5,9 @@ import base64
 import json
 import logging
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
+from math import ceil
 from typing import Any, Protocol
 
 TARGET_METRICS_KEY_PREFIX = "target::"
@@ -101,6 +102,15 @@ def _ewma(previous: float | None, value: float, alpha: float) -> float:
 
 def _is_failure_status(status: int) -> bool:
     return status == 429 or status >= 500
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    rank = max(1, ceil(percentile * len(sorted_values)))
+    idx = min(len(sorted_values) - 1, rank - 1)
+    return float(sorted_values[idx])
 
 
 def _normalize_dimension(value: str | None) -> str | None:
@@ -548,6 +558,8 @@ class LiveMetricsCollector:
         logger: logging.Logger | None = None,
         enabled: bool = True,
         queue_size: int = 8192,
+        connect_latency_window_size: int = 256,
+        connect_latency_alert_threshold_ms: float = 8000.0,
     ) -> None:
         self._store = store
         self._logger = logger
@@ -555,15 +567,29 @@ class LiveMetricsCollector:
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(
             maxsize=max(1, queue_size)
         )
+        self._connect_latency_window_size = max(10, int(connect_latency_window_size))
+        self._connect_latency_alert_threshold_ms = max(
+            0.0, float(connect_latency_alert_threshold_ms)
+        )
         self._worker_task: asyncio.Task[None] | None = None
         self._dropped_events = 0
         self._proxy_retries_total = 0
         self._proxy_timeouts_total = 0
         self._proxy_rate_limited_total = 0
+        self._proxy_connect_latency_alerts_total = 0
         self._proxy_attempt_latency_sum_ms = 0.0
         self._proxy_attempt_latency_count = 0
         self._proxy_retries_by_target: dict[tuple[str, str], int] = defaultdict(int)
         self._proxy_timeouts_by_target: dict[tuple[str, str], int] = defaultdict(int)
+        self._proxy_connect_latency_alerts_by_target: dict[tuple[str, str, str], int] = (
+            defaultdict(int)
+        )
+        self._proxy_connect_latency_alert_active_by_target: dict[
+            tuple[str, str, str], bool
+        ] = defaultdict(bool)
+        self._proxy_connect_latency_samples_by_target: dict[
+            tuple[str, str, str], deque[float]
+        ] = {}
         self._proxy_errors_by_type: dict[str, int] = defaultdict(int)
         self._proxy_responses_by_status_class: dict[str, int] = defaultdict(int)
 
@@ -592,6 +618,18 @@ class LiveMetricsCollector:
         return self._proxy_rate_limited_total
 
     @property
+    def proxy_connect_latency_window_size(self) -> int:
+        return self._connect_latency_window_size
+
+    @property
+    def proxy_connect_latency_alert_threshold_ms(self) -> float:
+        return self._connect_latency_alert_threshold_ms
+
+    @property
+    def proxy_connect_latency_alerts_total(self) -> int:
+        return self._proxy_connect_latency_alerts_total
+
+    @property
     def proxy_attempt_latency_sum_ms(self) -> float:
         return self._proxy_attempt_latency_sum_ms
 
@@ -606,6 +644,27 @@ class LiveMetricsCollector:
     @property
     def proxy_timeouts_by_target(self) -> dict[tuple[str, str], int]:
         return dict(self._proxy_timeouts_by_target)
+
+    @property
+    def proxy_connect_latency_alerts_by_target(self) -> dict[tuple[str, str, str], int]:
+        return dict(self._proxy_connect_latency_alerts_by_target)
+
+    @property
+    def proxy_connect_latency_quantiles_by_target(
+        self,
+    ) -> dict[tuple[str, str, str], dict[str, float | int]]:
+        output: dict[tuple[str, str, str], dict[str, float | int]] = {}
+        for key, samples in self._proxy_connect_latency_samples_by_target.items():
+            values = list(samples)
+            if not values:
+                continue
+            output[key] = {
+                "count": len(values),
+                "p50": _percentile(values, 0.50) or 0.0,
+                "p95": _percentile(values, 0.95) or 0.0,
+                "p99": _percentile(values, 0.99) or 0.0,
+            }
+        return output
 
     @property
     def proxy_errors_by_type(self) -> dict[str, int]:
@@ -680,12 +739,40 @@ class LiveMetricsCollector:
         if event_name == "proxy_upstream_connected":
             connect_ms = event.get("connect_ms")
             if isinstance(connect_ms, (int, float)):
+                connect_value = max(0.0, float(connect_ms))
                 await self._store.record_connect(
                     model=model,
-                    connect_ms=float(connect_ms),
+                    connect_ms=connect_value,
                     provider=provider,
                     account=account,
                 )
+                connect_target_key = (provider or "unknown", account or "unknown", model)
+                samples = self._proxy_connect_latency_samples_by_target.get(
+                    connect_target_key
+                )
+                if samples is None:
+                    samples = deque(maxlen=self._connect_latency_window_size)
+                    self._proxy_connect_latency_samples_by_target[connect_target_key] = (
+                        samples
+                    )
+                samples.append(connect_value)
+                if self._connect_latency_alert_threshold_ms > 0.0:
+                    p95_value = _percentile(list(samples), 0.95)
+                    is_alerting = (
+                        p95_value is not None
+                        and p95_value > self._connect_latency_alert_threshold_ms
+                    )
+                    was_alerting = self._proxy_connect_latency_alert_active_by_target[
+                        connect_target_key
+                    ]
+                    if is_alerting and not was_alerting:
+                        self._proxy_connect_latency_alerts_total += 1
+                        self._proxy_connect_latency_alerts_by_target[
+                            connect_target_key
+                        ] += 1
+                    self._proxy_connect_latency_alert_active_by_target[
+                        connect_target_key
+                    ] = is_alerting
             return
 
         if event_name == "proxy_response":

@@ -27,6 +27,8 @@ def test_router_live_metrics_endpoint_returns_snapshot(monkeypatch: Any) -> None
     assert "dropped_events" in payload
     assert "queue_depth" in payload
     assert "proxy_retries_total" in payload
+    assert "proxy_connect_latency_quantiles_by_target" in payload
+    assert "proxy_connect_latency_slo_violations_total" in payload
     assert isinstance(payload["models"], dict)
 
 
@@ -50,3 +52,4 @@ def test_metrics_endpoint_returns_prometheus_payload(monkeypatch: Any) -> None:
     body = response.text
     assert "router_live_metrics_events_dropped_total" in body
     assert "router_proxy_retries_total" in body
+    assert "router_proxy_connect_latency_slo_violations_total" in body
