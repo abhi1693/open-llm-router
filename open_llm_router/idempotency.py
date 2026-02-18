@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import time
@@ -270,6 +271,7 @@ def build_idempotency_cache_key(
     path: str,
     payload: dict[str, Any],
 ) -> str:
-    # Payload fingerprint avoids accidental key reuse across semantically-different requests.
-    payload_fingerprint = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return f"{tenant_id}|{path}|{idempotency_key}|{payload_fingerprint}"
+    # Use a fixed-size fingerprint to avoid oversized cache keys and reduce key serialization overhead.
+    canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    payload_fingerprint = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+    return f"{tenant_id}|{path}|{idempotency_key}|sha256:{payload_fingerprint}"

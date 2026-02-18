@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import defaultdict
 import json
 import logging
 import time
@@ -276,6 +277,17 @@ class RedisLiveMetricsStore:
         return f"{self._key_prefix}{encoded}"
 
     @staticmethod
+    def _decode_hash(raw: Any) -> dict[str, str]:
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(k.decode("utf-8") if isinstance(k, bytes) else k): (
+                v.decode("utf-8") if isinstance(v, bytes) else str(v)
+            )
+            for k, v in raw.items()
+        }
+
+    @staticmethod
     def _parse_state(raw: dict[str, str]) -> _ModelMetricsState | None:
         model = raw.get("model")
         if not isinstance(model, str) or not model.strip():
@@ -307,25 +319,9 @@ class RedisLiveMetricsStore:
             last_updated_epoch=_to_float(raw.get("last_updated_epoch")),
         )
 
-    async def _load_state(self, model: str) -> _ModelMetricsState:
-        key = self._key_for_model(model)
-        raw = await self._redis.hgetall(key)
-        state = None
-        if isinstance(raw, dict):
-            normalized_raw = {
-                str(k.decode("utf-8") if isinstance(k, bytes) else k): (
-                    v.decode("utf-8") if isinstance(v, bytes) else str(v)
-                )
-                for k, v in raw.items()
-            }
-            state = self._parse_state(normalized_raw)
-        if state is None:
-            state = _ModelMetricsState(model=model)
-        return state
-
-    async def _save_state(self, state: _ModelMetricsState) -> None:
-        key = self._key_for_model(state.model)
-        payload = {
+    @staticmethod
+    def _state_to_payload(state: _ModelMetricsState) -> dict[str, str]:
+        return {
             "model": state.model,
             "samples": str(state.samples),
             "route_decisions": str(state.route_decisions),
@@ -342,8 +338,34 @@ class RedisLiveMetricsStore:
             if state.last_updated_epoch is None
             else f"{state.last_updated_epoch:.6f}",
         }
-        await self._redis.hset(key, mapping=payload)
-        await self._redis.expire(key, self._key_ttl_seconds)
+
+    async def _load_states(self, models: list[str]) -> dict[str, _ModelMetricsState]:
+        unique_models = list(dict.fromkeys(models))
+        if not unique_models:
+            return {}
+
+        pipeline = self._redis.pipeline(transaction=False)
+        for model in unique_models:
+            pipeline.hgetall(self._key_for_model(model))
+        rows = await pipeline.execute()
+
+        output: dict[str, _ModelMetricsState] = {}
+        for model, raw in zip(unique_models, rows):
+            state = self._parse_state(self._decode_hash(raw))
+            if state is None:
+                state = _ModelMetricsState(model=model)
+            output[model] = state
+        return output
+
+    async def _save_states(self, states: list[_ModelMetricsState]) -> None:
+        if not states:
+            return
+        pipeline = self._redis.pipeline(transaction=False)
+        for state in states:
+            key = self._key_for_model(state.model)
+            pipeline.hset(key, mapping=self._state_to_payload(state))
+            pipeline.expire(key, self._key_ttl_seconds)
+        await pipeline.execute()
 
     async def record_route_decision(
         self,
@@ -360,11 +382,14 @@ class RedisLiveMetricsStore:
         if not keys:
             return
         now = time.time()
+        states = await self._load_states(keys)
+        updated: list[_ModelMetricsState] = []
         for key in keys:
-            state = await self._load_state(key)
+            state = states.get(key, _ModelMetricsState(model=key))
             state.route_decisions += 1
             state.last_updated_epoch = now
-            await self._save_state(state)
+            updated.append(state)
+        await self._save_states(updated)
 
     async def record_connect(
         self,
@@ -379,12 +404,15 @@ class RedisLiveMetricsStore:
             return
         value = max(0.0, float(connect_ms))
         now = time.time()
+        states = await self._load_states(keys)
+        updated: list[_ModelMetricsState] = []
         for key in keys:
-            state = await self._load_state(key)
+            state = states.get(key, _ModelMetricsState(model=key))
             state.samples += 1
             state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
             state.last_updated_epoch = now
-            await self._save_state(state)
+            updated.append(state)
+        await self._save_states(updated)
 
     async def record_response(
         self,
@@ -399,8 +427,10 @@ class RedisLiveMetricsStore:
         if not keys:
             return
         now = time.time()
+        states = await self._load_states(keys)
+        updated: list[_ModelMetricsState] = []
         for key in keys:
-            state = await self._load_state(key)
+            state = states.get(key, _ModelMetricsState(model=key))
             state.responses += 1
             state.samples += 1
             failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
@@ -415,7 +445,8 @@ class RedisLiveMetricsStore:
                     self._alpha,
                 )
             state.last_updated_epoch = now
-            await self._save_state(state)
+            updated.append(state)
+        await self._save_states(updated)
 
     async def record_error(
         self,
@@ -430,13 +461,16 @@ class RedisLiveMetricsStore:
         if not keys:
             return
         now = time.time()
+        states = await self._load_states(keys)
+        updated: list[_ModelMetricsState] = []
         for key in keys:
-            state = await self._load_state(key)
+            state = states.get(key, _ModelMetricsState(model=key))
             state.errors += 1
             state.samples += 1
             state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
             state.last_updated_epoch = now
-            await self._save_state(state)
+            updated.append(state)
+        await self._save_states(updated)
 
     async def snapshot_all(self) -> dict[str, ModelMetricsSnapshot]:
         output: dict[str, ModelMetricsSnapshot] = {}
@@ -444,18 +478,16 @@ class RedisLiveMetricsStore:
         pattern = f"{self._key_prefix}*"
         while True:
             cursor, keys = await self._redis.scan(cursor=cursor, match=pattern, count=200)
-            for key in keys:
-                raw = await self._redis.hgetall(key)
-                normalized_raw = {
-                    str(k.decode("utf-8") if isinstance(k, bytes) else k): (
-                        v.decode("utf-8") if isinstance(v, bytes) else str(v)
-                    )
-                    for k, v in raw.items()
-                }
-                state = self._parse_state(normalized_raw)
-                if state is None:
-                    continue
-                output[state.model] = state.to_snapshot()
+            if keys:
+                pipeline = self._redis.pipeline(transaction=False)
+                for key in keys:
+                    pipeline.hgetall(key)
+                rows = await pipeline.execute()
+                for raw in rows:
+                    state = self._parse_state(self._decode_hash(raw))
+                    if state is None:
+                        continue
+                    output[state.model] = state.to_snapshot()
             if cursor in (0, "0"):
                 break
         return output
@@ -500,10 +532,63 @@ class LiveMetricsCollector:
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=max(1, queue_size))
         self._worker_task: asyncio.Task[None] | None = None
         self._dropped_events = 0
+        self._proxy_retries_total = 0
+        self._proxy_timeouts_total = 0
+        self._proxy_rate_limited_total = 0
+        self._proxy_attempt_latency_sum_ms = 0.0
+        self._proxy_attempt_latency_count = 0
+        self._proxy_retries_by_target: dict[tuple[str, str], int] = defaultdict(int)
+        self._proxy_timeouts_by_target: dict[tuple[str, str], int] = defaultdict(int)
+        self._proxy_errors_by_type: dict[str, int] = defaultdict(int)
+        self._proxy_responses_by_status_class: dict[str, int] = defaultdict(int)
 
     @property
     def dropped_events(self) -> int:
         return self._dropped_events
+
+    @property
+    def queue_depth(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def queue_capacity(self) -> int:
+        return self._queue.maxsize
+
+    @property
+    def proxy_retries_total(self) -> int:
+        return self._proxy_retries_total
+
+    @property
+    def proxy_timeouts_total(self) -> int:
+        return self._proxy_timeouts_total
+
+    @property
+    def proxy_rate_limited_total(self) -> int:
+        return self._proxy_rate_limited_total
+
+    @property
+    def proxy_attempt_latency_sum_ms(self) -> float:
+        return self._proxy_attempt_latency_sum_ms
+
+    @property
+    def proxy_attempt_latency_count(self) -> int:
+        return self._proxy_attempt_latency_count
+
+    @property
+    def proxy_retries_by_target(self) -> dict[tuple[str, str], int]:
+        return dict(self._proxy_retries_by_target)
+
+    @property
+    def proxy_timeouts_by_target(self) -> dict[tuple[str, str], int]:
+        return dict(self._proxy_timeouts_by_target)
+
+    @property
+    def proxy_errors_by_type(self) -> dict[str, int]:
+        return dict(self._proxy_errors_by_type)
+
+    @property
+    def proxy_responses_by_status_class(self) -> dict[str, int]:
+        return dict(self._proxy_responses_by_status_class)
 
     async def start(self) -> None:
         if not self._enabled or self._worker_task is not None:
@@ -548,8 +633,9 @@ class LiveMetricsCollector:
     async def _process_event(self, event: dict[str, Any]) -> None:
         event_name = str(event.get("event") or "")
         model = str(event.get("model") or "").strip()
-        provider = str(event.get("provider") or "").strip() or None
-        account = str(event.get("account") or "").strip() or None
+        provider = str(event.get("provider") or "").strip().lower() or None
+        account = str(event.get("account") or "").strip().lower() or None
+        target_key = (provider or "unknown", account or "unknown")
 
         if event_name == "route_decision":
             selected_model = str(event.get("selected_model") or "").strip()
@@ -579,6 +665,9 @@ class LiveMetricsCollector:
             status = event.get("status")
             if not isinstance(status, int):
                 return
+            self._proxy_responses_by_status_class[f"{max(0, status) // 100}xx"] += 1
+            if status == 429:
+                self._proxy_rate_limited_total += 1
             request_latency_ms = event.get("request_latency_ms")
             latency_value = float(request_latency_ms) if isinstance(request_latency_ms, (int, float)) else None
             await self._store.record_response(
@@ -590,10 +679,24 @@ class LiveMetricsCollector:
             )
             return
 
+        if event_name == "proxy_retry":
+            self._proxy_retries_total += 1
+            self._proxy_retries_by_target[target_key] += 1
+            return
+
         if event_name == "proxy_request_error":
+            error_type = str(event.get("error_type") or "").strip() or "unknown"
+            self._proxy_errors_by_type[error_type] += 1
+            if bool(event.get("is_timeout")):
+                self._proxy_timeouts_total += 1
+                self._proxy_timeouts_by_target[target_key] += 1
+            attempt_latency_ms = event.get("attempt_latency_ms")
+            if isinstance(attempt_latency_ms, (int, float)):
+                self._proxy_attempt_latency_sum_ms += max(0.0, float(attempt_latency_ms))
+                self._proxy_attempt_latency_count += 1
             await self._store.record_error(
                 model=model,
-                error_type=(str(event.get("error_type")) if event.get("error_type") else None),
+                error_type=error_type,
                 provider=provider,
                 account=account,
             )

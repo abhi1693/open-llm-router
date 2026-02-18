@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     live_metrics_min_samples: int = 30
     runtime_policy_max_adjustment_ratio: float = 0.15
     router_runtime_overrides_path: str | None = "logs/router.runtime.overrides.yaml"
+    observability_metrics_enabled: bool = True
+    observability_metrics_path: str = "/metrics"
+    observability_tracing_enabled: bool = False
+    observability_service_name: str = "open-llm-router"
+    observability_otlp_endpoint: str | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="",

@@ -65,6 +65,7 @@ class BackendTarget:
     organization: str | None
     project: str | None
     upstream_model: str
+    metadata: dict[str, Any] | None = None
 
     @property
     def label(self) -> str:
@@ -186,15 +187,21 @@ def _build_upstream_headers(
 ) -> dict[str, str]:
     passthrough = {
         "accept",
+        "baggage",
         "content-type",
         "openai-organization",
         "openai-project",
+        "traceparent",
+        "tracestate",
     }
     canonical_names = {
         "accept": "Accept",
+        "baggage": "baggage",
         "content-type": "Content-Type",
         "openai-organization": "OpenAI-Organization",
         "openai-project": "OpenAI-Project",
+        "traceparent": "traceparent",
+        "tracestate": "tracestate",
     }
     headers: dict[str, str] = {}
     for name, value in incoming_headers.items():
@@ -727,14 +734,40 @@ class BackendProxy:
             return None, normalized
         return provider, model_id
 
-    def _resolve_upstream_model(self, account: BackendAccount, model: str) -> str:
+    def _resolve_model_metadata(self, account: BackendAccount, model: str) -> dict[str, Any]:
         metadata = self._model_registry.get(model)
         if isinstance(metadata, dict):
-            metadata_id = metadata.get("id")
-            if isinstance(metadata_id, str) and metadata_id.strip():
-                return metadata_id.strip()
+            return metadata
 
         # Fallback for metadata maps that only key by provider/modelId with empty metadata.
+        provider, model_id = self._split_model_ref(model)
+        if provider and provider.lower() == account.provider.strip().lower():
+            provider_key = f"{provider.lower()}/{model_id}"
+            provider_metadata = self._model_registry.get(provider_key)
+            if isinstance(provider_metadata, dict):
+                return provider_metadata
+
+        if "/" not in model:
+            provider_key = f"{account.provider.strip().lower()}/{model.strip()}"
+            provider_metadata = self._model_registry.get(provider_key)
+            if isinstance(provider_metadata, dict):
+                return provider_metadata
+
+        return {}
+
+    def _resolve_upstream_model(
+        self,
+        account: BackendAccount,
+        model: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        resolved_metadata = metadata if isinstance(metadata, dict) else self._resolve_model_metadata(account, model)
+        metadata_id = resolved_metadata.get("id") if isinstance(resolved_metadata, dict) else None
+        if isinstance(metadata_id, str) and metadata_id.strip():
+            return metadata_id.strip()
+
+        # Fallback for metadata maps keyed by provider/modelId.
         provider, model_id = self._split_model_ref(model)
         if provider and provider.lower() == account.provider.strip().lower():
             return model_id
@@ -915,6 +948,7 @@ class BackendProxy:
 
         attempted_targets: list[str] = []
         attempted_upstream_models: list[str] = []
+        trial_payload = dict(payload)
 
         for index, target in enumerate(candidate_targets):
             breaker_key = f"{target.account_name}:{target.provider}"
@@ -976,7 +1010,6 @@ class BackendProxy:
                 upstream_model=target.upstream_model,
                 auth_mode=target.auth_mode,
             )
-            trial_payload = dict(payload)
             trial_payload["model"] = target.upstream_model
             request_spec = _prepare_upstream_request(
                 path=path,
@@ -1853,6 +1886,7 @@ class BackendProxy:
             model_targets: list[BackendTarget] = []
             for account in self.accounts:
                 if account.enabled and account.supports_model(model):
+                    metadata = self._resolve_model_metadata(account, model)
                     model_targets.append(
                         BackendTarget(
                             account=account,
@@ -1860,10 +1894,15 @@ class BackendProxy:
                             provider=account.provider,
                             base_url=account.base_url,
                             model=model,
-                            upstream_model=self._resolve_upstream_model(account, model),
+                            upstream_model=self._resolve_upstream_model(
+                                account,
+                                model,
+                                metadata=metadata,
+                            ),
                             auth_mode=account.auth_mode,
                             organization=account.organization,
                             project=account.project,
+                            metadata=metadata,
                         )
                     )
             model_targets = self._filter_targets_by_provider_preferences(
@@ -2004,6 +2043,8 @@ class BackendProxy:
         return output
 
     def _target_metadata(self, target: BackendTarget) -> dict[str, Any]:
+        if isinstance(target.metadata, dict):
+            return target.metadata
         metadata = self._model_registry.get(target.model)
         if isinstance(metadata, dict):
             return metadata

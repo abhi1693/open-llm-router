@@ -23,6 +23,8 @@ def test_router_live_metrics_endpoint_returns_snapshot(monkeypatch):
     payload = response.json()
     assert payload["object"] == "router.live_metrics"
     assert "dropped_events" in payload
+    assert "queue_depth" in payload
+    assert "proxy_retries_total" in payload
     assert isinstance(payload["models"], dict)
 
 
@@ -36,3 +38,13 @@ def test_router_policy_endpoint_returns_runtime_profile_state(monkeypatch):
     assert "updater" in payload
     assert "model_profiles" in payload
     assert isinstance(payload["model_profiles"], dict)
+
+
+def test_metrics_endpoint_returns_prometheus_payload(monkeypatch):
+    with _build_client(monkeypatch) as client:
+        response = client.get("/metrics")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "router_live_metrics_events_dropped_total" in body
+    assert "router_proxy_retries_total" in body

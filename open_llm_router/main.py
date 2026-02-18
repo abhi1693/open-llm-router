@@ -5,7 +5,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
@@ -383,6 +383,251 @@ def _runtime_policy_snapshot(config: RoutingConfig) -> dict[str, dict[str, float
     return output
 
 
+def _prometheus_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _prometheus_labels(labels: dict[str, str] | None) -> str:
+    if not labels:
+        return ""
+    rendered = ",".join(
+        f'{key}="{_prometheus_escape(str(value))}"' for key, value in sorted(labels.items())
+    )
+    return "{" + rendered + "}"
+
+
+def _append_prometheus_metric(
+    lines: list[str],
+    declared: set[str],
+    *,
+    name: str,
+    metric_type: str,
+    help_text: str,
+    value: float | int,
+    labels: dict[str, str] | None = None,
+) -> None:
+    if name not in declared:
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {metric_type}")
+        declared.add(name)
+    lines.append(f"{name}{_prometheus_labels(labels)} {float(value):.6f}")
+
+
+def _render_prometheus_metrics(
+    *,
+    collector: LiveMetricsCollector | None,
+    models_snapshot: dict[str, Any],
+) -> str:
+    lines: list[str] = []
+    declared: set[str] = set()
+
+    if collector is not None:
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_live_metrics_events_dropped_total",
+            metric_type="counter",
+            help_text="Number of live metrics events dropped due to queue pressure.",
+            value=collector.dropped_events,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_live_metrics_queue_depth",
+            metric_type="gauge",
+            help_text="Current live metrics queue depth.",
+            value=collector.queue_depth,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_live_metrics_queue_capacity",
+            metric_type="gauge",
+            help_text="Configured live metrics queue capacity.",
+            value=collector.queue_capacity,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_proxy_retries_total",
+            metric_type="counter",
+            help_text="Total number of upstream proxy retries.",
+            value=collector.proxy_retries_total,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_proxy_timeouts_total",
+            metric_type="counter",
+            help_text="Total number of upstream proxy timeouts.",
+            value=collector.proxy_timeouts_total,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_proxy_rate_limited_total",
+            metric_type="counter",
+            help_text="Total number of upstream 429 rate-limited responses.",
+            value=collector.proxy_rate_limited_total,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_proxy_attempt_latency_ms_sum",
+            metric_type="counter",
+            help_text="Sum of upstream attempt latencies (ms) captured on proxy errors.",
+            value=collector.proxy_attempt_latency_sum_ms,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_proxy_attempt_latency_ms_count",
+            metric_type="counter",
+            help_text="Count of upstream attempt latencies captured on proxy errors.",
+            value=collector.proxy_attempt_latency_count,
+        )
+        for (provider, account), count in sorted(collector.proxy_retries_by_target.items()):
+            _append_prometheus_metric(
+                lines,
+                declared,
+                name="router_proxy_retries_by_target_total",
+                metric_type="counter",
+                help_text="Proxy retries partitioned by provider/account target.",
+                value=count,
+                labels={"provider": provider, "account": account},
+            )
+        for (provider, account), count in sorted(collector.proxy_timeouts_by_target.items()):
+            _append_prometheus_metric(
+                lines,
+                declared,
+                name="router_proxy_timeouts_by_target_total",
+                metric_type="counter",
+                help_text="Proxy timeouts partitioned by provider/account target.",
+                value=count,
+                labels={"provider": provider, "account": account},
+            )
+        for error_type, count in sorted(collector.proxy_errors_by_type.items()):
+            _append_prometheus_metric(
+                lines,
+                declared,
+                name="router_proxy_errors_by_type_total",
+                metric_type="counter",
+                help_text="Proxy request errors partitioned by error type.",
+                value=count,
+                labels={"error_type": error_type},
+            )
+        for status_class, count in sorted(collector.proxy_responses_by_status_class.items()):
+            _append_prometheus_metric(
+                lines,
+                declared,
+                name="router_proxy_responses_by_status_class_total",
+                metric_type="counter",
+                help_text="Proxy responses partitioned by HTTP status class.",
+                value=count,
+                labels={"status_class": status_class},
+            )
+
+    for model, values in sorted(models_snapshot.items()):
+        labels = {"model": model}
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_model_samples",
+            metric_type="gauge",
+            help_text="Live metrics sample count by model.",
+            value=values.get("samples", 0),
+            labels=labels,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_model_route_decisions_total",
+            metric_type="counter",
+            help_text="Route decisions observed by model.",
+            value=values.get("route_decisions", 0),
+            labels=labels,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_model_responses_total",
+            metric_type="counter",
+            help_text="Upstream responses observed by model.",
+            value=values.get("responses", 0),
+            labels=labels,
+        )
+        _append_prometheus_metric(
+            lines,
+            declared,
+            name="router_model_errors_total",
+            metric_type="counter",
+            help_text="Upstream errors observed by model.",
+            value=values.get("errors", 0),
+            labels=labels,
+        )
+        for metric_name, metric_key in (
+            ("router_model_ewma_connect_ms", "ewma_connect_ms"),
+            ("router_model_ewma_request_latency_ms", "ewma_request_latency_ms"),
+            ("router_model_ewma_failure_rate", "ewma_failure_rate"),
+        ):
+            value = values.get(metric_key)
+            if isinstance(value, (int, float)):
+                _append_prometheus_metric(
+                    lines,
+                    declared,
+                    name=metric_name,
+                    metric_type="gauge",
+                    help_text=f"{metric_key} by model.",
+                    value=value,
+                    labels=labels,
+                )
+
+    return "\n".join(lines) + "\n"
+
+
+def _setup_optional_tracing(
+    *,
+    app_obj: FastAPI,
+    proxy: BackendProxy,
+    settings: Any,
+) -> None:
+    if not bool(getattr(settings, "observability_tracing_enabled", False)):
+        return
+    try:
+        from opentelemetry import trace
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except Exception as exc:
+        logger.warning("observability_tracing_unavailable reason=%s", str(exc))
+        return
+
+    service_name = str(getattr(settings, "observability_service_name", "open-llm-router"))
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    endpoint = getattr(settings, "observability_otlp_endpoint", None)
+    if endpoint:
+        try:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+            provider.add_span_processor(
+                BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
+            )
+        except Exception as exc:
+            logger.warning("observability_otlp_exporter_unavailable reason=%s", str(exc))
+    trace.set_tracer_provider(provider)
+
+    try:
+        FastAPIInstrumentor.instrument_app(app_obj)
+    except Exception as exc:
+        logger.warning("observability_fastapi_instrumentation_failed reason=%s", str(exc))
+    try:
+        HTTPXClientInstrumentor().instrument_client(proxy.client)
+    except Exception as exc:
+        logger.warning("observability_httpx_instrumentation_failed reason=%s", str(exc))
+
+
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
@@ -405,6 +650,7 @@ async def startup() -> None:
         enabled=settings.router_audit_log_enabled,
     )
     app.state.audit_logger = audit_logger
+    app.state.audit_payload_summary_enabled = bool(audit_logger.enabled)
     live_metrics_store = build_live_metrics_store(
         redis_url=settings.redis_url,
         logger=logger,
@@ -467,6 +713,7 @@ async def startup() -> None:
     )
     await policy_updater.start()
     app.state.policy_updater = policy_updater
+    _setup_optional_tracing(app_obj=app, proxy=app.state.backend_proxy, settings=settings)
     logger.info(
         (
             "startup complete routing_config_path=%s accounts=%d models=%d default_model=%s "
@@ -520,6 +767,15 @@ async def router_live_metrics() -> dict[str, Any]:
     return {
         "object": "router.live_metrics",
         "dropped_events": collector.dropped_events,
+        "queue_depth": collector.queue_depth,
+        "queue_capacity": collector.queue_capacity,
+        "proxy_retries_total": collector.proxy_retries_total,
+        "proxy_timeouts_total": collector.proxy_timeouts_total,
+        "proxy_rate_limited_total": collector.proxy_rate_limited_total,
+        "proxy_attempt_latency_ms_sum": collector.proxy_attempt_latency_sum_ms,
+        "proxy_attempt_latency_ms_count": collector.proxy_attempt_latency_count,
+        "proxy_errors_by_type": collector.proxy_errors_by_type,
+        "proxy_responses_by_status_class": collector.proxy_responses_by_status_class,
         "models": snapshot_to_dict(snapshot),
     }
 
@@ -654,23 +910,25 @@ async def _proxy_json_request(request: Request, path: str):
         app.state, "audit_event_hook", None
     )
     if audit_hook is not None:
+        event: dict[str, Any] = {
+            "event": "route_decision",
+            "request_id": request_id,
+            "path": path,
+            "requested_model": route_decision.requested_model,
+            "selected_model": route_decision.selected_model,
+            "source": route_decision.source,
+            "task": route_decision.task,
+            "complexity": route_decision.complexity,
+            "fallback_models": route_decision.fallback_models,
+            "ranked_models": route_decision.ranked_models,
+            "signals": route_decision.signals,
+            "decision_trace": route_decision.decision_trace,
+            "candidate_scores": route_decision.candidate_scores,
+        }
+        if bool(getattr(app.state, "audit_payload_summary_enabled", False)):
+            event["payload_summary"] = _build_payload_summary(payload)
         audit_hook(
-            {
-                "event": "route_decision",
-                "request_id": request_id,
-                "path": path,
-                "requested_model": route_decision.requested_model,
-                "selected_model": route_decision.selected_model,
-                "source": route_decision.source,
-                "task": route_decision.task,
-                "complexity": route_decision.complexity,
-                "fallback_models": route_decision.fallback_models,
-                "ranked_models": route_decision.ranked_models,
-                "signals": route_decision.signals,
-                "decision_trace": route_decision.decision_trace,
-                "candidate_scores": route_decision.candidate_scores,
-                "payload_summary": _build_payload_summary(payload),
-            }
+            event
         )
 
     try:
@@ -743,6 +1001,26 @@ async def image_generations(request: Request):
 async def v1_passthrough(subpath: str, request: Request):
     # Catch additional OpenAI-compatible JSON endpoints while preserving routing behavior.
     return await _proxy_json_request(request, f"/v1/{subpath}")
+
+
+@app.get("/metrics")
+async def metrics() -> PlainTextResponse:
+    settings = get_settings()
+    if not settings.observability_metrics_enabled:
+        raise HTTPException(status_code=404, detail="Metrics endpoint is disabled.")
+
+    collector: LiveMetricsCollector | None = getattr(app.state, "live_metrics_collector", None)
+    models_snapshot: dict[str, Any] = {}
+    if collector is not None:
+        models_snapshot = snapshot_to_dict(await collector.snapshot())
+    payload = _render_prometheus_metrics(
+        collector=collector,
+        models_snapshot=models_snapshot,
+    )
+    return PlainTextResponse(
+        content=payload,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.exception_handler(FileNotFoundError)

@@ -1011,6 +1011,29 @@ def test_build_upstream_headers_defaults_accept_to_sse_for_streaming_requests():
     assert headers["Accept"] == "text/event-stream"
 
 
+def test_build_upstream_headers_preserves_trace_context_headers():
+    headers = _build_upstream_headers(
+        incoming_headers=Headers(
+            {
+                "content-type": "application/json",
+                "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+                "tracestate": "vendor=opaque",
+                "baggage": "user_id=123",
+            }
+        ),
+        bearer_token="token-1",
+        provider="openai",
+        oauth_account_id=None,
+        organization=None,
+        project=None,
+        stream=False,
+    )
+
+    assert headers["traceparent"].startswith("00-4bf92f3577b34da6")
+    assert headers["tracestate"] == "vendor=opaque"
+    assert headers["baggage"] == "user_id=123"
+
+
 def test_prepare_upstream_request_maps_chat_completions_to_codex_responses():
     payload = {
         "model": "gpt-5.2-codex",

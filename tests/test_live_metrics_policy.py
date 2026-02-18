@@ -46,9 +46,22 @@ def test_live_metrics_collector_records_events() -> None:
         )
         collector.ingest(
             {
+                "event": "proxy_retry",
+                "provider": "openai",
+                "account": "acct-a",
+                "model": "m1",
+                "status": 503,
+            }
+        )
+        collector.ingest(
+            {
                 "event": "proxy_request_error",
                 "model": "m1",
                 "error_type": "ConnectTimeout",
+                "is_timeout": True,
+                "provider": "openai",
+                "account": "acct-a",
+                "attempt_latency_ms": 15.5,
             }
         )
 
@@ -64,6 +77,11 @@ def test_live_metrics_collector_records_events() -> None:
         assert m1.ewma_connect_ms is not None
         assert m1.ewma_request_latency_ms is not None
         assert m1.ewma_failure_rate is not None
+        assert collector.proxy_retries_total == 1
+        assert collector.proxy_timeouts_total == 1
+        assert collector.proxy_attempt_latency_count == 1
+        assert collector.proxy_errors_by_type.get("ConnectTimeout") == 1
+        assert collector.proxy_responses_by_status_class.get("2xx") == 1
 
     asyncio.run(_run())
 

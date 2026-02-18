@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from open_llm_router.idempotency import (
     IdempotencyConfig,
     IdempotencyStore,
+    build_idempotency_cache_key,
     build_idempotency_store,
 )
 from open_llm_router.main import app
@@ -150,3 +151,25 @@ def test_build_idempotency_store_uses_redis_factory_when_available():
         create_key_value_store=factory,
     )
     assert store.__class__.__name__ == "KeyValueIdempotencyStore"
+
+
+def test_build_idempotency_cache_key_is_hashed_and_stable():
+    payload_a = {"messages": [{"role": "user", "content": "hello"}], "stream": False}
+    payload_b = {"stream": False, "messages": [{"content": "hello", "role": "user"}]}
+
+    key_a = build_idempotency_cache_key(
+        idempotency_key="abc",
+        tenant_id="tenant-1",
+        path="/v1/chat/completions",
+        payload=payload_a,
+    )
+    key_b = build_idempotency_cache_key(
+        idempotency_key="abc",
+        tenant_id="tenant-1",
+        path="/v1/chat/completions",
+        payload=payload_b,
+    )
+
+    assert key_a == key_b
+    assert "|sha256:" in key_a
+    assert len(key_a.rsplit("|", 1)[-1]) == len("sha256:") + 64
