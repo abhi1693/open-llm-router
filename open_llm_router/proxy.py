@@ -7,9 +7,11 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Literal, cast
 
 import httpx
+import yaml
 from fastapi import status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.datastructures import Headers
@@ -680,6 +682,7 @@ class BackendProxy:
         model_registry: dict[str, dict[str, Any]] | None = None,
         audit_hook: Callable[[dict[str, Any]], None] | None = None,
         circuit_breakers: CircuitBreakerRegistry | None = None,
+        oauth_state_persistence_path: str | Path | None = None,
         connect_timeout_seconds: float | None = None,
         read_timeout_seconds: float | None = None,
         write_timeout_seconds: float | None = None,
@@ -720,6 +723,12 @@ class BackendProxy:
         )
         self._oauth_runtime: dict[str, OAuthRuntimeState] = {}
         self._oauth_refresh_locks: dict[str, asyncio.Lock] = {}
+        self._oauth_persistence_lock = asyncio.Lock()
+        self._oauth_state_persistence_path = (
+            Path(oauth_state_persistence_path)
+            if oauth_state_persistence_path is not None
+            else None
+        )
         self._rate_limited_until: dict[str, float] = {}
         self._model_registry = model_registry or {}
         self._audit_hook = audit_hook
@@ -2420,12 +2429,158 @@ class BackendProxy:
                 account_id=_extract_chatgpt_account_id(access_token),
             )
             self._oauth_runtime[account.name] = state
+            await self._persist_oauth_state(account, state)
             logger.info(
                 "oauth_refresh_success account=%s expires_at=%s",
                 account.name,
                 state.expires_at,
             )
             return state
+
+    async def _persist_oauth_state(
+        self, account: BackendAccount, state: OAuthRuntimeState
+    ) -> None:
+        config_path = self._oauth_state_persistence_path
+        if config_path is None:
+            return
+
+        # Keep env-backed fields as source of truth.
+        can_persist_access = account.oauth_access_token_env is None
+        can_persist_refresh = account.oauth_refresh_token_env is None
+        can_persist_expires = account.oauth_expires_at_env is None
+        can_persist_account_id = account.oauth_account_id_env is None
+
+        if not any(
+            (
+                can_persist_access,
+                can_persist_refresh,
+                can_persist_expires,
+                can_persist_account_id,
+            )
+        ):
+            return
+
+        async with self._oauth_persistence_lock:
+            await asyncio.to_thread(
+                self._persist_oauth_state_sync,
+                config_path,
+                account.name,
+                state,
+                can_persist_access,
+                can_persist_refresh,
+                can_persist_expires,
+                can_persist_account_id,
+            )
+
+    @staticmethod
+    def _persist_oauth_state_sync(
+        config_path: Path,
+        account_name: str,
+        state: OAuthRuntimeState,
+        can_persist_access: bool,
+        can_persist_refresh: bool,
+        can_persist_expires: bool,
+        can_persist_account_id: bool,
+    ) -> None:
+        try:
+            with config_path.open("r", encoding="utf-8") as handle:
+                raw = yaml.safe_load(handle) or {}
+        except FileNotFoundError:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=config_not_found path=%s",
+                account_name,
+                config_path,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=config_read_error path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        if not isinstance(raw, dict):
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=invalid_config_root path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        accounts = raw.get("accounts")
+        if not isinstance(accounts, list):
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=missing_accounts path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        entry: dict[str, Any] | None = None
+        for candidate in accounts:
+            if not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("name", "")).strip() != account_name:
+                continue
+            entry = candidate
+            break
+
+        if entry is None:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=account_not_found path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        changed = False
+
+        if can_persist_access and state.access_token:
+            if entry.get("oauth_access_token") != state.access_token:
+                entry["oauth_access_token"] = state.access_token
+                changed = True
+
+        if can_persist_refresh and state.refresh_token:
+            if entry.get("oauth_refresh_token") != state.refresh_token:
+                entry["oauth_refresh_token"] = state.refresh_token
+                changed = True
+
+        if can_persist_expires and state.expires_at is not None:
+            if entry.get("oauth_expires_at") != state.expires_at:
+                entry["oauth_expires_at"] = state.expires_at
+                changed = True
+
+        if can_persist_account_id and state.account_id:
+            if entry.get("oauth_account_id") != state.account_id:
+                entry["oauth_account_id"] = state.account_id
+                changed = True
+
+        if not changed:
+            return
+
+        temp_path = config_path.with_suffix(config_path.suffix + ".tmp")
+        try:
+            with temp_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(raw, handle, sort_keys=False)
+            temp_path.replace(config_path)
+        except Exception:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=config_write_error path=%s",
+                account_name,
+                config_path,
+            )
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return
+
+        logger.info(
+            "oauth_refresh_persist_success account=%s path=%s",
+            account_name,
+            config_path,
+        )
 
     def _resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
         if account.auth_mode != "oauth":

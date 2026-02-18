@@ -748,6 +748,7 @@ async def startup() -> None:
         model_registry=routing_config.models,
         audit_hook=audit_event_hook,
         circuit_breakers=app.state.circuit_breakers,
+        oauth_state_persistence_path=settings.routing_config_path,
     )
     policy_updater = RuntimePolicyUpdater(
         routing_config=routing_config,

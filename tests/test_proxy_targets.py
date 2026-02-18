@@ -3,9 +3,11 @@ import base64
 import json
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 from starlette.datastructures import Headers
 
 from open_llm_router.config import BackendAccount
@@ -982,6 +984,164 @@ def test_oauth_account_refreshes_when_expired() -> None:
     token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
     assert token == "new-access-token"
     asyncio.run(proxy.close())
+
+
+def test_oauth_account_refresh_persists_rotated_tokens_to_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "router.profile.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "profile": {"default": "auto", "per_task": {}},
+                "guardrails": {"per_task": {}},
+                "accounts": [
+                    {
+                        "name": "acct-oauth",
+                        "provider": "openai-codex",
+                        "auth_mode": "oauth",
+                        "oauth_access_token": "expired-token",
+                        "oauth_refresh_token": "refresh-token-1",
+                        "oauth_expires_at": int(time.time()) - 120,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key=None,
+        retry_statuses=[429, 500],
+        oauth_state_persistence_path=config_path,
+        accounts=[
+            BackendAccount(
+                name="acct-oauth",
+                provider="openai-codex",
+                base_url="https://chatgpt.com/backend-api",
+                auth_mode="oauth",
+                oauth_access_token="expired-token",
+                oauth_refresh_token="refresh-token-1",
+                oauth_expires_at=int(time.time()) - 60,
+                oauth_client_id="client-id-1",
+                models=["gpt-5.2-codex"],
+            )
+        ],
+    )
+
+    asyncio.run(proxy.client.aclose())
+    refreshed_token = _jwt_with_account_id("acct_refresh_1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://auth.openai.com/oauth/token"
+        return httpx.Response(
+            status_code=200,
+            json={
+                "access_token": refreshed_token,
+                "refresh_token": "refresh-token-2",
+                "expires_in": 1800,
+            },
+        )
+
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
+
+    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
+    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    assert token == refreshed_token
+    asyncio.run(proxy.close())
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    account = persisted["accounts"][0]
+    assert account["oauth_access_token"] == refreshed_token
+    assert account["oauth_refresh_token"] == "refresh-token-2"
+    assert isinstance(account["oauth_expires_at"], int)
+    assert account["oauth_expires_at"] > int(time.time())
+    assert account["oauth_account_id"] == "acct_refresh_1"
+
+
+def test_oauth_account_refresh_persistence_skips_env_backed_fields(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    config_path = tmp_path / "router.profile.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "profile": {"default": "auto", "per_task": {}},
+                "guardrails": {"per_task": {}},
+                "accounts": [
+                    {
+                        "name": "acct-oauth",
+                        "provider": "openai-codex",
+                        "auth_mode": "oauth",
+                        "oauth_access_token_env": "ACCESS_ENV",
+                        "oauth_access_token": "access-from-file",
+                        "oauth_refresh_token_env": "REFRESH_ENV",
+                        "oauth_refresh_token": "refresh-from-file",
+                        "oauth_expires_at_env": "EXPIRES_ENV",
+                        "oauth_expires_at": 1,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("REFRESH_ENV", "refresh-token-1")
+
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key=None,
+        retry_statuses=[429, 500],
+        oauth_state_persistence_path=config_path,
+        accounts=[
+            BackendAccount(
+                name="acct-oauth",
+                provider="openai-codex",
+                base_url="https://chatgpt.com/backend-api",
+                auth_mode="oauth",
+                oauth_access_token_env="ACCESS_ENV",
+                oauth_refresh_token_env="REFRESH_ENV",
+                oauth_expires_at_env="EXPIRES_ENV",
+                oauth_client_id="client-id-1",
+                models=["gpt-5.2-codex"],
+            )
+        ],
+    )
+
+    asyncio.run(proxy.client.aclose())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://auth.openai.com/oauth/token"
+        return httpx.Response(
+            status_code=200,
+            json={
+                "access_token": "new-access-token",
+                "refresh_token": "refresh-token-2",
+                "expires_in": 1800,
+            },
+        )
+
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
+
+    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
+    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    assert token == "new-access-token"
+    asyncio.run(proxy.close())
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    account = persisted["accounts"][0]
+    assert account["oauth_access_token"] == "access-from-file"
+    assert account["oauth_refresh_token"] == "refresh-from-file"
+    assert account["oauth_expires_at"] == 1
 
 
 def test_oauth_account_resolves_chatgpt_account_id_from_token() -> None:
