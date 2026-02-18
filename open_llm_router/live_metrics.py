@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections import defaultdict
 import json
 import logging
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -220,7 +220,9 @@ class InMemoryLiveMetricsStore:
                 state.responses += 1
                 state.samples += 1
                 failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
-                state.ewma_failure_rate = _ewma(state.ewma_failure_rate, failure_flag, self._alpha)
+                state.ewma_failure_rate = _ewma(
+                    state.ewma_failure_rate, failure_flag, self._alpha
+                )
                 if failure_flag > 0:
                     state.errors += 1
                 if request_latency_ms is not None:
@@ -250,7 +252,9 @@ class InMemoryLiveMetricsStore:
                 state = self._models.setdefault(key, _ModelMetricsState(model=key))
                 state.errors += 1
                 state.samples += 1
-                state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
+                state.ewma_failure_rate = _ewma(
+                    state.ewma_failure_rate, 1.0, self._alpha
+                )
                 state.last_updated_epoch = now
 
     async def snapshot_all(self) -> dict[str, ModelMetricsSnapshot]:
@@ -273,7 +277,9 @@ class RedisLiveMetricsStore:
         self._key_ttl_seconds = max(60, int(key_ttl_seconds))
 
     def _key_for_model(self, model: str) -> str:
-        encoded = base64.urlsafe_b64encode(model.encode("utf-8")).decode("ascii").rstrip("=")
+        encoded = (
+            base64.urlsafe_b64encode(model.encode("utf-8")).decode("ascii").rstrip("=")
+        )
         return f"{self._key_prefix}{encoded}"
 
     @staticmethod
@@ -327,16 +333,24 @@ class RedisLiveMetricsStore:
             "route_decisions": str(state.route_decisions),
             "responses": str(state.responses),
             "errors": str(state.errors),
-            "ewma_connect_ms": "" if state.ewma_connect_ms is None else f"{state.ewma_connect_ms:.6f}",
-            "ewma_request_latency_ms": ""
-            if state.ewma_request_latency_ms is None
-            else f"{state.ewma_request_latency_ms:.6f}",
-            "ewma_failure_rate": ""
-            if state.ewma_failure_rate is None
-            else f"{state.ewma_failure_rate:.6f}",
-            "last_updated_epoch": ""
-            if state.last_updated_epoch is None
-            else f"{state.last_updated_epoch:.6f}",
+            "ewma_connect_ms": (
+                "" if state.ewma_connect_ms is None else f"{state.ewma_connect_ms:.6f}"
+            ),
+            "ewma_request_latency_ms": (
+                ""
+                if state.ewma_request_latency_ms is None
+                else f"{state.ewma_request_latency_ms:.6f}"
+            ),
+            "ewma_failure_rate": (
+                ""
+                if state.ewma_failure_rate is None
+                else f"{state.ewma_failure_rate:.6f}"
+            ),
+            "last_updated_epoch": (
+                ""
+                if state.last_updated_epoch is None
+                else f"{state.last_updated_epoch:.6f}"
+            ),
         }
 
     async def _load_states(self, models: list[str]) -> dict[str, _ModelMetricsState]:
@@ -434,7 +448,9 @@ class RedisLiveMetricsStore:
             state.responses += 1
             state.samples += 1
             failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
-            state.ewma_failure_rate = _ewma(state.ewma_failure_rate, failure_flag, self._alpha)
+            state.ewma_failure_rate = _ewma(
+                state.ewma_failure_rate, failure_flag, self._alpha
+            )
             if failure_flag > 0:
                 state.errors += 1
             if request_latency_ms is not None:
@@ -477,7 +493,9 @@ class RedisLiveMetricsStore:
         cursor: Any = 0
         pattern = f"{self._key_prefix}*"
         while True:
-            cursor, keys = await self._redis.scan(cursor=cursor, match=pattern, count=200)
+            cursor, keys = await self._redis.scan(
+                cursor=cursor, match=pattern, count=200
+            )
             if keys:
                 pipeline = self._redis.pipeline(transaction=False)
                 for key in keys:
@@ -505,7 +523,9 @@ def build_live_metrics_store(
         from redis.asyncio import from_url
     except Exception as exc:  # pragma: no cover - fallback behavior tested via builder.
         if logger is not None:
-            logger.warning("live_metrics_redis_unavailable reason=%s fallback=in_memory", str(exc))
+            logger.warning(
+                "live_metrics_redis_unavailable reason=%s fallback=in_memory", str(exc)
+            )
         return InMemoryLiveMetricsStore(alpha=alpha)
 
     try:
@@ -513,7 +533,10 @@ def build_live_metrics_store(
         return RedisLiveMetricsStore(redis_client=client, alpha=alpha)
     except Exception as exc:
         if logger is not None:
-            logger.warning("live_metrics_redis_connect_failed reason=%s fallback=in_memory", str(exc))
+            logger.warning(
+                "live_metrics_redis_connect_failed reason=%s fallback=in_memory",
+                str(exc),
+            )
         return InMemoryLiveMetricsStore(alpha=alpha)
 
 
@@ -529,7 +552,9 @@ class LiveMetricsCollector:
         self._store = store
         self._logger = logger
         self._enabled = enabled
-        self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=max(1, queue_size))
+        self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(
+            maxsize=max(1, queue_size)
+        )
         self._worker_task: asyncio.Task[None] | None = None
         self._dropped_events = 0
         self._proxy_retries_total = 0
@@ -593,7 +618,9 @@ class LiveMetricsCollector:
     async def start(self) -> None:
         if not self._enabled or self._worker_task is not None:
             return
-        self._worker_task = asyncio.create_task(self._run(), name="live-metrics-collector")
+        self._worker_task = asyncio.create_task(
+            self._run(), name="live-metrics-collector"
+        )
 
     async def close(self) -> None:
         if self._worker_task is None:
@@ -669,7 +696,11 @@ class LiveMetricsCollector:
             if status == 429:
                 self._proxy_rate_limited_total += 1
             request_latency_ms = event.get("request_latency_ms")
-            latency_value = float(request_latency_ms) if isinstance(request_latency_ms, (int, float)) else None
+            latency_value = (
+                float(request_latency_ms)
+                if isinstance(request_latency_ms, (int, float))
+                else None
+            )
             await self._store.record_response(
                 model=model,
                 status=status,
@@ -692,7 +723,9 @@ class LiveMetricsCollector:
                 self._proxy_timeouts_by_target[target_key] += 1
             attempt_latency_ms = event.get("attempt_latency_ms")
             if isinstance(attempt_latency_ms, (int, float)):
-                self._proxy_attempt_latency_sum_ms += max(0.0, float(attempt_latency_ms))
+                self._proxy_attempt_latency_sum_ms += max(
+                    0.0, float(attempt_latency_ms)
+                )
                 self._proxy_attempt_latency_count += 1
             await self._store.record_error(
                 model=model,
@@ -702,7 +735,9 @@ class LiveMetricsCollector:
             )
 
 
-def snapshot_to_dict(snapshot: dict[str, ModelMetricsSnapshot]) -> dict[str, dict[str, Any]]:
+def snapshot_to_dict(
+    snapshot: dict[str, ModelMetricsSnapshot],
+) -> dict[str, dict[str, Any]]:
     return {
         model: {
             "samples": value.samples,
@@ -719,4 +754,9 @@ def snapshot_to_dict(snapshot: dict[str, ModelMetricsSnapshot]) -> dict[str, dic
 
 
 def snapshot_to_json(snapshot: dict[str, ModelMetricsSnapshot]) -> str:
-    return json.dumps(snapshot_to_dict(snapshot), ensure_ascii=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        snapshot_to_dict(snapshot),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        default=str,
+    )

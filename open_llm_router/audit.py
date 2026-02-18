@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from queue import Full, Queue
 from threading import Lock, Thread
-import time
 from typing import Any
 
 
@@ -24,7 +24,9 @@ class JsonlAuditLogger:
         if self.enabled:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._queue = Queue(maxsize=max_queue_size)
-            self._worker = Thread(target=self._drain_queue, name="router-audit-writer", daemon=True)
+            self._worker = Thread(
+                target=self._drain_queue, name="router-audit-writer", daemon=True
+            )
             self._worker.start()
 
     def log(self, event: dict[str, Any]) -> None:

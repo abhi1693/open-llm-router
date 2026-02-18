@@ -16,7 +16,13 @@ def _config_with_models() -> RoutingConfig:
                     "id": "m1",
                     "costs": {"input_per_1k": 0.002, "output_per_1k": 0.006},
                     "limits": {"context_tokens": 128000, "max_output_tokens": 4096},
-                    "capabilities": ["chat", "tool_use", "reasoning", "json_mode", "vision"],
+                    "capabilities": [
+                        "chat",
+                        "tool_use",
+                        "reasoning",
+                        "json_mode",
+                        "vision",
+                    ],
                     "description": "Test model",
                     "hugging_face_id": " N/A ",
                     "expiration_date": " null ",
@@ -37,7 +43,7 @@ def _config_with_models() -> RoutingConfig:
     )
 
 
-def test_build_models_response_includes_auto_and_configured_models():
+def test_build_models_response_includes_auto_and_configured_models() -> None:
     payload = _build_models_response(_config_with_models())
     assert payload["object"] == "list"
 
@@ -47,7 +53,7 @@ def test_build_models_response_includes_auto_and_configured_models():
     assert "plain-model" in ids
 
 
-def test_build_models_response_emits_openrouter_like_model_metadata():
+def test_build_models_response_emits_openrouter_like_model_metadata() -> None:
     payload = _build_models_response(_config_with_models())
     model = next(item for item in payload["data"] if item["id"] == "openai/m1")
 
@@ -71,7 +77,7 @@ def test_build_models_response_emits_openrouter_like_model_metadata():
     assert "per_request_limits" not in model
 
 
-def test_build_models_response_omits_fields_without_data():
+def test_build_models_response_omits_fields_without_data() -> None:
     payload = _build_models_response(_config_with_models())
 
     auto = next(item for item in payload["data"] if item["id"] == "auto")

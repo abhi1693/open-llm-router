@@ -6,10 +6,23 @@ def _router() -> SmartModelRouter:
     config = RoutingConfig.model_validate(
         {
             "default_model": "cheap-model",
-            "complexity": {"low_max_chars": 100, "medium_max_chars": 600, "high_max_chars": 2000},
+            "complexity": {
+                "low_max_chars": 100,
+                "medium_max_chars": 600,
+                "high_max_chars": 2000,
+            },
             "task_routes": {
-                "general": {"low": "cheap-model", "medium": "cheap-model", "high": "strong-model"},
-                "coding": {"low": "cheap-model", "medium": "strong-model", "high": "strong-model", "xhigh": "strong-model"},
+                "general": {
+                    "low": "cheap-model",
+                    "medium": "cheap-model",
+                    "high": "strong-model",
+                },
+                "coding": {
+                    "low": "cheap-model",
+                    "medium": "strong-model",
+                    "high": "strong-model",
+                    "xhigh": "strong-model",
+                },
                 "thinking": {"default": "strong-model"},
                 "instruction_following": {"default": "cheap-model"},
                 "image": {"default": "cheap-model"},
@@ -55,7 +68,7 @@ def _router() -> SmartModelRouter:
     return SmartModelRouter(config)
 
 
-def test_learned_router_prefers_cheaper_model_for_easy_prompt():
+def test_learned_router_prefers_cheaper_model_for_easy_prompt() -> None:
     router = _router()
     decision = router.decide(
         payload={
@@ -67,10 +80,13 @@ def test_learned_router_prefers_cheaper_model_for_easy_prompt():
     assert decision.selected_model == "cheap-model"
     assert decision.signals["routing_mode"] == "learned_utility"
     assert decision.ranked_models[0] == "cheap-model"
-    assert decision.candidate_scores[0]["utility"] >= decision.candidate_scores[1]["utility"]
+    assert (
+        decision.candidate_scores[0]["utility"]
+        >= decision.candidate_scores[1]["utility"]
+    )
 
 
-def test_learned_router_prefers_stronger_model_for_hard_coding_prompt():
+def test_learned_router_prefers_stronger_model_for_hard_coding_prompt() -> None:
     router = _router()
     decision = router.decide(
         payload={
@@ -91,7 +107,7 @@ def test_learned_router_prefers_stronger_model_for_hard_coding_prompt():
     assert decision.ranked_models[0] == "strong-model"
 
 
-def test_learned_router_keeps_candidates_within_rule_chain():
+def test_learned_router_keeps_candidates_within_rule_chain() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "cheap-model",
@@ -109,7 +125,12 @@ def test_learned_router_keeps_candidates_within_rule_chain():
                 "task_candidates": {
                     # Includes xhigh-model, but low-complexity routing should stay on
                     # the rule-chain candidate set.
-                    "coding": ["cheap-model", "medium-model", "strong-model", "xhigh-model"],
+                    "coding": [
+                        "cheap-model",
+                        "medium-model",
+                        "strong-model",
+                        "xhigh-model",
+                    ],
                 },
             },
             "model_profiles": {

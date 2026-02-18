@@ -20,7 +20,9 @@ class InvalidModelError(ValueError):
 
 
 class RoutingConstraintError(ValueError):
-    def __init__(self, *, constraint: str, message: str, details: dict[str, Any] | None = None):
+    def __init__(
+        self, *, constraint: str, message: str, details: dict[str, Any] | None = None
+    ):
         self.constraint = constraint
         self.details = details or {}
         super().__init__(message)
@@ -140,13 +142,17 @@ class SmartModelRouter:
                     {
                         "routing_mode": "learned_utility",
                         "learned_candidates": list(ranked_models),
-                        "selected_score": candidate_scores[0] if candidate_scores else None,
+                        "selected_score": (
+                            candidate_scores[0] if candidate_scores else None
+                        ),
                         "learned_trace": learned_trace,
                     }
                 )
             else:
                 selected_model = default_chain[0]
-                fallbacks = [model for model in default_chain[1:] if model != selected_model]
+                fallbacks = [
+                    model for model in default_chain[1:] if model != selected_model
+                ]
                 ranked_models = [selected_model, *fallbacks]
                 candidate_scores = []
                 decision_trace.update(
@@ -156,6 +162,7 @@ class SmartModelRouter:
                 )
             source = "auto"
         else:
+            assert requested_model is not None
             self._require_known_model(requested_model=requested_model)
             if allowed_model_patterns and not _model_matches_any_pattern(
                 model=requested_model,
@@ -175,7 +182,11 @@ class SmartModelRouter:
             complexity = "n/a"
             signals = {}
             selected_model = requested_model
-            fallbacks = [model for model in self.config.fallback_models if model != selected_model]
+            fallbacks = [
+                model
+                for model in self.config.fallback_models
+                if model != selected_model
+            ]
             fallbacks = _filter_models_by_patterns(
                 candidate_models=fallbacks,
                 patterns=allowed_model_patterns,
@@ -213,7 +224,9 @@ class SmartModelRouter:
         signals: dict[str, Any],
         default_chain: list[str],
     ) -> tuple[str, list[str], list[str], list[dict[str, Any]], dict[str, Any]]:
-        configured_candidates = self.config.learned_routing.task_candidates.get(task, [])
+        configured_candidates = self.config.learned_routing.task_candidates.get(
+            task, []
+        )
         if default_chain:
             # Keep learned routing inside the complexity-derived rule-chain by default.
             # This prevents low/medium prompts from frequently jumping to xhigh-only models.
@@ -312,7 +325,9 @@ class SmartModelRouter:
 
         requested_output_tokens = _extract_requested_output_tokens(payload)
         # Char-count is a cheap approximation and keeps routing on the fast path.
-        estimated_input_tokens = max(1, int(float(signals.get("text_length_total", 0)) / 4.0))
+        estimated_input_tokens = max(
+            1, int(float(signals.get("text_length_total", 0)) / 4.0)
+        )
 
         accepted: list[str] = []
         rejected: dict[str, list[str]] = {}
@@ -499,7 +514,9 @@ def _extract_provider_preferences(payload: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
-def _filter_models_by_patterns(candidate_models: list[str], patterns: list[str]) -> list[str]:
+def _filter_models_by_patterns(
+    candidate_models: list[str], patterns: list[str]
+) -> list[str]:
     if not patterns:
         return list(candidate_models)
     return [

@@ -9,7 +9,9 @@ import httpx
 import yaml
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-DEFAULT_CATALOG_MODELS_PATH = Path(__file__).resolve().parent / "catalog" / "models.yaml"
+DEFAULT_CATALOG_MODELS_PATH = (
+    Path(__file__).resolve().parent / "catalog" / "models.yaml"
+)
 
 # Internal provider ids do not always match OpenRouter's model id prefixes.
 PROVIDER_ID_ALIASES: dict[str, tuple[str, ...]] = {
@@ -38,11 +40,15 @@ def fetch_openrouter_models(
         headers={"Accept": "application/json"},
     )
     if response.status_code >= 400:
-        raise RuntimeError(f"Failed to fetch OpenRouter models ({response.status_code}): {response.text}")
+        raise RuntimeError(
+            f"Failed to fetch OpenRouter models ({response.status_code}): {response.text}"
+        )
 
     body = response.json()
     if not isinstance(body, dict):
-        raise RuntimeError("Invalid OpenRouter models response: expected top-level object.")
+        raise RuntimeError(
+            "Invalid OpenRouter models response: expected top-level object."
+        )
 
     data = body.get("data")
     if not isinstance(data, list):
@@ -171,7 +177,9 @@ def sync_catalog_models_pricing(
     )
 
 
-def _extract_costs_per_1k(remote_model: dict[str, Any]) -> tuple[float | None, float | None]:
+def _extract_costs_per_1k(
+    remote_model: dict[str, Any],
+) -> tuple[float | None, float | None]:
     pricing = remote_model.get("pricing")
     if not isinstance(pricing, dict):
         return None, None
@@ -184,7 +192,9 @@ def _extract_costs_per_1k(remote_model: dict[str, Any]) -> tuple[float | None, f
         return None, None
 
     # Keep stable decimal output for YAML and comparisons.
-    return round(prompt_per_token * 1000.0, 12), round(completion_per_token * 1000.0, 12)
+    return round(prompt_per_token * 1000.0, 12), round(
+        completion_per_token * 1000.0, 12
+    )
 
 
 def _extract_created_timestamp(remote_model: dict[str, Any]) -> int | None:
@@ -263,7 +273,9 @@ def _match_remote_model(
         return matched_by_suffix
 
     for alias in _normalize_aliases(aliases):
-        matched_by_suffix = _pick_by_suffix(alias, provider_candidates, remote_by_suffix)
+        matched_by_suffix = _pick_by_suffix(
+            alias, provider_candidates, remote_by_suffix
+        )
         if matched_by_suffix is not None:
             return matched_by_suffix
 
@@ -316,7 +328,8 @@ def _pick_by_suffix(
         scoped = [
             item
             for item in matches
-            if isinstance(item.get("id"), str) and str(item["id"]).startswith(f"{provider}/")
+            if isinstance(item.get("id"), str)
+            and str(item["id"]).startswith(f"{provider}/")
         ]
         if len(scoped) == 1:
             return scoped[0]

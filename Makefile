@@ -12,6 +12,7 @@ HAS_BLACK := $(shell if [ $(HAS_UV) -eq 1 ]; then $(UV) run black --version >/de
 HAS_FLAKE8 := $(shell if [ $(HAS_UV) -eq 1 ]; then $(UV) run python -m flake8 --version >/dev/null 2>&1 && echo 1 || echo 0; elif command -v flake8 >/dev/null 2>&1; then echo 1; else echo 0; fi)
 HAS_ISORT := $(shell if [ $(HAS_UV) -eq 1 ]; then $(UV) run isort --version >/dev/null 2>&1 && echo 1 || echo 0; elif command -v isort >/dev/null 2>&1; then echo 1; else echo 0; fi)
 HAS_RUFF := $(shell if [ $(HAS_UV) -eq 1 ]; then $(UV) run python -m ruff check --help >/dev/null 2>&1 && echo 1 || echo 0; elif command -v ruff >/dev/null 2>&1; then echo 1; else echo 0; fi)
+HAS_MYPY := $(shell if [ $(HAS_UV) -eq 1 ]; then $(UV) run mypy --version >/dev/null 2>&1 && echo 1 || echo 0; elif command -v mypy >/dev/null 2>&1; then echo 1; else echo 0; fi)
 
 help:
 	@echo "Available targets:"
@@ -55,6 +56,15 @@ lint:
 		fi; \
 	else \
 		echo "isort not installed; skipping isort checks."; \
+	fi
+	@if [ $(HAS_MYPY) -eq 1 ]; then \
+		if [ $(HAS_UV) -eq 1 ]; then \
+			$(UV) run mypy --strict $(SRC_DIRS); \
+		else \
+			mypy --strict $(SRC_DIRS); \
+		fi; \
+	else \
+		echo "mypy not installed; skipping mypy checks."; \
 	fi
 
 format:

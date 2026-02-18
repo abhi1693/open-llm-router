@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
@@ -14,11 +16,11 @@ from open_llm_router.proxy import BackendProxy
 from open_llm_router.settings import get_settings
 
 
-def _set_default_test_env(monkeypatch) -> None:
+def _set_default_test_env(monkeypatch: Any) -> None:
     monkeypatch.setenv("ROUTING_CONFIG_PATH", "router.profile.yaml")
 
 
-def _build_client(monkeypatch, **env):
+def _build_client(monkeypatch: Any, **env: Any) -> Any:
     _set_default_test_env(monkeypatch)
     for key, value in env.items():
         monkeypatch.setenv(key, str(value))
@@ -26,29 +28,32 @@ def _build_client(monkeypatch, **env):
     return TestClient(app)
 
 
-def test_settings_redis_url_is_loaded(monkeypatch):
+def test_settings_redis_url_is_loaded(monkeypatch: Any) -> None:
     monkeypatch.setenv("REDIS_URL", "redis://generic:6379/0")
     get_settings.cache_clear()
     settings = get_settings()
     assert settings.redis_url == "redis://generic:6379/0"
 
 
-def test_non_stream_requests_replay_with_same_idempotency_key(monkeypatch):
+def test_non_stream_requests_replay_with_same_idempotency_key(monkeypatch: Any) -> None:
     calls = {"count": 0}
 
     async def fake_forward_with_fallback(
-        self,
-        path,
-        payload,
-        incoming_headers,
-        route_decision,
-        stream,
-        request_id=None,
-    ):
+        self: Any,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Any,
+        route_decision: Any,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Any:
         calls["count"] += 1
         return JSONResponse(
             content={"ok": True, "call_count": calls["count"]},
-            headers={"x-router-model": "fake-model", "x-router-provider": "fake-provider"},
+            headers={
+                "x-router-model": "fake-model",
+                "x-router-provider": "fake-provider",
+            },
         )
 
     monkeypatch.setattr(
@@ -76,18 +81,18 @@ def test_non_stream_requests_replay_with_same_idempotency_key(monkeypatch):
     assert calls["count"] == 1
 
 
-def test_streaming_requests_are_not_cached_by_idempotency(monkeypatch):
+def test_streaming_requests_are_not_cached_by_idempotency(monkeypatch: Any) -> None:
     calls = {"count": 0}
 
     async def fake_forward_with_fallback(
-        self,
-        path,
-        payload,
-        incoming_headers,
-        route_decision,
-        stream,
-        request_id=None,
-    ):
+        self: Any,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Any,
+        route_decision: Any,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Any:
         calls["count"] += 1
         return JSONResponse(content={"ok": True, "call_count": calls["count"]})
 
@@ -116,10 +121,12 @@ def test_streaming_requests_are_not_cached_by_idempotency(monkeypatch):
     assert calls["count"] == 2
 
 
-def test_build_idempotency_store_falls_back_to_in_memory_when_redis_factory_fails():
+def test_build_idempotency_store_falls_back_to_in_memory_when_redis_factory_fails() -> (
+    None
+):
     config = IdempotencyConfig()
 
-    def failing_factory(_url):
+    def failing_factory(_url: Any) -> Any:
         raise RuntimeError("redis unavailable")
 
     store = build_idempotency_store(
@@ -130,19 +137,19 @@ def test_build_idempotency_store_falls_back_to_in_memory_when_redis_factory_fail
     assert isinstance(store, IdempotencyStore)
 
 
-def test_build_idempotency_store_uses_redis_factory_when_available():
+def test_build_idempotency_store_uses_redis_factory_when_available() -> None:
     config = IdempotencyConfig()
 
     class _FakeKVStore:
-        async def get(self, key):
+        async def get(self, key: Any) -> Any:
             raise NotImplementedError
 
-        async def set(self, key, value, ttl_seconds):
+        async def set(self, key: Any, value: Any, ttl_seconds: Any) -> Any:
             raise NotImplementedError
 
     fake_store = _FakeKVStore()
 
-    def factory(_url):
+    def factory(_url: Any) -> Any:
         return fake_store
 
     store = build_idempotency_store(
@@ -153,7 +160,7 @@ def test_build_idempotency_store_uses_redis_factory_when_available():
     assert store.__class__.__name__ == "KeyValueIdempotencyStore"
 
 
-def test_build_idempotency_cache_key_is_hashed_and_stable():
+def test_build_idempotency_cache_key_is_hashed_and_stable() -> None:
     payload_a = {"messages": [{"role": "user", "content": "hello"}], "stream": False}
     payload_b = {"stream": False, "messages": [{"content": "hello", "role": "user"}]}
 

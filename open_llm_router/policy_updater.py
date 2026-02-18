@@ -99,7 +99,9 @@ class RuntimePolicyUpdater:
                 self._status.last_run_epoch = time.time()
                 self._status.last_error = str(exc)
                 if self._logger is not None:
-                    self._logger.warning("runtime_policy_update_failed error=%s", str(exc))
+                    self._logger.warning(
+                        "runtime_policy_update_failed error=%s", str(exc)
+                    )
             await asyncio.sleep(self._interval_seconds)
 
     def _apply_snapshot(self, snapshot: dict[str, ModelMetricsSnapshot]) -> int:
@@ -115,9 +117,15 @@ class RuntimePolicyUpdater:
                 profile = ModelProfile()
 
             changed = False
-            observed_latency = metrics.ewma_request_latency_ms or metrics.ewma_connect_ms
+            observed_latency = (
+                metrics.ewma_request_latency_ms or metrics.ewma_connect_ms
+            )
             if observed_latency is not None and observed_latency > 0:
-                baseline = float(profile.latency_ms) if profile.latency_ms > 0 else float(observed_latency)
+                baseline = (
+                    float(profile.latency_ms)
+                    if profile.latency_ms > 0
+                    else float(observed_latency)
+                )
                 updated_latency = _bounded_adjust(
                     current=baseline,
                     target=float(observed_latency),
@@ -177,7 +185,9 @@ def apply_runtime_overrides(
             raw = yaml.safe_load(handle) or {}
     except Exception as exc:
         if logger is not None:
-            logger.warning("runtime_overrides_load_failed path=%s error=%s", file_path, str(exc))
+            logger.warning(
+                "runtime_overrides_load_failed path=%s error=%s", file_path, str(exc)
+            )
         return 0
 
     overrides = raw.get("model_profiles")

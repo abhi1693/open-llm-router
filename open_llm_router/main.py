@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 
 from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
@@ -17,8 +22,8 @@ from open_llm_router.config import (
 from open_llm_router.idempotency import (
     IdempotencyBackend,
     IdempotencyConfig,
-    build_idempotency_store,
     build_idempotency_cache_key,
+    build_idempotency_store,
 )
 from open_llm_router.live_metrics import (
     LiveMetricsCollector,
@@ -47,7 +52,9 @@ logger = logging.getLogger("uvicorn.error")
 
 
 @app.middleware("http")
-async def auth_middleware(request: Request, call_next):
+async def auth_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     if not request.url.path.startswith("/v1"):
         return await call_next(request)
 
@@ -165,7 +172,9 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
             if not isinstance(tokenizer, str) or not tokenizer.strip():
                 tokenizer = "Other"
             if not isinstance(modality, str) or not modality.strip():
-                modality = f"{'+'.join(input_modalities)}->{'+'.join(output_modalities)}"
+                modality = (
+                    f"{'+'.join(input_modalities)}->{'+'.join(output_modalities)}"
+                )
             if not isinstance(instruct_type, str):
                 instruct_type = None
             return {
@@ -211,13 +220,20 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
             return {"prompt": "0", "completion": "0"}
         prompt_per_1k = costs.get("input_per_1k")
         completion_per_1k = costs.get("output_per_1k")
-        prompt = float(prompt_per_1k) / 1000.0 if isinstance(prompt_per_1k, (int, float)) else 0.0
+        prompt = (
+            float(prompt_per_1k) / 1000.0
+            if isinstance(prompt_per_1k, (int, float))
+            else 0.0
+        )
         completion = (
             float(completion_per_1k) / 1000.0
             if isinstance(completion_per_1k, (int, float))
             else 0.0
         )
-        return {"prompt": _format_price(prompt), "completion": _format_price(completion)}
+        return {
+            "prompt": _format_price(prompt),
+            "completion": _format_price(completion),
+        }
 
     def _top_provider(context_length: int, metadata: dict[str, Any]) -> dict[str, Any]:
         raw = metadata.get("top_provider")
@@ -278,49 +294,60 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
             "top_provider": _top_provider(context_length, metadata),
             "per_request_limits": metadata.get("per_request_limits"),
             "supported_parameters": supported_parameters,
-            "default_parameters": metadata.get("default_parameters")
-            if isinstance(metadata.get("default_parameters"), dict)
-            else {
-                "temperature": None,
-                "top_p": None,
-                "frequency_penalty": None,
-            },
-            "hugging_face_id": metadata.get("hugging_face_id")
-            if isinstance(metadata.get("hugging_face_id"), str)
-            else "",
+            "default_parameters": (
+                metadata.get("default_parameters")
+                if isinstance(metadata.get("default_parameters"), dict)
+                else {
+                    "temperature": None,
+                    "top_p": None,
+                    "frequency_penalty": None,
+                }
+            ),
+            "hugging_face_id": (
+                metadata.get("hugging_face_id")
+                if isinstance(metadata.get("hugging_face_id"), str)
+                else ""
+            ),
             "expiration_date": metadata.get("expiration_date"),
         }
-        return _prune_empty_fields(entry)
+        return cast(dict[str, Any], _prune_empty_fields(entry))
 
-    auto_entry = _prune_empty_fields(
-        {
-        "id": "auto",
-        "object": "model",
-        "owned_by": "open-llm-router",
-        "canonical_slug": "auto",
-        "name": "Auto Router",
-        "created": 0,
-        "description": "Automatically routes requests across configured models.",
-        "context_length": 0,
-        "architecture": {
-            "modality": "text->text",
-            "input_modalities": ["text"],
-            "output_modalities": ["text"],
-            "tokenizer": "Other",
-            "instruct_type": None,
-        },
-        "pricing": {"prompt": "0", "completion": "0"},
-        "top_provider": {
-            "context_length": 0,
-            "max_completion_tokens": None,
-            "is_moderated": False,
-        },
-        "per_request_limits": None,
-        "supported_parameters": [],
-        "default_parameters": {"temperature": None, "top_p": None, "frequency_penalty": None},
-        "hugging_face_id": "",
-        "expiration_date": None,
-        }
+    auto_entry = cast(
+        dict[str, Any],
+        _prune_empty_fields(
+            {
+                "id": "auto",
+                "object": "model",
+                "owned_by": "open-llm-router",
+                "canonical_slug": "auto",
+                "name": "Auto Router",
+                "created": 0,
+                "description": "Automatically routes requests across configured models.",
+                "context_length": 0,
+                "architecture": {
+                    "modality": "text->text",
+                    "input_modalities": ["text"],
+                    "output_modalities": ["text"],
+                    "tokenizer": "Other",
+                    "instruct_type": None,
+                },
+                "pricing": {"prompt": "0", "completion": "0"},
+                "top_provider": {
+                    "context_length": 0,
+                    "max_completion_tokens": None,
+                    "is_moderated": False,
+                },
+                "per_request_limits": None,
+                "supported_parameters": [],
+                "default_parameters": {
+                    "temperature": None,
+                    "top_p": None,
+                    "frequency_penalty": None,
+                },
+                "hugging_face_id": "",
+                "expiration_date": None,
+            }
+        ),
     )
 
     seen: set[str] = {"auto"}
@@ -349,9 +376,11 @@ def _build_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "stream": bool(payload.get("stream")),
         "has_tools": bool(tools) or bool(functions),
-        "tool_choice_type": type(payload.get("tool_choice")).__name__
-        if "tool_choice" in payload
-        else None,
+        "tool_choice_type": (
+            type(payload.get("tool_choice")).__name__
+            if "tool_choice" in payload
+            else None
+        ),
         "reasoning_effort": (
             payload.get("reasoning_effort")
             or (payload.get("reasoning", {}) or {}).get("effort")
@@ -391,7 +420,8 @@ def _prometheus_labels(labels: dict[str, str] | None) -> str:
     if not labels:
         return ""
     rendered = ",".join(
-        f'{key}="{_prometheus_escape(str(value))}"' for key, value in sorted(labels.items())
+        f'{key}="{_prometheus_escape(str(value))}"'
+        for key, value in sorted(labels.items())
     )
     return "{" + rendered + "}"
 
@@ -486,7 +516,9 @@ def _render_prometheus_metrics(
             help_text="Count of upstream attempt latencies captured on proxy errors.",
             value=collector.proxy_attempt_latency_count,
         )
-        for (provider, account), count in sorted(collector.proxy_retries_by_target.items()):
+        for (provider, account), count in sorted(
+            collector.proxy_retries_by_target.items()
+        ):
             _append_prometheus_metric(
                 lines,
                 declared,
@@ -496,7 +528,9 @@ def _render_prometheus_metrics(
                 value=count,
                 labels={"provider": provider, "account": account},
             )
-        for (provider, account), count in sorted(collector.proxy_timeouts_by_target.items()):
+        for (provider, account), count in sorted(
+            collector.proxy_timeouts_by_target.items()
+        ):
             _append_prometheus_metric(
                 lines,
                 declared,
@@ -516,7 +550,9 @@ def _render_prometheus_metrics(
                 value=count,
                 labels={"error_type": error_type},
             )
-        for status_class, count in sorted(collector.proxy_responses_by_status_class.items()):
+        for status_class, count in sorted(
+            collector.proxy_responses_by_status_class.items()
+        ):
             _append_prometheus_metric(
                 lines,
                 declared,
@@ -604,24 +640,32 @@ def _setup_optional_tracing(
         logger.warning("observability_tracing_unavailable reason=%s", str(exc))
         return
 
-    service_name = str(getattr(settings, "observability_service_name", "open-llm-router"))
+    service_name = str(
+        getattr(settings, "observability_service_name", "open-llm-router")
+    )
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     endpoint = getattr(settings, "observability_otlp_endpoint", None)
     if endpoint:
         try:
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                OTLPSpanExporter,
+            )
 
             provider.add_span_processor(
                 BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
             )
         except Exception as exc:
-            logger.warning("observability_otlp_exporter_unavailable reason=%s", str(exc))
+            logger.warning(
+                "observability_otlp_exporter_unavailable reason=%s", str(exc)
+            )
     trace.set_tracer_provider(provider)
 
     try:
         FastAPIInstrumentor.instrument_app(app_obj)
     except Exception as exc:
-        logger.warning("observability_fastapi_instrumentation_failed reason=%s", str(exc))
+        logger.warning(
+            "observability_fastapi_instrumentation_failed reason=%s", str(exc)
+        )
     try:
         HTTPXClientInstrumentor().instrument_client(proxy.client)
     except Exception as exc:
@@ -674,8 +718,12 @@ async def startup() -> None:
         CircuitBreakerConfig(
             enabled=settings.circuit_breaker_enabled,
             failure_threshold=max(1, settings.circuit_breaker_failure_threshold),
-            recovery_timeout_seconds=max(1.0, settings.circuit_breaker_recovery_timeout_seconds),
-            half_open_max_requests=max(1, settings.circuit_breaker_half_open_max_requests),
+            recovery_timeout_seconds=max(
+                1.0, settings.circuit_breaker_recovery_timeout_seconds
+            ),
+            half_open_max_requests=max(
+                1, settings.circuit_breaker_half_open_max_requests
+            ),
         )
     )
     app.state.idempotency_store = build_idempotency_store(
@@ -713,7 +761,9 @@ async def startup() -> None:
     )
     await policy_updater.start()
     app.state.policy_updater = policy_updater
-    _setup_optional_tracing(app_obj=app, proxy=app.state.backend_proxy, settings=settings)
+    _setup_optional_tracing(
+        app_obj=app, proxy=app.state.backend_proxy, settings=settings
+    )
     logger.info(
         (
             "startup complete routing_config_path=%s accounts=%d models=%d default_model=%s "
@@ -731,7 +781,9 @@ async def startup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    policy_updater: RuntimePolicyUpdater | None = getattr(app.state, "policy_updater", None)
+    policy_updater: RuntimePolicyUpdater | None = getattr(
+        app.state, "policy_updater", None
+    )
     if policy_updater is not None:
         await policy_updater.stop()
     live_metrics_collector: LiveMetricsCollector | None = getattr(
@@ -760,9 +812,13 @@ async def models() -> dict[str, Any]:
 
 @app.get("/v1/router/live-metrics")
 async def router_live_metrics() -> dict[str, Any]:
-    collector: LiveMetricsCollector | None = getattr(app.state, "live_metrics_collector", None)
+    collector: LiveMetricsCollector | None = getattr(
+        app.state, "live_metrics_collector", None
+    )
     if collector is None:
-        raise HTTPException(status_code=503, detail="Live metrics collector is unavailable.")
+        raise HTTPException(
+            status_code=503, detail="Live metrics collector is unavailable."
+        )
     snapshot = await collector.snapshot()
     return {
         "object": "router.live_metrics",
@@ -782,7 +838,9 @@ async def router_live_metrics() -> dict[str, Any]:
 
 @app.get("/v1/router/policy")
 async def router_policy() -> dict[str, Any]:
-    policy_updater: RuntimePolicyUpdater | None = getattr(app.state, "policy_updater", None)
+    policy_updater: RuntimePolicyUpdater | None = getattr(
+        app.state, "policy_updater", None
+    )
     config: RoutingConfig = app.state.routing_config
     status_payload: dict[str, Any] = {}
     if policy_updater is not None:
@@ -802,14 +860,18 @@ async def router_policy() -> dict[str, Any]:
     }
 
 
-async def _proxy_json_request(request: Request, path: str):
+async def _proxy_json_request(request: Request, path: str) -> Response:
     try:
         payload = await request.json()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Expected JSON body: {exc}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"Expected JSON body: {exc}"
+        ) from exc
 
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Expected a JSON object request body.")
+        raise HTTPException(
+            status_code=400, detail="Expected a JSON object request body."
+        )
 
     router: SmartModelRouter = app.state.smart_router
     proxy: BackendProxy = app.state.backend_proxy
@@ -838,7 +900,10 @@ async def _proxy_json_request(request: Request, path: str):
             payload=payload,
         )
         idempotency_result = await idempotency_store.begin(cache_key)
-        if idempotency_result.mode == "replay" and idempotency_result.cached is not None:
+        if (
+            idempotency_result.mode == "replay"
+            and idempotency_result.cached is not None
+        ):
             return idempotency_result.cached.to_fastapi_response()
         if idempotency_result.mode == "wait":
             cached = await idempotency_store.wait_for_existing(idempotency_result)
@@ -927,9 +992,7 @@ async def _proxy_json_request(request: Request, path: str):
         }
         if bool(getattr(app.state, "audit_payload_summary_enabled", False)):
             event["payload_summary"] = _build_payload_summary(payload)
-        audit_hook(
-            event
-        )
+        audit_hook(event)
 
     try:
         response: Response = await proxy.forward_with_fallback(
@@ -956,7 +1019,8 @@ async def _proxy_json_request(request: Request, path: str):
                 cache_headers = {
                     key: value
                     for key, value in response.headers.items()
-                    if key.lower() in {"content-type", "x-router-model", "x-router-provider"}
+                    if key.lower()
+                    in {"content-type", "x-router-model", "x-router-provider"}
                 }
                 await idempotency_store.store(
                     key=cache_key,
@@ -973,32 +1037,32 @@ async def _proxy_json_request(request: Request, path: str):
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
+async def chat_completions(request: Request) -> Response:
     return await _proxy_json_request(request, "/v1/chat/completions")
 
 
 @app.post("/v1/responses")
-async def responses(request: Request):
+async def responses(request: Request) -> Response:
     return await _proxy_json_request(request, "/v1/responses")
 
 
 @app.post("/v1/completions")
-async def completions(request: Request):
+async def completions(request: Request) -> Response:
     return await _proxy_json_request(request, "/v1/completions")
 
 
 @app.post("/v1/embeddings")
-async def embeddings(request: Request):
+async def embeddings(request: Request) -> Response:
     return await _proxy_json_request(request, "/v1/embeddings")
 
 
 @app.post("/v1/images/generations")
-async def image_generations(request: Request):
+async def image_generations(request: Request) -> Response:
     return await _proxy_json_request(request, "/v1/images/generations")
 
 
 @app.post("/v1/{subpath:path}")
-async def v1_passthrough(subpath: str, request: Request):
+async def v1_passthrough(subpath: str, request: Request) -> Response:
     # Catch additional OpenAI-compatible JSON endpoints while preserving routing behavior.
     return await _proxy_json_request(request, f"/v1/{subpath}")
 
@@ -1009,7 +1073,9 @@ async def metrics() -> PlainTextResponse:
     if not settings.observability_metrics_enabled:
         raise HTTPException(status_code=404, detail="Metrics endpoint is disabled.")
 
-    collector: LiveMetricsCollector | None = getattr(app.state, "live_metrics_collector", None)
+    collector: LiveMetricsCollector | None = getattr(
+        app.state, "live_metrics_collector", None
+    )
     models_snapshot: dict[str, Any] = {}
     if collector is not None:
         models_snapshot = snapshot_to_dict(await collector.snapshot())
@@ -1024,12 +1090,12 @@ async def metrics() -> PlainTextResponse:
 
 
 @app.exception_handler(FileNotFoundError)
-async def config_missing_handler(_: Request, exc: FileNotFoundError):
+async def config_missing_handler(_: Request, exc: FileNotFoundError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 @app.exception_handler(AuthConfigurationError)
-async def auth_config_handler(_: Request, exc: AuthConfigurationError):
+async def auth_config_handler(_: Request, exc: AuthConfigurationError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": str(exc)})
 
 

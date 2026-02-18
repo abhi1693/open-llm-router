@@ -3,14 +3,15 @@ import base64
 import json
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 from starlette.datastructures import Headers
 
 from open_llm_router.config import BackendAccount
 from open_llm_router.proxy import (
-    BackendTarget,
     BackendProxy,
+    BackendTarget,
     _build_upstream_headers,
     _parse_retry_after_seconds,
     _prepare_upstream_request,
@@ -23,7 +24,7 @@ def _decision(
     selected: str,
     fallbacks: list[str],
     source: str = "auto",
-    provider_preferences: dict | None = None,
+    provider_preferences: dict[str, Any] | None = None,
 ) -> RouteDecision:
     return RouteDecision(
         selected_model=selected,
@@ -38,13 +39,21 @@ def _decision(
 
 
 def _jwt_with_account_id(account_id: str) -> str:
-    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').decode("ascii").rstrip("=")
+    header = (
+        base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}')
+        .decode("ascii")
+        .rstrip("=")
+    )
     payload_obj = {"https://api.openai.com/auth": {"chatgpt_account_id": account_id}}
-    payload = base64.urlsafe_b64encode(json.dumps(payload_obj).encode("utf-8")).decode("ascii").rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(json.dumps(payload_obj).encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+    )
     return f"{header}.{payload}.sig"
 
 
-def test_build_targets_across_accounts_and_fallback_models():
+def test_build_targets_across_accounts_and_fallback_models() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -77,7 +86,7 @@ def test_build_targets_across_accounts_and_fallback_models():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_applies_provider_order_preference():
+def test_build_targets_applies_provider_order_preference() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -112,7 +121,7 @@ def test_build_targets_applies_provider_order_preference():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_applies_provider_only_filter():
+def test_build_targets_applies_provider_only_filter() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -147,7 +156,7 @@ def test_build_targets_applies_provider_only_filter():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_applies_provider_ignore_filter():
+def test_build_targets_applies_provider_ignore_filter() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -182,7 +191,7 @@ def test_build_targets_applies_provider_ignore_filter():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_applies_provider_sort_price():
+def test_build_targets_applies_provider_sort_price() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -227,7 +236,7 @@ def test_build_targets_applies_provider_sort_price():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_applies_provider_sort_latency():
+def test_build_targets_applies_provider_sort_latency() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -272,7 +281,7 @@ def test_build_targets_applies_provider_sort_latency():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_partition_model_keeps_model_grouping():
+def test_build_targets_partition_model_keeps_model_grouping() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -318,7 +327,7 @@ def test_build_targets_partition_model_keeps_model_grouping():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_partition_none_applies_global_sort():
+def test_build_targets_partition_none_applies_global_sort() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -364,7 +373,7 @@ def test_build_targets_partition_none_applies_global_sort():
     asyncio.run(proxy.close())
 
 
-def test_filter_targets_by_parameter_support_keeps_compatible_targets():
+def test_filter_targets_by_parameter_support_keeps_compatible_targets() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -419,7 +428,9 @@ def test_filter_targets_by_parameter_support_keeps_compatible_targets():
     asyncio.run(proxy.close())
 
 
-def test_forward_with_fallback_returns_400_when_require_parameters_excludes_all_targets():
+def test_forward_with_fallback_returns_400_when_require_parameters_excludes_all_targets() -> (
+    None
+):
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -471,12 +482,14 @@ def test_forward_with_fallback_returns_400_when_require_parameters_excludes_all_
     )
 
     assert response.status_code == 400
-    body = json.loads(response.body.decode("utf-8"))
+    body = json.loads(bytes(response.body).decode("utf-8"))
     assert body["error"]["constraint"] == "require_parameters"
     asyncio.run(proxy.close())
 
 
-def test_forward_with_fallback_returns_400_when_provider_filters_exclude_all_targets():
+def test_forward_with_fallback_returns_400_when_provider_filters_exclude_all_targets() -> (
+    None
+):
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -512,14 +525,14 @@ def test_forward_with_fallback_returns_400_when_provider_filters_exclude_all_tar
     )
 
     assert response.status_code == 400
-    body = json.loads(response.body.decode("utf-8"))
+    body = json.loads(bytes(response.body).decode("utf-8"))
     assert body["error"]["constraint"] == "provider"
     assert body["error"]["details"]["only"] == ["gemini"]
     assert body["error"]["details"]["ignore"] == ["openai"]
     asyncio.run(proxy.close())
 
 
-def test_forward_with_fallback_retries_next_target_when_fallbacks_enabled():
+def test_forward_with_fallback_retries_next_target_when_fallbacks_enabled() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -562,7 +575,9 @@ def test_forward_with_fallback_retries_next_target_when_fallbacks_enabled():
             request=request,
         )
 
-    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
 
     response = asyncio.run(
         proxy.forward_with_fallback(
@@ -588,14 +603,14 @@ def test_forward_with_fallback_retries_next_target_when_fallbacks_enabled():
     assert state["calls"] == 2
     assert response.status_code == 200
     assert response.headers["x-router-account"] == "acct-gemini"
-    body = json.loads(response.body.decode("utf-8"))
+    body = json.loads(bytes(response.body).decode("utf-8"))
     assert body["ok"] is True
     assert body["_router"]["attempted_targets"] == ["acct-openai:m1", "acct-gemini:m1"]
     asyncio.run(proxy.close())
 
 
-def test_proxy_request_error_audit_contains_attempt_and_status_fields():
-    captured_events: list[dict] = []
+def test_proxy_request_error_audit_contains_attempt_and_status_fields() -> None:
+    captured_events: list[dict[str, Any]] = []
 
     proxy = BackendProxy(
         base_url="http://legacy",
@@ -635,7 +650,9 @@ def test_proxy_request_error_audit_contains_attempt_and_status_fields():
             request=request,
         )
 
-    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
 
     response = asyncio.run(
         proxy.forward_with_fallback(
@@ -659,7 +676,11 @@ def test_proxy_request_error_audit_contains_attempt_and_status_fields():
     )
 
     assert response.status_code == 200
-    error_events = [event for event in captured_events if event.get("event") == "proxy_request_error"]
+    error_events = [
+        event
+        for event in captured_events
+        if event.get("event") == "proxy_request_error"
+    ]
     assert len(error_events) == 1
 
     event = error_events[0]
@@ -672,7 +693,7 @@ def test_proxy_request_error_audit_contains_attempt_and_status_fields():
     asyncio.run(proxy.close())
 
 
-def test_forward_with_fallback_does_not_retry_when_fallbacks_disabled():
+def test_forward_with_fallback_does_not_retry_when_fallbacks_disabled() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -708,7 +729,9 @@ def test_forward_with_fallback_does_not_retry_when_fallbacks_disabled():
             request=request,
         )
 
-    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
 
     response = asyncio.run(
         proxy.forward_with_fallback(
@@ -734,13 +757,13 @@ def test_forward_with_fallback_does_not_retry_when_fallbacks_disabled():
     assert state["calls"] == 1
     assert response.status_code == 500
     assert response.headers["x-router-account"] == "acct-openai"
-    body = json.loads(response.body.decode("utf-8"))
+    body = json.loads(bytes(response.body).decode("utf-8"))
     assert body["error"] == "first target failed"
     assert body["_router"]["attempted_targets"] == ["acct-openai:m1"]
     asyncio.run(proxy.close())
 
 
-def test_build_targets_resolves_provider_qualified_model_to_matching_account():
+def test_build_targets_resolves_provider_qualified_model_to_matching_account() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -769,7 +792,7 @@ def test_build_targets_resolves_provider_qualified_model_to_matching_account():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_uses_model_registry_id_for_upstream_model():
+def test_build_targets_uses_model_registry_id_for_upstream_model() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -792,13 +815,17 @@ def test_build_targets_uses_model_registry_id_for_upstream_model():
         ],
     )
 
-    targets = proxy._build_candidate_targets(_decision("openai-codex/gpt-5.3-codex", []))
-    assert [target.label for target in targets] == ["acct-codex:openai-codex/gpt-5.3-codex"]
+    targets = proxy._build_candidate_targets(
+        _decision("openai-codex/gpt-5.3-codex", [])
+    )
+    assert [target.label for target in targets] == [
+        "acct-codex:openai-codex/gpt-5.3-codex"
+    ]
     assert targets[0].upstream_model == "gpt-5.3-codex-upstream"
     asyncio.run(proxy.close())
 
 
-def test_backend_proxy_applies_explicit_timeout_configuration():
+def test_backend_proxy_applies_explicit_timeout_configuration() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -819,7 +846,7 @@ def test_backend_proxy_applies_explicit_timeout_configuration():
     asyncio.run(proxy.close())
 
 
-def test_build_targets_request_source_ignores_fallbacks():
+def test_build_targets_request_source_ignores_fallbacks() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -842,12 +869,14 @@ def test_build_targets_request_source_ignores_fallbacks():
             ),
         ],
     )
-    targets = proxy._build_candidate_targets(_decision("m1", ["m2", "m3"], source="request"))
+    targets = proxy._build_candidate_targets(
+        _decision("m1", ["m2", "m3"], source="request")
+    )
     assert [target.label for target in targets] == ["acct-a:m1", "acct-b:m1"]
     asyncio.run(proxy.close())
 
 
-def test_build_targets_uses_env_api_key(monkeypatch):
+def test_build_targets_uses_env_api_key(monkeypatch: Any) -> None:
     monkeypatch.setenv("ACCOUNT_A_KEY", "env-key-a")
     proxy = BackendProxy(
         base_url="http://legacy",
@@ -870,7 +899,7 @@ def test_build_targets_uses_env_api_key(monkeypatch):
     asyncio.run(proxy.close())
 
 
-def test_legacy_backend_used_when_accounts_absent():
+def test_legacy_backend_used_when_accounts_absent() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -885,7 +914,7 @@ def test_legacy_backend_used_when_accounts_absent():
     asyncio.run(proxy.close())
 
 
-def test_oauth_account_uses_access_token():
+def test_oauth_account_uses_access_token() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -911,7 +940,7 @@ def test_oauth_account_uses_access_token():
     asyncio.run(proxy.close())
 
 
-def test_oauth_account_refreshes_when_expired():
+def test_oauth_account_refreshes_when_expired() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -945,7 +974,9 @@ def test_oauth_account_refreshes_when_expired():
             },
         )
 
-    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
 
     targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
     token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
@@ -953,7 +984,7 @@ def test_oauth_account_refreshes_when_expired():
     asyncio.run(proxy.close())
 
 
-def test_oauth_account_resolves_chatgpt_account_id_from_token():
+def test_oauth_account_resolves_chatgpt_account_id_from_token() -> None:
     token = _jwt_with_account_id("acct_abc123")
     proxy = BackendProxy(
         base_url="http://legacy",
@@ -981,7 +1012,7 @@ def test_oauth_account_resolves_chatgpt_account_id_from_token():
     asyncio.run(proxy.close())
 
 
-def test_build_upstream_headers_adds_codex_account_headers():
+def test_build_upstream_headers_adds_codex_account_headers() -> None:
     headers = _build_upstream_headers(
         incoming_headers=Headers({"content-type": "application/json"}),
         bearer_token="token-1",
@@ -997,7 +1028,7 @@ def test_build_upstream_headers_adds_codex_account_headers():
     assert headers["originator"] == "pi"
 
 
-def test_build_upstream_headers_defaults_accept_to_sse_for_streaming_requests():
+def test_build_upstream_headers_defaults_accept_to_sse_for_streaming_requests() -> None:
     headers = _build_upstream_headers(
         incoming_headers=Headers({"content-type": "application/json"}),
         bearer_token="token-1",
@@ -1011,7 +1042,7 @@ def test_build_upstream_headers_defaults_accept_to_sse_for_streaming_requests():
     assert headers["Accept"] == "text/event-stream"
 
 
-def test_build_upstream_headers_preserves_trace_context_headers():
+def test_build_upstream_headers_preserves_trace_context_headers() -> None:
     headers = _build_upstream_headers(
         incoming_headers=Headers(
             {
@@ -1034,7 +1065,7 @@ def test_build_upstream_headers_preserves_trace_context_headers():
     assert headers["baggage"] == "user_id=123"
 
 
-def test_prepare_upstream_request_maps_chat_completions_to_codex_responses():
+def test_prepare_upstream_request_maps_chat_completions_to_codex_responses() -> None:
     payload = {
         "model": "gpt-5.2-codex",
         "stream": True,
@@ -1068,7 +1099,7 @@ def test_prepare_upstream_request_maps_chat_completions_to_codex_responses():
     ]
 
 
-def test_build_targets_resolves_codex_model_key_to_upstream_model_id():
+def test_build_targets_resolves_codex_model_key_to_upstream_model_id() -> None:
     proxy = BackendProxy(
         base_url="http://legacy",
         timeout_seconds=30,
@@ -1091,7 +1122,7 @@ def test_build_targets_resolves_codex_model_key_to_upstream_model_id():
     asyncio.run(proxy.close())
 
 
-def test_prepare_upstream_request_converts_chat_multimodal_content():
+def test_prepare_upstream_request_converts_chat_multimodal_content() -> None:
     payload = {
         "model": "gpt-5.2-codex",
         "messages": [
@@ -1099,7 +1130,10 @@ def test_prepare_upstream_request_converts_chat_multimodal_content():
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Describe image"},
-                    {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/cat.png"},
+                    },
                 ],
             }
         ],
@@ -1125,7 +1159,7 @@ def test_prepare_upstream_request_converts_chat_multimodal_content():
     ]
 
 
-def test_prepare_upstream_request_normalizes_assistant_and_tool_roles():
+def test_prepare_upstream_request_normalizes_assistant_and_tool_roles() -> None:
     payload = {
         "model": "gpt-5.2-codex",
         "messages": [
@@ -1159,7 +1193,7 @@ def test_prepare_upstream_request_normalizes_assistant_and_tool_roles():
     }
 
 
-def test_prepare_upstream_request_maps_chat_tools_for_responses_api():
+def test_prepare_upstream_request_maps_chat_tools_for_responses_api() -> None:
     payload = {
         "model": "gpt-5.2-codex",
         "messages": [{"role": "user", "content": "Run listing tool"}],
@@ -1202,7 +1236,7 @@ def test_prepare_upstream_request_maps_chat_tools_for_responses_api():
     assert prepared.payload["tool_choice"] == {"type": "function", "name": "list_files"}
 
 
-def test_request_error_details_include_type_repr_and_request_metadata():
+def test_request_error_details_include_type_repr_and_request_metadata() -> None:
     request = httpx.Request("POST", "https://example.com/v1/chat/completions")
     exc = httpx.ConnectTimeout("", request=request)
 
@@ -1217,7 +1251,7 @@ def test_request_error_details_include_type_repr_and_request_metadata():
     assert details["request_url"] == "https://example.com/v1/chat/completions"
 
 
-def test_prepare_upstream_request_sanitizes_gemini_chat_payload():
+def test_prepare_upstream_request_sanitizes_gemini_chat_payload() -> None:
     payload = {
         "model": "gemini-2.5-flash",
         "messages": [{"role": "user", "content": "Hello"}],
@@ -1246,7 +1280,7 @@ def test_prepare_upstream_request_sanitizes_gemini_chat_payload():
     assert "parallel_tool_calls" not in prepared.payload
 
 
-def test_prepare_upstream_request_keeps_nvidia_chat_payload_passthrough():
+def test_prepare_upstream_request_keeps_nvidia_chat_payload_passthrough() -> None:
     payload = {
         "model": "z-ai/glm5",
         "messages": [{"role": "user", "content": "Hello"}],
@@ -1269,19 +1303,21 @@ def test_prepare_upstream_request_keeps_nvidia_chat_payload_passthrough():
     assert prepared.payload == payload
 
 
-def test_parse_retry_after_seconds_numeric():
+def test_parse_retry_after_seconds_numeric() -> None:
     headers = httpx.Headers({"Retry-After": "12"})
     assert _parse_retry_after_seconds(headers, default_seconds=30.0) == 12.0
 
 
-def test_parse_retry_after_seconds_http_date():
+def test_parse_retry_after_seconds_http_date() -> None:
     future = datetime.now(timezone.utc) + timedelta(seconds=8)
-    headers = httpx.Headers({"Retry-After": future.strftime("%a, %d %b %Y %H:%M:%S GMT")})
+    headers = httpx.Headers(
+        {"Retry-After": future.strftime("%a, %d %b %Y %H:%M:%S GMT")}
+    )
     value = _parse_retry_after_seconds(headers, default_seconds=30.0)
     assert 0 < value <= 8.5
 
 
-def test_to_fastapi_response_injects_router_diagnostics_into_json_payload():
+def test_to_fastapi_response_injects_router_diagnostics_into_json_payload() -> None:
     account = BackendAccount(
         name="acct-openai",
         provider="openai",
@@ -1335,7 +1371,7 @@ def test_to_fastapi_response_injects_router_diagnostics_into_json_payload():
         )
     )
 
-    body = json.loads(response.body.decode("utf-8"))
+    body = json.loads(bytes(response.body).decode("utf-8"))
     assert body["_router"]["request_id"] == "req_diag_1"
     assert body["_router"]["selected_model"] == "openai/m1"
     assert body["_router"]["provider"] == "openai"
@@ -1345,7 +1381,7 @@ def test_to_fastapi_response_injects_router_diagnostics_into_json_payload():
     assert body["_router"]["top_utility"] == 0.82
 
 
-def test_to_fastapi_response_keeps_non_json_body_unchanged():
+def test_to_fastapi_response_keeps_non_json_body_unchanged() -> None:
     account = BackendAccount(
         name="acct-openai",
         provider="openai",
@@ -1391,7 +1427,9 @@ def test_to_fastapi_response_keeps_non_json_body_unchanged():
     assert b"_router" not in response.body
 
 
-def test_chat_completions_adapter_includes_router_diagnostics_in_json_response():
+def test_chat_completions_adapter_includes_router_diagnostics_in_json_response() -> (
+    None
+):
     account = BackendAccount(
         name="acct-codex",
         provider="openai-codex",
@@ -1441,7 +1479,7 @@ def test_chat_completions_adapter_includes_router_diagnostics_in_json_response()
         )
     )
 
-    body = json.loads(response.body.decode("utf-8"))
+    body = json.loads(bytes(response.body).decode("utf-8"))
     assert body["model"] == "openai-codex/gpt-5.2"
     assert body["choices"][0]["message"]["content"] == "Hello from codex"
     assert body["_router"]["request_id"] == "req_diag_chat"

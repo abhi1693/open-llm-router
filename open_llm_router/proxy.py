@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Callable, Literal
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any, AsyncIterator, Callable, Literal, cast
 
 import httpx
 from fastapi import status
@@ -172,7 +172,9 @@ def _json_response_with_routing_diagnostics(
     for name in list(response_headers.keys()):
         if name.lower() == "content-type":
             response_headers.pop(name, None)
-    return JSONResponse(status_code=status_code, content=parsed, headers=response_headers)
+    return JSONResponse(
+        status_code=status_code, content=parsed, headers=response_headers
+    )
 
 
 def _build_upstream_headers(
@@ -354,7 +356,9 @@ def _to_codex_input_parts(content: Any, role: str) -> list[dict[str, Any]]:
     return parts
 
 
-def _extract_codex_instructions(payload: dict[str, Any], messages: list[dict[str, Any]]) -> str:
+def _extract_codex_instructions(
+    payload: dict[str, Any], messages: list[dict[str, Any]]
+) -> str:
     explicit = payload.get("instructions")
     instructions: list[str] = []
     if isinstance(explicit, str) and explicit.strip():
@@ -371,7 +375,9 @@ def _extract_codex_instructions(payload: dict[str, Any], messages: list[dict[str
     return "\n\n".join(instructions) if instructions else "You are a helpful assistant."
 
 
-def _chat_messages_to_codex_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _chat_messages_to_codex_input(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for message in messages:
         raw_role = str(message.get("role", "user")).strip().lower()
@@ -393,7 +399,9 @@ def _chat_messages_to_codex_input(messages: list[dict[str, Any]]) -> list[dict[s
 def _normalize_responses_input_for_codex(input_value: Any) -> list[dict[str, Any]]:
     if isinstance(input_value, str):
         text = input_value.strip()
-        return [{"role": "user", "content": [_as_input_text_part(text)]}] if text else []
+        return (
+            [{"role": "user", "content": [_as_input_text_part(text)]}] if text else []
+        )
 
     if isinstance(input_value, dict):
         raw_role = str(input_value.get("role", "user")).strip().lower() or "user"
@@ -415,7 +423,9 @@ def _normalize_responses_input_for_codex(input_value: Any) -> list[dict[str, Any
             if isinstance(item, str):
                 text = item.strip()
                 if text:
-                    output.append({"role": "user", "content": [_as_input_text_part(text)]})
+                    output.append(
+                        {"role": "user", "content": [_as_input_text_part(text)]}
+                    )
                 continue
             if isinstance(item, dict):
                 if "role" in item:
@@ -513,7 +523,9 @@ def _prepare_codex_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]
         codex_payload["input"] = input_messages
     else:
         if "input" in payload:
-            codex_payload["input"] = _normalize_responses_input_for_codex(payload.get("input"))
+            codex_payload["input"] = _normalize_responses_input_for_codex(
+                payload.get("input")
+            )
         elif messages:
             codex_payload["input"] = _chat_messages_to_codex_input(messages)
         else:
@@ -544,7 +556,9 @@ def _prepare_codex_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]
             ]
 
     if "tool_choice" in payload:
-        codex_payload["tool_choice"] = _normalize_codex_tool_choice(payload.get("tool_choice"))
+        codex_payload["tool_choice"] = _normalize_codex_tool_choice(
+            payload.get("tool_choice")
+        )
     elif "function_call" in payload:
         function_call = payload.get("function_call")
         if isinstance(function_call, str):
@@ -552,7 +566,10 @@ def _prepare_codex_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]
         elif isinstance(function_call, dict):
             name = function_call.get("name")
             if isinstance(name, str) and name.strip():
-                codex_payload["tool_choice"] = {"type": "function", "name": name.strip()}
+                codex_payload["tool_choice"] = {
+                    "type": "function",
+                    "name": name.strip(),
+                }
 
     max_tokens = payload.get("max_tokens")
     if max_tokens is not None and "max_output_tokens" not in codex_payload:
@@ -577,7 +594,9 @@ def _drop_none_fields(value: Any) -> Any:
     return value
 
 
-def _prepare_gemini_chat_payload(payload: dict[str, Any], stream: bool) -> dict[str, Any]:
+def _prepare_gemini_chat_payload(
+    payload: dict[str, Any], stream: bool
+) -> dict[str, Any]:
     allowed_fields = {
         "model",
         "messages",
@@ -617,7 +636,7 @@ def _prepare_gemini_chat_payload(payload: dict[str, Any], stream: bool) -> dict[
     if "max_tokens" not in prepared and isinstance(max_output_tokens, int):
         prepared["max_tokens"] = max_output_tokens
 
-    return _drop_none_fields(prepared)
+    return cast(dict[str, Any], _drop_none_fields(prepared))
 
 
 def _prepare_upstream_request(
@@ -630,7 +649,9 @@ def _prepare_upstream_request(
         "/v1/chat/completions",
         "/v1/responses",
     }:
-        adapter = "chat_completions" if path == "/v1/chat/completions" else "passthrough"
+        adapter: Literal["passthrough", "chat_completions"] = (
+            "chat_completions" if path == "/v1/chat/completions" else "passthrough"
+        )
         return UpstreamRequestSpec(
             path="/codex/responses",
             payload=_prepare_codex_payload(path, payload),
@@ -734,7 +755,9 @@ class BackendProxy:
             return None, normalized
         return provider, model_id
 
-    def _resolve_model_metadata(self, account: BackendAccount, model: str) -> dict[str, Any]:
+    def _resolve_model_metadata(
+        self, account: BackendAccount, model: str
+    ) -> dict[str, Any]:
         metadata = self._model_registry.get(model)
         if isinstance(metadata, dict):
             return metadata
@@ -762,8 +785,14 @@ class BackendProxy:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        resolved_metadata = metadata if isinstance(metadata, dict) else self._resolve_model_metadata(account, model)
-        metadata_id = resolved_metadata.get("id") if isinstance(resolved_metadata, dict) else None
+        resolved_metadata = (
+            metadata
+            if isinstance(metadata, dict)
+            else self._resolve_model_metadata(account, model)
+        )
+        metadata_id = (
+            resolved_metadata.get("id") if isinstance(resolved_metadata, dict) else None
+        )
         if isinstance(metadata_id, str) and metadata_id.strip():
             return metadata_id.strip()
 
@@ -786,7 +815,7 @@ class BackendProxy:
     async def forward_with_fallback(
         self,
         path: str,
-        payload: dict,
+        payload: dict[str, Any],
         incoming_headers: Headers,
         route_decision: RouteDecision,
         stream: bool,
@@ -815,11 +844,17 @@ class BackendProxy:
                 selected_model=primary_target.model,
                 primary_target=primary_target.label,
             )
-        effective_model_chain = _dedupe_preserving_order([target.model for target in candidate_targets])
-        effective_selected_model = (
-            effective_model_chain[0] if effective_model_chain else route_decision.selected_model
+        effective_model_chain = _dedupe_preserving_order(
+            [target.model for target in candidate_targets]
         )
-        effective_fallback_models = effective_model_chain[1:] if effective_model_chain else []
+        effective_selected_model = (
+            effective_model_chain[0]
+            if effective_model_chain
+            else route_decision.selected_model
+        )
+        effective_fallback_models = (
+            effective_model_chain[1:] if effective_model_chain else []
+        )
         request_started = time.perf_counter()
         logger.info(
             (
@@ -884,7 +919,10 @@ class BackendProxy:
                     }
                 },
             )
-        if self._has_provider_filters(route_decision.provider_preferences) and not candidate_targets:
+        if (
+            self._has_provider_filters(route_decision.provider_preferences)
+            and not candidate_targets
+        ):
             only = self._normalized_provider_filter_values(
                 route_decision.provider_preferences.get("only")
             )
@@ -1040,9 +1078,9 @@ class BackendProxy:
                         "error": {
                             "type": "oauth_credentials_unavailable",
                             "message": (
-                            "Selected OAuth-backed target has no usable access token "
-                            "and could not refresh one."
-                        ),
+                                "Selected OAuth-backed target has no usable access token "
+                                "and could not refresh one."
+                            ),
                             "attempted_targets": attempted_targets,
                             "attempted_upstream_models": attempted_upstream_models,
                         }
@@ -1114,7 +1152,9 @@ class BackendProxy:
                     upstream_model=target.upstream_model,
                     attempt=attempt_number,
                     total_attempts=total_attempts,
-                    attempt_latency_ms=round((time.perf_counter() - attempt_started) * 1000.0, 3),
+                    attempt_latency_ms=round(
+                        (time.perf_counter() - attempt_started) * 1000.0, 3
+                    ),
                     **error_details,
                 )
                 if index < len(candidate_targets) - 1:
@@ -1142,7 +1182,10 @@ class BackendProxy:
             if upstream.status_code < 500 and upstream.status_code != 429:
                 if self._circuit_breakers is not None:
                     self._circuit_breakers.on_success(breaker_key)
-            elif upstream.status_code in self.retry_statuses and self._circuit_breakers is not None:
+            elif (
+                upstream.status_code in self.retry_statuses
+                and self._circuit_breakers is not None
+            ):
                 self._circuit_breakers.on_failure(breaker_key)
             if upstream.status_code == 429:
                 self._mark_rate_limited(target.account_name, upstream.headers)
@@ -1172,7 +1215,9 @@ class BackendProxy:
                 target=target,
                 attempted_targets=attempted_targets,
                 attempted_upstream_models=attempted_upstream_models,
-                request_latency_ms=round((time.perf_counter() - request_started) * 1000.0, 3),
+                request_latency_ms=round(
+                    (time.perf_counter() - request_started) * 1000.0, 3
+                ),
                 route_decision=route_decision,
                 request_id=rid,
                 adapter=request_spec.adapter,
@@ -1229,7 +1274,9 @@ class BackendProxy:
         response_headers["x-router-request-latency-ms"] = f"{request_latency_ms:.3f}"
         response_headers["x-router-attempted-targets"] = ",".join(attempted_targets)
         if route_decision.ranked_models:
-            response_headers["x-router-ranked-models"] = ",".join(route_decision.ranked_models)
+            response_headers["x-router-ranked-models"] = ",".join(
+                route_decision.ranked_models
+            )
         if route_decision.candidate_scores:
             top = route_decision.candidate_scores[0]
             response_headers["x-router-top-utility"] = str(top.get("utility", ""))
@@ -1284,7 +1331,7 @@ class BackendProxy:
         if stream:
             media_type = response_headers.pop("content-type", "text/event-stream")
 
-            async def stream_generator():
+            async def stream_generator() -> AsyncIterator[bytes]:
                 try:
                     if upstream_stream:
                         async for chunk in upstream.aiter_raw():
@@ -1320,7 +1367,9 @@ class BackendProxy:
         )
 
     @staticmethod
-    async def _iter_sse_data_json(upstream: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+    async def _iter_sse_data_json(
+        upstream: httpx.Response,
+    ) -> AsyncIterator[dict[str, Any]]:
         try:
             async for line in upstream.aiter_lines():
                 if not line or not line.startswith("data:"):
@@ -1510,7 +1559,10 @@ class BackendProxy:
                                     "function": {"name": name or "", "arguments": ""},
                                 }
                                 state["tool_calls"].append(call_state)
-                                state["tool_calls_by_output_index"][output_index] = call_state
+                                tool_calls_by_output_index = state[
+                                    "tool_calls_by_output_index"
+                                ]
+                                tool_calls_by_output_index[output_index] = call_state
                                 if item_id:
                                     state["tool_calls_by_item_id"][item_id] = call_state
 
@@ -1531,14 +1583,20 @@ class BackendProxy:
                             delta = event.get("delta")
                             if not isinstance(delta, str) or not delta:
                                 continue
-                            call_state = None
+                            matched_call_state: dict[str, Any] | None = None
                             if isinstance(item_id, str):
-                                call_state = state["tool_calls_by_item_id"].get(item_id)
-                            if call_state is None and isinstance(output_index, int):
-                                call_state = state["tool_calls_by_output_index"].get(output_index)
-                            if call_state is None:
+                                matched_call_state = state["tool_calls_by_item_id"].get(
+                                    item_id
+                                )
+                            if matched_call_state is None and isinstance(
+                                output_index, int
+                            ):
+                                matched_call_state = state[
+                                    "tool_calls_by_output_index"
+                                ].get(output_index)
+                            if matched_call_state is None:
                                 continue
-                            func = call_state.get("function")
+                            func = matched_call_state.get("function")
                             if isinstance(func, dict):
                                 existing_args = func.get("arguments")
                                 if not isinstance(existing_args, str):
@@ -1553,7 +1611,7 @@ class BackendProxy:
                                     delta={"role": "assistant"},
                                     finish_reason=None,
                                 )
-                            call_index = call_state.get("index")
+                            call_index = matched_call_state.get("index")
                             if not isinstance(call_index, int):
                                 continue
                             yield BackendProxy._chat_completion_tool_call_chunk(
@@ -1571,14 +1629,20 @@ class BackendProxy:
                             arguments = event.get("arguments")
                             if not isinstance(arguments, str):
                                 continue
-                            call_state = None
+                            matched_done_call_state: dict[str, Any] | None = None
                             if isinstance(item_id, str):
-                                call_state = state["tool_calls_by_item_id"].get(item_id)
-                            if call_state is None and isinstance(output_index, int):
-                                call_state = state["tool_calls_by_output_index"].get(output_index)
-                            if call_state is None:
+                                matched_done_call_state = state[
+                                    "tool_calls_by_item_id"
+                                ].get(item_id)
+                            if matched_done_call_state is None and isinstance(
+                                output_index, int
+                            ):
+                                matched_done_call_state = state[
+                                    "tool_calls_by_output_index"
+                                ].get(output_index)
+                            if matched_done_call_state is None:
                                 continue
-                            func = call_state.get("function")
+                            func = matched_done_call_state.get("function")
                             if isinstance(func, dict):
                                 func["arguments"] = arguments
                             continue
@@ -1602,8 +1666,8 @@ class BackendProxy:
                                 created=state["created"],
                                 model=model,
                                 delta={"content": delta},
-                                    finish_reason=None,
-                                )
+                                finish_reason=None,
+                            )
                             continue
 
                         if event_type == "response.completed":
@@ -1642,10 +1706,14 @@ class BackendProxy:
                                             "request_id": request_id,
                                             "model": model,
                                             "stream": True,
-                                            "text_chars": len("".join(state["text_parts"])),
+                                            "text_chars": len(
+                                                "".join(state["text_parts"])
+                                            ),
                                             "tool_calls": len(state["tool_calls"]),
                                             "finish_reason": finish_reason,
-                                            "text_preview": "".join(state["text_parts"])[:500],
+                                            "text_preview": "".join(
+                                                state["text_parts"]
+                                            )[:500],
                                             "tool_call_summary": BackendProxy._tool_call_debug_summary(
                                                 state["tool_calls"]
                                             ),
@@ -1763,14 +1831,20 @@ class BackendProxy:
                     delta = event.get("delta")
                     if not isinstance(delta, str):
                         continue
-                    call_state = None
+                    matched_done_call_state: dict[str, Any] | None = None
                     if isinstance(item_id, str):
-                        call_state = state["tool_calls_by_item_id"].get(item_id)
-                    if call_state is None and isinstance(output_index, int):
-                        call_state = state["tool_calls_by_output_index"].get(output_index)
-                    if call_state is None:
+                        matched_done_call_state = state["tool_calls_by_item_id"].get(
+                            item_id
+                        )
+                    if matched_done_call_state is None and isinstance(
+                        output_index, int
+                    ):
+                        matched_done_call_state = state[
+                            "tool_calls_by_output_index"
+                        ].get(output_index)
+                    if matched_done_call_state is None:
                         continue
-                    func = call_state.get("function")
+                    func = matched_done_call_state.get("function")
                     if isinstance(func, dict):
                         existing_args = func.get("arguments")
                         if not isinstance(existing_args, str):
@@ -1783,14 +1857,16 @@ class BackendProxy:
                     arguments = event.get("arguments")
                     if not isinstance(arguments, str):
                         continue
-                    call_state = None
+                    matched_call_state: dict[str, Any] | None = None
                     if isinstance(item_id, str):
-                        call_state = state["tool_calls_by_item_id"].get(item_id)
-                    if call_state is None and isinstance(output_index, int):
-                        call_state = state["tool_calls_by_output_index"].get(output_index)
-                    if call_state is None:
+                        matched_call_state = state["tool_calls_by_item_id"].get(item_id)
+                    if matched_call_state is None and isinstance(output_index, int):
+                        matched_call_state = state["tool_calls_by_output_index"].get(
+                            output_index
+                        )
+                    if matched_call_state is None:
                         continue
-                    func = call_state.get("function")
+                    func = matched_call_state.get("function")
                     if isinstance(func, dict):
                         func["arguments"] = arguments
                     continue
@@ -1827,7 +1903,7 @@ class BackendProxy:
                 }
                 for call in state["tool_calls"]
             ]
-        body = {
+        response_body: dict[str, Any] = {
             "id": state["completion_id"],
             "object": "chat.completion",
             "created": state["created"],
@@ -1840,7 +1916,7 @@ class BackendProxy:
                 }
             ],
         }
-        body["_router"] = routing_diagnostics
+        response_body["_router"] = routing_diagnostics
         logger.info(
             "proxy_chat_result request_id=%s model=%s stream=%s text_chars=%d tool_calls=%d finish_reason=%s",
             request_id,
@@ -1870,9 +1946,15 @@ class BackendProxy:
             except Exception:
                 pass
         response_headers.pop("content-type", None)
-        return JSONResponse(status_code=upstream.status_code, content=body, headers=response_headers)
+        return JSONResponse(
+            status_code=upstream.status_code,
+            content=response_body,
+            headers=response_headers,
+        )
 
-    def _build_candidate_targets(self, route_decision: RouteDecision) -> list[BackendTarget]:
+    def _build_candidate_targets(
+        self, route_decision: RouteDecision
+    ) -> list[BackendTarget]:
         if route_decision.source == "request":
             model_chain = [route_decision.selected_model]
         else:
@@ -1912,7 +1994,9 @@ class BackendProxy:
             grouped_targets.append(model_targets)
 
         if partition == "none":
-            flattened_targets = [target for group in grouped_targets for target in group]
+            flattened_targets = [
+                target for group in grouped_targets for target in group
+            ]
             return self._sort_model_targets(
                 model_targets=flattened_targets,
                 provider_preferences=provider_preferences,
@@ -1963,7 +2047,9 @@ class BackendProxy:
 
     @staticmethod
     def _has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
-        return bool(provider_preferences.get("only")) or bool(provider_preferences.get("ignore"))
+        return bool(provider_preferences.get("only")) or bool(
+            provider_preferences.get("ignore")
+        )
 
     def _filter_targets_by_provider_preferences(
         self,
@@ -1971,8 +2057,12 @@ class BackendProxy:
         model_targets: list[BackendTarget],
         provider_preferences: dict[str, Any],
     ) -> list[BackendTarget]:
-        only = set(self._normalized_provider_filter_values(provider_preferences.get("only")))
-        ignore = set(self._normalized_provider_filter_values(provider_preferences.get("ignore")))
+        only = set(
+            self._normalized_provider_filter_values(provider_preferences.get("only"))
+        )
+        ignore = set(
+            self._normalized_provider_filter_values(provider_preferences.get("ignore"))
+        )
         if not only and not ignore:
             return model_targets
 
@@ -1998,9 +2088,7 @@ class BackendProxy:
         if len(model_targets) <= 1 or not provider_preferences:
             return model_targets
 
-        order_index = self._provider_order_index_map(
-            provider_preferences.get("order")
-        )
+        order_index = self._provider_order_index_map(provider_preferences.get("order"))
         sort_by = str(provider_preferences.get("sort") or "").strip().lower()
         if sort_by not in {"price", "latency", "throughput"}:
             sort_by = ""
@@ -2107,8 +2195,12 @@ class BackendProxy:
         rejected: dict[str, list[str]] = {}
         for target in candidate_targets:
             metadata = self._target_metadata(target)
-            supported = self._normalize_parameter_set(metadata.get("supported_parameters"))
-            unsupported = self._normalize_parameter_set(metadata.get("unsupported_parameters"))
+            supported = self._normalize_parameter_set(
+                metadata.get("supported_parameters")
+            )
+            unsupported = self._normalize_parameter_set(
+                metadata.get("unsupported_parameters")
+            )
 
             reasons: list[str] = []
             if supported:
@@ -2145,7 +2237,9 @@ class BackendProxy:
         if not isinstance(costs, dict):
             return float("inf")
         input_cost = self._as_non_negative_float(costs.get("input_per_1k"), default=0.0)
-        output_cost = self._as_non_negative_float(costs.get("output_per_1k"), default=0.0)
+        output_cost = self._as_non_negative_float(
+            costs.get("output_per_1k"), default=0.0
+        )
         if input_cost <= 0.0 and output_cost <= 0.0:
             return float("inf")
         return input_cost + output_cost
@@ -2162,7 +2256,9 @@ class BackendProxy:
         metadata = self._target_metadata(target)
         priors = metadata.get("priors")
         if isinstance(priors, dict):
-            throughput = self._as_non_negative_float(priors.get("throughput_tps"), default=0.0)
+            throughput = self._as_non_negative_float(
+                priors.get("throughput_tps"), default=0.0
+            )
             if throughput > 0.0:
                 return throughput
 
@@ -2241,13 +2337,16 @@ class BackendProxy:
         lock = self._oauth_refresh_locks.setdefault(account.name, asyncio.Lock())
         async with lock:
             current = self._oauth_runtime.get(account.name) or fallback_state
-            if current and current.access_token and not _is_token_expiring(current.expires_at):
+            if (
+                current
+                and current.access_token
+                and not _is_token_expiring(current.expires_at)
+            ):
                 return current
 
             refresh_token = (
-                (current.refresh_token if current else None)
-                or account.resolved_oauth_refresh_token()
-            )
+                current.refresh_token if current else None
+            ) or account.resolved_oauth_refresh_token()
             if not refresh_token:
                 logger.warning(
                     "oauth_refresh_skipped account=%s reason=missing_refresh_token",
@@ -2255,7 +2354,9 @@ class BackendProxy:
                 )
                 return current
 
-            logger.info("oauth_refresh_start account=%s token_url=%s", account.name, token_url)
+            logger.info(
+                "oauth_refresh_start account=%s token_url=%s", account.name, token_url
+            )
             payload: dict[str, str] = {
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
@@ -2274,7 +2375,9 @@ class BackendProxy:
                     headers={"Accept": "application/json"},
                 )
             except httpx.RequestError:
-                logger.warning("oauth_refresh_error account=%s reason=request_error", account.name)
+                logger.warning(
+                    "oauth_refresh_error account=%s reason=request_error", account.name
+                )
                 return current
 
             if response.status_code >= 400:
@@ -2288,7 +2391,9 @@ class BackendProxy:
             try:
                 body = response.json()
             except ValueError:
-                logger.warning("oauth_refresh_error account=%s reason=invalid_json", account.name)
+                logger.warning(
+                    "oauth_refresh_error account=%s reason=invalid_json", account.name
+                )
                 return current
 
             raw_access = body.get("access_token")
@@ -2365,7 +2470,7 @@ def _is_token_expiring(expires_at: int | None, skew_seconds: int = 60) -> bool:
     return expires_at <= int(time.time()) + skew_seconds
 
 
-def _extract_expires_at(token_response: dict) -> int | None:
+def _extract_expires_at(token_response: dict[str, Any]) -> int | None:
     now = int(time.time())
 
     raw_expires_in = token_response.get("expires_in")
@@ -2412,7 +2517,9 @@ def _extract_chatgpt_account_id(token: str | None) -> str | None:
     return None
 
 
-def _parse_retry_after_seconds(headers: httpx.Headers, default_seconds: float = 30.0) -> float:
+def _parse_retry_after_seconds(
+    headers: httpx.Headers, default_seconds: float = 30.0
+) -> float:
     raw = headers.get("retry-after")
     if not raw:
         return default_seconds
@@ -2434,7 +2541,7 @@ def _parse_retry_after_seconds(headers: httpx.Headers, default_seconds: float = 
             retry_dt = retry_dt.replace(tzinfo=timezone.utc)
         delta = (retry_dt - datetime.now(timezone.utc)).total_seconds()
         if delta > 0:
-            return delta
+            return float(delta)
     except Exception:
         pass
 

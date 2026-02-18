@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, cast
 
 import yaml
 
@@ -192,7 +192,9 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
         else:
             selected_model = str(scored[0]["model"])
             fallback_chain = [
-                str(item["model"]) for item in scored[1:] if str(item["model"]) != selected_model
+                str(item["model"])
+                for item in scored[1:]
+                if str(item["model"]) != selected_model
             ]
             learned_summary = scored if args.debug else scored[:3]
 
@@ -233,7 +235,11 @@ def _extract_guardrail_entries(
         if not isinstance(entry, dict):
             continue
         context = str(entry.get("context") or "")
-        if task in context or context.startswith("fallback_models") or context == "default_model":
+        if (
+            task in context
+            or context.startswith("fallback_models")
+            or context == "default_model"
+        ):
             output.append(entry)
     return output
 
@@ -295,7 +301,9 @@ def _load_or_init_profile_payload(path: Path) -> dict[str, Any]:
     return profile.model_dump(mode="python")
 
 
-def _upsert_profile_account(profile_payload: dict[str, Any], account_payload: dict[str, Any]) -> None:
+def _upsert_profile_account(
+    profile_payload: dict[str, Any], account_payload: dict[str, Any]
+) -> None:
     accounts = profile_payload.setdefault("accounts", [])
     if not isinstance(accounts, list):
         raise ValueError("Invalid profile format: 'accounts' must be a list.")
@@ -310,14 +318,18 @@ def _upsert_profile_account(profile_payload: dict[str, Any], account_payload: di
         if str(entry.get("name") or "").strip() == target_name:
             merged = dict(entry)
             merged.update(account_payload)
-            merged["models"] = _dedupe([str(m).strip() for m in merged.get("models", []) if str(m).strip()])
+            merged["models"] = _dedupe(
+                [str(m).strip() for m in merged.get("models", []) if str(m).strip()]
+            )
             accounts[idx] = merged
             return
 
     accounts.append(account_payload)
 
 
-def _save_profile_payload(path: Path, payload: dict[str, Any], *, dry_run: bool) -> None:
+def _save_profile_payload(
+    path: Path, payload: dict[str, Any], *, dry_run: bool
+) -> None:
     # Compile once as validation gate before writing invalid profile docs.
     compile_profile_document(payload)
     if dry_run:
@@ -436,9 +448,7 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
         print(f"Provider login saved: {args.name} ({provider}/{kind})")
         return 0
 
-    raise ValueError(
-        f"Unsupported --kind '{kind}'. Supported kinds: chatgpt, apikey."
-    )
+    raise ValueError(f"Unsupported --kind '{kind}'. Supported kinds: chatgpt, apikey.")
 
 
 def cmd_catalog_sync(args: argparse.Namespace) -> int:
@@ -523,17 +533,27 @@ def build_parser() -> argparse.ArgumentParser:
     explain_cmd.add_argument("--debug", action="store_true")
     explain_cmd.set_defaults(handler=cmd_explain_route)
 
-    profile_cmd = subparsers.add_parser("profile", help="Inspect built-in profile templates.")
-    profile_subparsers = profile_cmd.add_subparsers(dest="profile_command", required=True)
+    profile_cmd = subparsers.add_parser(
+        "profile", help="Inspect built-in profile templates."
+    )
+    profile_subparsers = profile_cmd.add_subparsers(
+        dest="profile_command", required=True
+    )
 
-    profile_list_cmd = profile_subparsers.add_parser("list", help="List built-in profiles.")
+    profile_list_cmd = profile_subparsers.add_parser(
+        "list", help="List built-in profiles."
+    )
     profile_list_cmd.set_defaults(handler=cmd_profile_list)
 
-    profile_show_cmd = profile_subparsers.add_parser("show", help="Show one profile template.")
+    profile_show_cmd = profile_subparsers.add_parser(
+        "show", help="Show one profile template."
+    )
     profile_show_cmd.add_argument("name")
     profile_show_cmd.set_defaults(handler=cmd_profile_show)
 
-    show_cmd = subparsers.add_parser("show", help="Show concise summary for router config.")
+    show_cmd = subparsers.add_parser(
+        "show", help="Show concise summary for router config."
+    )
     show_cmd.add_argument("--path", default="router.profile.yaml")
     show_cmd.set_defaults(handler=cmd_config_show)
 
@@ -541,7 +561,9 @@ def build_parser() -> argparse.ArgumentParser:
         "provider",
         help="Provider-level setup/login workflow.",
     )
-    provider_subparsers = provider_cmd.add_subparsers(dest="provider_command", required=True)
+    provider_subparsers = provider_cmd.add_subparsers(
+        dest="provider_command", required=True
+    )
 
     provider_login_cmd = provider_subparsers.add_parser(
         "login",
@@ -573,19 +595,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     provider_login_cmd.add_argument("--path", default="router.profile.yaml")
     provider_login_cmd.add_argument("--dry-run", action="store_true")
-    provider_login_cmd.add_argument("--name", required=True, help="Account name (required).")
+    provider_login_cmd.add_argument(
+        "--name", required=True, help="Account name (required)."
+    )
     provider_login_cmd.add_argument("--models")
     provider_login_cmd.add_argument("--apikey", dest="api_key")
     provider_login_cmd.add_argument("--api-key-env", dest="api_key_env")
     provider_login_cmd.add_argument("--apikey-env", dest="api_key_env")
-    provider_login_cmd.add_argument("--set-default", dest="set_default", action="store_true")
-    provider_login_cmd.add_argument("--no-set-default", dest="set_default", action="store_false")
+    provider_login_cmd.add_argument(
+        "--set-default", dest="set_default", action="store_true"
+    )
+    provider_login_cmd.add_argument(
+        "--no-set-default", dest="set_default", action="store_false"
+    )
     provider_login_cmd.set_defaults(set_default=True)
-    provider_login_cmd.add_argument("--client-id", default="app_EMoamEEZ73f0CkXaXp7hrann")
-    provider_login_cmd.add_argument("--authorize-url", default="https://auth.openai.com/oauth/authorize")
-    provider_login_cmd.add_argument("--token-url", default="https://auth.openai.com/oauth/token")
-    provider_login_cmd.add_argument("--redirect-uri", default="http://localhost:1455/auth/callback")
-    provider_login_cmd.add_argument("--scope", default="openid profile email offline_access")
+    provider_login_cmd.add_argument(
+        "--client-id", default="app_EMoamEEZ73f0CkXaXp7hrann"
+    )
+    provider_login_cmd.add_argument(
+        "--authorize-url", default="https://auth.openai.com/oauth/authorize"
+    )
+    provider_login_cmd.add_argument(
+        "--token-url", default="https://auth.openai.com/oauth/token"
+    )
+    provider_login_cmd.add_argument(
+        "--redirect-uri", default="http://localhost:1455/auth/callback"
+    )
+    provider_login_cmd.add_argument(
+        "--scope", default="openid profile email offline_access"
+    )
     provider_login_cmd.add_argument("--originator", default="pi")
     provider_login_cmd.add_argument("--manual-code")
     provider_login_cmd.add_argument("--timeout-seconds", type=int, default=180)
@@ -597,7 +635,9 @@ def build_parser() -> argparse.ArgumentParser:
         "catalog",
         help="Catalog maintenance commands.",
     )
-    catalog_subparsers = catalog_cmd.add_subparsers(dest="catalog_command", required=True)
+    catalog_subparsers = catalog_cmd.add_subparsers(
+        dest="catalog_command", required=True
+    )
 
     catalog_sync_cmd = catalog_subparsers.add_parser(
         "sync",
@@ -628,9 +668,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    handler = cast(Callable[[argparse.Namespace], int], args.handler)
 
     try:
-        return args.handler(args)
+        return handler(args)
     except Exception as exc:  # pragma: no cover - covered via CLI tests
         parser.exit(2, f"error: {exc}\n")
 

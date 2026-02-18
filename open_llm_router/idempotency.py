@@ -209,7 +209,12 @@ class RedisAsyncKeyValueStore:
         self._redis = redis_client
 
     async def get(self, key: str) -> bytes | str | None:
-        return await self._redis.get(key)
+        value = await self._redis.get(key)
+        if value is None:
+            return None
+        if isinstance(value, (bytes, str)):
+            return value
+        return None
 
     async def set(self, key: str, value: str, ttl_seconds: int) -> None:
         await self._redis.set(key, value, ex=ttl_seconds)
@@ -272,6 +277,8 @@ def build_idempotency_cache_key(
     payload: dict[str, Any],
 ) -> str:
     # Use a fixed-size fingerprint to avoid oversized cache keys and reduce key serialization overhead.
-    canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    canonical_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    )
     payload_fingerprint = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
     return f"{tenant_id}|{path}|{idempotency_key}|sha256:{payload_fingerprint}"

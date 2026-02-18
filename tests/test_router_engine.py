@@ -1,6 +1,6 @@
-from open_llm_router.config import RoutingConfig
 import pytest
 
+from open_llm_router.config import RoutingConfig
 from open_llm_router.router_engine import (
     InvalidModelError,
     RoutingConstraintError,
@@ -12,7 +12,11 @@ def _router() -> SmartModelRouter:
     config = RoutingConfig.model_validate(
         {
             "default_model": "general-14b",
-            "complexity": {"low_max_chars": 100, "medium_max_chars": 500, "high_max_chars": 2000},
+            "complexity": {
+                "low_max_chars": 100,
+                "medium_max_chars": 500,
+                "high_max_chars": 2000,
+            },
             "task_routes": {
                 "general": {
                     "low": "general-7b",
@@ -41,7 +45,7 @@ def _router() -> SmartModelRouter:
     return SmartModelRouter(config)
 
 
-def test_respects_explicit_model():
+def test_respects_explicit_model() -> None:
     router = _router()
     payload = {
         "model": "code-14b",
@@ -53,7 +57,7 @@ def test_respects_explicit_model():
     assert decision.task == "explicit"
 
 
-def test_rejects_unknown_explicit_model():
+def test_rejects_unknown_explicit_model() -> None:
     router = _router()
     payload = {
         "model": "my-custom-model",
@@ -65,12 +69,16 @@ def test_rejects_unknown_explicit_model():
     assert "not configured" in str(exc.value)
 
 
-def test_respects_explicit_provider_qualified_model():
+def test_respects_explicit_provider_qualified_model() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "general-14b",
             "models": ["openai-codex/gpt-5.2-codex", "general-14b"],
-            "complexity": {"low_max_chars": 100, "medium_max_chars": 500, "high_max_chars": 2000},
+            "complexity": {
+                "low_max_chars": 100,
+                "medium_max_chars": 500,
+                "high_max_chars": 2000,
+            },
             "task_routes": {},
             "fallback_models": ["general-14b", "general-32b"],
         }
@@ -85,7 +93,7 @@ def test_respects_explicit_provider_qualified_model():
     assert decision.source == "request"
 
 
-def test_treats_openrouter_auto_alias_as_auto_routing():
+def test_treats_openrouter_auto_alias_as_auto_routing() -> None:
     router = _router()
     payload = {
         "model": "openrouter/auto",
@@ -97,7 +105,7 @@ def test_treats_openrouter_auto_alias_as_auto_routing():
     assert decision.selected_model == "general-7b"
 
 
-def test_allowed_models_filters_auto_route_candidates():
+def test_allowed_models_filters_auto_route_candidates() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "openai-codex/gpt-5.2-codex",
@@ -124,7 +132,7 @@ def test_allowed_models_filters_auto_route_candidates():
     assert decision.selected_model == "gemini/gemini-2.5-flash"
 
 
-def test_allowed_models_rejects_explicit_model_when_disallowed():
+def test_allowed_models_rejects_explicit_model_when_disallowed() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "openai-codex/gpt-5.2-codex",
@@ -147,7 +155,7 @@ def test_allowed_models_rejects_explicit_model_when_disallowed():
     assert exc.value.constraint == "allowed_models"
 
 
-def test_allowed_models_raises_when_no_auto_candidates_match():
+def test_allowed_models_raises_when_no_auto_candidates_match() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "openai-codex/gpt-5.2-codex",
@@ -175,7 +183,7 @@ def test_allowed_models_raises_when_no_auto_candidates_match():
     assert exc.value.constraint == "allowed_models"
 
 
-def test_provider_preferences_are_carried_in_route_decision():
+def test_provider_preferences_are_carried_in_route_decision() -> None:
     router = _router()
     payload = {
         "model": "auto",
@@ -202,7 +210,7 @@ def test_provider_preferences_are_carried_in_route_decision():
     }
 
 
-def test_routes_auto_coding_request():
+def test_routes_auto_coding_request() -> None:
     router = _router()
     payload = {
         "model": "auto",
@@ -219,11 +227,15 @@ def test_routes_auto_coding_request():
     assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
 
 
-def test_routes_auto_coding_request_prefers_multi_model_route_order():
+def test_routes_auto_coding_request_prefers_multi_model_route_order() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "general-14b",
-            "complexity": {"low_max_chars": 100, "medium_max_chars": 500, "high_max_chars": 2000},
+            "complexity": {
+                "low_max_chars": 100,
+                "medium_max_chars": 500,
+                "high_max_chars": 2000,
+            },
             "task_routes": {
                 "coding": {
                     "low": ["code-7b", "code-14b"],
@@ -250,7 +262,7 @@ def test_routes_auto_coding_request_prefers_multi_model_route_order():
     assert decision.fallback_models == ["code-14b", "general-14b", "general-32b"]
 
 
-def test_ignores_openclaw_style_system_preamble_for_simple_user_task():
+def test_ignores_openclaw_style_system_preamble_for_simple_user_task() -> None:
     router = _router()
     long_system_prompt = (
         "You are a personal assistant running inside OpenClaw. "
@@ -272,7 +284,7 @@ def test_ignores_openclaw_style_system_preamble_for_simple_user_task():
     assert decision.signals["text_length_total"] > 2000
 
 
-def test_routes_auto_image_request():
+def test_routes_auto_image_request() -> None:
     router = _router()
     payload = {
         "model": "auto",
@@ -291,7 +303,7 @@ def test_routes_auto_image_request():
     assert decision.selected_model == "vision-11b"
 
 
-def test_fallbacks_exclude_selected_model():
+def test_fallbacks_exclude_selected_model() -> None:
     router = _router()
     payload = {"model": "auto", "messages": [{"role": "user", "content": "Hi"}]}
     decision = router.decide(payload, "/v1/chat/completions")
@@ -299,7 +311,7 @@ def test_fallbacks_exclude_selected_model():
     assert "general-7b" not in decision.fallback_models
 
 
-def test_routes_xhigh_for_reasoning_effort_high():
+def test_routes_xhigh_for_reasoning_effort_high() -> None:
     router = _router()
     payload = {
         "model": "auto",
@@ -317,7 +329,7 @@ def test_routes_xhigh_for_reasoning_effort_high():
     assert decision.selected_model == "think-codex"
 
 
-def test_hard_constraints_filter_models_without_required_tool_capability():
+def test_hard_constraints_filter_models_without_required_tool_capability() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "text-model",
@@ -348,7 +360,7 @@ def test_hard_constraints_filter_models_without_required_tool_capability():
     assert decision.selected_model == "tool-model"
 
 
-def test_hard_constraints_filter_models_that_exceed_output_token_limit():
+def test_hard_constraints_filter_models_that_exceed_output_token_limit() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "small-model",
@@ -380,7 +392,7 @@ def test_hard_constraints_filter_models_that_exceed_output_token_limit():
     assert decision.selected_model == "large-model"
 
 
-def test_hard_constraints_filter_models_without_enabled_account_support():
+def test_hard_constraints_filter_models_without_enabled_account_support() -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "supported-model",
@@ -430,7 +442,7 @@ def test_hard_constraints_filter_models_without_enabled_account_support():
     )
 
 
-def test_classifier_uses_recent_user_window_instead_of_full_history():
+def test_classifier_uses_recent_user_window_instead_of_full_history() -> None:
     router = _router()
     very_long_old_message = "reason analyze architect design plan " * 120
     messages = [{"role": "user", "content": very_long_old_message} for _ in range(30)]

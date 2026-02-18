@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -8,17 +9,17 @@ import open_llm_router.router_cli as router_cli
 from open_llm_router.router_cli import main
 
 
-def _load(path: Path) -> dict:
+def _load(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
 
 
-def _save(path: Path, payload: dict) -> None:
+def _save(path: Path, payload: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, sort_keys=False)
 
 
-def test_router_cli_init_compile_validate(tmp_path):
+def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     effective_path = tmp_path / "router.effective.yaml"
 
@@ -50,10 +51,13 @@ def test_router_cli_init_compile_validate(tmp_path):
 
     effective_payload = _load(effective_path)
     assert effective_payload["accounts"][0]["provider"] == "openai-codex"
-    assert effective_payload["accounts"][0]["base_url"] == "https://chatgpt.com/backend-api"
+    assert (
+        effective_payload["accounts"][0]["base_url"]
+        == "https://chatgpt.com/backend-api"
+    )
 
 
-def test_router_cli_profile_commands_and_explain(tmp_path, capsys):
+def test_router_cli_profile_commands_and_explain(tmp_path: Any, capsys: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert main(["init", "--profile", "balanced", "--path", str(profile_path)]) == 0
 
@@ -86,7 +90,7 @@ def test_router_cli_profile_commands_and_explain(tmp_path, capsys):
     assert "fallback_chain" in explain_out
 
 
-def test_router_cli_show_reads_profile_config(tmp_path, capsys):
+def test_router_cli_show_reads_profile_config(tmp_path: Any, capsys: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert main(["init", "--profile", "auto", "--path", str(profile_path)]) == 0
     assert main(["show", "--path", str(profile_path)]) == 0
@@ -95,7 +99,9 @@ def test_router_cli_show_reads_profile_config(tmp_path, capsys):
     assert "learned_enabled" in output
 
 
-def test_router_provider_login_openai_chatgpt_writes_profile(monkeypatch, tmp_path):
+def test_router_provider_login_openai_chatgpt_writes_profile(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     fake_oauth = {
         "oauth_access_token": "access-1",
@@ -105,7 +111,9 @@ def test_router_provider_login_openai_chatgpt_writes_profile(monkeypatch, tmp_pa
         "oauth_client_id": "client-1",
         "oauth_token_url": "https://auth.openai.com/oauth/token",
     }
-    monkeypatch.setattr(router_cli, "_run_chatgpt_oauth_login_flow", lambda _args: fake_oauth)
+    monkeypatch.setattr(
+        router_cli, "_run_chatgpt_oauth_login_flow", lambda _args: fake_oauth
+    )
 
     assert (
         main(
@@ -133,7 +141,7 @@ def test_router_provider_login_openai_chatgpt_writes_profile(monkeypatch, tmp_pa
     assert payload["raw_overrides"]["default_model"] == "openai-codex/gpt-5.2"
 
 
-def test_router_provider_login_openai_apikey_writes_profile(tmp_path):
+def test_router_provider_login_openai_apikey_writes_profile(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -158,7 +166,7 @@ def test_router_provider_login_openai_apikey_writes_profile(tmp_path):
     assert account["api_key_env"] == "OPENAI_API_KEY"
 
 
-def test_router_provider_login_gemini_defaults_to_apikey(tmp_path):
+def test_router_provider_login_gemini_defaults_to_apikey(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -181,7 +189,7 @@ def test_router_provider_login_gemini_defaults_to_apikey(tmp_path):
     assert account["api_key_env"] == "GEMINI_API_KEY"
 
 
-def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path):
+def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -206,7 +214,7 @@ def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path):
     assert "nvidia/moonshotai/kimi-k2.5" in account["models"]
 
 
-def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path):
+def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -233,7 +241,7 @@ def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path):
     assert "api_key_env" not in account
 
 
-def test_router_provider_login_accepts_apikey_env_alias(tmp_path):
+def test_router_provider_login_accepts_apikey_env_alias(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -256,7 +264,7 @@ def test_router_provider_login_accepts_apikey_env_alias(tmp_path):
     assert account["api_key_env"] == "MY_GEMINI_KEY"
 
 
-def test_router_provider_login_accepts_gemeni_alias(tmp_path):
+def test_router_provider_login_accepts_gemeni_alias(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -277,7 +285,7 @@ def test_router_provider_login_accepts_gemeni_alias(tmp_path):
     assert account["provider"] == "gemini"
 
 
-def test_router_provider_login_accepts_nim_alias(tmp_path):
+def test_router_provider_login_accepts_nim_alias(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
         main(
@@ -298,24 +306,44 @@ def test_router_provider_login_accepts_nim_alias(tmp_path):
     assert account["provider"] == "nvidia"
 
 
-def test_provider_login_rejects_raw_schema_path(tmp_path):
+def test_provider_login_rejects_raw_schema_path(tmp_path: Any) -> None:
     raw_path = tmp_path / "router.yaml"
-    _save(raw_path, {"default_model": "openai/gpt-5.2", "task_routes": {"general": {"default": ["openai/gpt-5.2"]}}})
+    _save(
+        raw_path,
+        {
+            "default_model": "openai/gpt-5.2",
+            "task_routes": {"general": {"default": ["openai/gpt-5.2"]}},
+        },
+    )
     try:
-        main(["provider", "login", "gemini", "--name", "gemini-work", "--path", str(raw_path)])
+        main(
+            [
+                "provider",
+                "login",
+                "gemini",
+                "--name",
+                "gemini-work",
+                "--path",
+                str(raw_path),
+            ]
+        )
     except SystemExit as exc:
         assert exc.code == 2
     else:  # pragma: no cover
-        raise AssertionError("Expected failure when provider login is pointed at raw schema file")
+        raise AssertionError(
+            "Expected failure when provider login is pointed at raw schema file"
+        )
 
 
-def test_removed_old_top_level_login_commands():
+def test_removed_old_top_level_login_commands() -> None:
     try:
         main(["login-chatgpt"])
     except SystemExit as exc:
         assert exc.code == 2
     else:  # pragma: no cover
-        raise AssertionError("Expected parser failure for removed command login-chatgpt")
+        raise AssertionError(
+            "Expected parser failure for removed command login-chatgpt"
+        )
 
     try:
         main(["add-account", "--models", "openai/gpt-5.2"])
@@ -325,7 +353,7 @@ def test_removed_old_top_level_login_commands():
         raise AssertionError("Expected parser failure for removed command add-account")
 
 
-def test_provider_login_requires_name():
+def test_provider_login_requires_name() -> None:
     try:
         main(["provider", "login", "gemini"])
     except SystemExit as exc:
@@ -334,7 +362,7 @@ def test_provider_login_requires_name():
         raise AssertionError("Expected parser failure when --name is omitted")
 
 
-def test_provider_login_rejects_apikey_and_api_key_env_together():
+def test_provider_login_rejects_apikey_and_api_key_env_together() -> None:
     try:
         main(
             [
@@ -352,10 +380,14 @@ def test_provider_login_rejects_apikey_and_api_key_env_together():
     except SystemExit as exc:
         assert exc.code == 2
     else:  # pragma: no cover
-        raise AssertionError("Expected failure when both --apikey and --api-key-env are set")
+        raise AssertionError(
+            "Expected failure when both --apikey and --api-key-env are set"
+        )
 
 
-def test_catalog_sync_dry_run_does_not_write_catalog(monkeypatch, tmp_path, capsys):
+def test_catalog_sync_dry_run_does_not_write_catalog(
+    monkeypatch: Any, tmp_path: Any, capsys: Any
+) -> None:
     catalog_path = tmp_path / "models.yaml"
     initial_payload = {
         "version": 1,
@@ -403,7 +435,7 @@ def test_catalog_sync_dry_run_does_not_write_catalog(monkeypatch, tmp_path, caps
     assert payload_after == initial_payload
 
 
-def test_catalog_sync_writes_catalog(monkeypatch, tmp_path):
+def test_catalog_sync_writes_catalog(monkeypatch: Any, tmp_path: Any) -> None:
     catalog_path = tmp_path / "models.yaml"
     _save(
         catalog_path,

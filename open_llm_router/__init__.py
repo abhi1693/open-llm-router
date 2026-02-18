@@ -1,2 +1,1 @@
 """Smart model router package."""
-

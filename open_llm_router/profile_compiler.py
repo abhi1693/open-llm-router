@@ -11,6 +11,7 @@ import yaml
 from open_llm_router.catalog import (
     CatalogLookupError,
     CatalogValidationError,
+    ModelCatalogEntry,
     RouterCatalog,
     load_internal_catalog,
     validate_routing_document_against_catalog,
@@ -19,7 +20,6 @@ from open_llm_router.profile_config import (
     GuardrailThresholds,
     RouterProfileConfig,
 )
-
 
 DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
 DEFAULT_COMPLEXITY = {
@@ -332,14 +332,16 @@ def _align_routing_to_enabled_accounts(
     if not available_models:
         return
 
-    available = sorted(_dedupe(available_models))
+    available = sorted(_dedupe(list(available_models)))
     available_set = set(available)
     alignment_notes: list[dict[str, Any]] = []
 
     models_map = effective.get("models")
     if isinstance(models_map, dict):
         for model in list(models_map.keys()):
-            canonical = model if model in available_set else catalog.resolve_model_id(model)
+            canonical = (
+                model if model in available_set else catalog.resolve_model_id(model)
+            )
             if canonical not in available_set:
                 models_map.pop(model, None)
                 alignment_notes.append({"context": "models", "removed": model})
@@ -347,7 +349,9 @@ def _align_routing_to_enabled_accounts(
     model_profiles = effective.get("model_profiles")
     if isinstance(model_profiles, dict):
         for model in list(model_profiles.keys()):
-            canonical = model if model in available_set else catalog.resolve_model_id(model)
+            canonical = (
+                model if model in available_set else catalog.resolve_model_id(model)
+            )
             if canonical not in available_set:
                 model_profiles.pop(model, None)
                 alignment_notes.append({"context": "model_profiles", "removed": model})
@@ -516,11 +520,13 @@ def _suggest_models_for_task_tier(
 def _metadata_score_for_task_tier(
     *,
     model: str,
-    entry,
+    entry: ModelCatalogEntry,
     task: str,
     tier: str,
 ) -> float:
-    capabilities = {item.strip().lower() for item in entry.capabilities if isinstance(item, str)}
+    capabilities = {
+        item.strip().lower() for item in entry.capabilities if isinstance(item, str)
+    }
     affinity = _task_affinity_score(
         model=model,
         task=task,
@@ -530,9 +536,13 @@ def _metadata_score_for_task_tier(
     )
 
     model_tier = _tier_rank(entry.tier, entry.priors.quality_bias)
-    target_tier = {"low": 0.0, "medium": 1.0, "default": 1.0, "high": 2.0, "xhigh": 3.0}.get(
-        tier, 1.0
-    )
+    target_tier = {
+        "low": 0.0,
+        "medium": 1.0,
+        "default": 1.0,
+        "high": 2.0,
+        "xhigh": 3.0,
+    }.get(tier, 1.0)
     tier_bonus = 0.35 - 0.12 * abs(model_tier - target_tier)
 
     quality_component = float(entry.priors.quality_bias) * (
@@ -553,7 +563,14 @@ def _metadata_score_for_task_tier(
         latency_penalty = float(entry.priors.latency_ms) / 7000.0
 
     failure_penalty = float(entry.priors.failure_rate) * 4.0
-    return (affinity * 2.0) + tier_bonus + quality_component - cost_penalty - latency_penalty - failure_penalty
+    return (
+        (affinity * 2.0)
+        + tier_bonus
+        + quality_component
+        - cost_penalty
+        - latency_penalty
+        - failure_penalty
+    )
 
 
 def _task_affinity_score(
@@ -782,7 +799,7 @@ def _prune_models(
 
 
 def _guardrail_reasons(
-    entry,
+    entry: ModelCatalogEntry,
     thresholds: GuardrailThresholds,
 ) -> list[str]:
     reasons: list[str] = []
@@ -796,7 +813,10 @@ def _guardrail_reasons(
         and entry.costs.output_per_1k > thresholds.max_cost_output_per_1k
     ):
         reasons.append("violated_max_cost_output_per_1k")
-    if thresholds.max_latency_ms is not None and entry.priors.latency_ms > thresholds.max_latency_ms:
+    if (
+        thresholds.max_latency_ms is not None
+        and entry.priors.latency_ms > thresholds.max_latency_ms
+    ):
         reasons.append("violated_max_latency_ms")
     if (
         thresholds.max_failure_rate is not None

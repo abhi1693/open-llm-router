@@ -6,7 +6,7 @@ from open_llm_router.circuit_breaker import (
 )
 
 
-def test_circuit_breaker_opens_after_threshold_and_recovers_to_half_open():
+def test_circuit_breaker_opens_after_threshold_and_recovers_to_half_open() -> None:
     breakers = CircuitBreakerRegistry(
         CircuitBreakerConfig(
             enabled=True,
@@ -29,7 +29,7 @@ def test_circuit_breaker_opens_after_threshold_and_recovers_to_half_open():
     assert snapshot["half_open_in_flight"] == 1
 
 
-def test_circuit_breaker_half_open_success_closes_breaker():
+def test_circuit_breaker_half_open_success_closes_breaker() -> None:
     breakers = CircuitBreakerRegistry(
         CircuitBreakerConfig(
             enabled=True,
@@ -41,7 +41,9 @@ def test_circuit_breaker_half_open_success_closes_breaker():
     key = "acct-b:openai"
 
     breakers.on_failure(key)
-    assert breakers.allow_request(key) is True  # transitions to half-open and allows probe
+    assert (
+        breakers.allow_request(key) is True
+    )  # transitions to half-open and allows probe
     breakers.on_success(key)
 
     snapshot = breakers.snapshot(key)
@@ -50,7 +52,7 @@ def test_circuit_breaker_half_open_success_closes_breaker():
     assert breakers.allow_request(key) is True
 
 
-def test_circuit_breaker_half_open_failure_reopens_breaker():
+def test_circuit_breaker_half_open_failure_reopens_breaker() -> None:
     breakers = CircuitBreakerRegistry(
         CircuitBreakerConfig(
             enabled=True,

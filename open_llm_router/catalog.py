@@ -14,7 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class CatalogValidationError(ValueError):
     def __init__(self, errors: list[str]):
         self.errors = errors
-        message = "Catalog validation failed:\n" + "\n".join(f"- {item}" for item in errors)
+        message = "Catalog validation failed:\n" + "\n".join(
+            f"- {item}" for item in errors
+        )
         super().__init__(message)
 
 
@@ -131,7 +133,9 @@ class RouterCatalog:
         suggestions = _suggest(normalized, self.provider_ids)
         if not suggestions:
             suggestions = self.provider_ids[:3]
-        raise CatalogLookupError(kind="provider", raw_value=provider_id, suggestions=suggestions)
+        raise CatalogLookupError(
+            kind="provider", raw_value=provider_id, suggestions=suggestions
+        )
 
     def get_provider(self, provider_id: str) -> ProviderCatalogEntry:
         canonical = self.resolve_provider_id(provider_id)
@@ -159,8 +163,12 @@ class RouterCatalog:
                 return key
 
             alias_hits = self.alias_index.get(normalized, set())
-            alias_hits |= self.alias_index.get(f"{canonical_provider}/{model_id}", set())
-            alias_hits = {item for item in alias_hits if item.startswith(f"{canonical_provider}/")}
+            alias_hits |= self.alias_index.get(
+                f"{canonical_provider}/{model_id}", set()
+            )
+            alias_hits = {
+                item for item in alias_hits if item.startswith(f"{canonical_provider}/")
+            }
             if len(alias_hits) == 1:
                 return next(iter(alias_hits))
             if len(alias_hits) > 1:
@@ -174,7 +182,9 @@ class RouterCatalog:
             suggestions = _suggest(key, self.model_ids)
             if not suggestions:
                 suggestions = self.model_ids[:3]
-            raise CatalogLookupError(kind="model", raw_value=model_ref, suggestions=suggestions)
+            raise CatalogLookupError(
+                kind="model", raw_value=model_ref, suggestions=suggestions
+            )
 
         if normalized_provider_hint:
             scoped_key = f"{normalized_provider_hint}/{normalized}"
@@ -184,7 +194,9 @@ class RouterCatalog:
         alias_hits = set(self.alias_index.get(normalized, set()))
         if normalized_provider_hint:
             alias_hits = {
-                item for item in alias_hits if item.startswith(f"{normalized_provider_hint}/")
+                item
+                for item in alias_hits
+                if item.startswith(f"{normalized_provider_hint}/")
             }
 
         if len(alias_hits) == 1:
@@ -200,7 +212,9 @@ class RouterCatalog:
         by_suffix = [item for item in self.model_ids if item.endswith(f"/{normalized}")]
         if normalized_provider_hint:
             by_suffix = [
-                item for item in by_suffix if item.startswith(f"{normalized_provider_hint}/")
+                item
+                for item in by_suffix
+                if item.startswith(f"{normalized_provider_hint}/")
             ]
         if len(by_suffix) == 1:
             return by_suffix[0]
@@ -215,9 +229,13 @@ class RouterCatalog:
         suggestions = _suggest(normalized, [*self.model_ids, *self.alias_index.keys()])
         if not suggestions:
             suggestions = self.model_ids[:3]
-        raise CatalogLookupError(kind="model", raw_value=model_ref, suggestions=suggestions)
+        raise CatalogLookupError(
+            kind="model", raw_value=model_ref, suggestions=suggestions
+        )
 
-    def get_model(self, model_ref: str, provider_hint: str | None = None) -> ModelCatalogEntry:
+    def get_model(
+        self, model_ref: str, provider_hint: str | None = None
+    ) -> ModelCatalogEntry:
         canonical = self.resolve_model_id(model_ref, provider_hint=provider_hint)
         return self.models[canonical]
 
@@ -260,18 +278,16 @@ def _build_alias_index(models: dict[str, ModelCatalogEntry]) -> dict[str, set[st
 def _merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
     for key, value in override.items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = _merge_dict(merged[key], value)
         else:
             merged[key] = deepcopy(value)
     return merged
 
 
-def _expand_model_items_with_presets(models_raw: dict[str, Any]) -> list[dict[str, Any]]:
+def _expand_model_items_with_presets(
+    models_raw: dict[str, Any],
+) -> list[dict[str, Any]]:
     raw_models = models_raw.get("models", [])
     if not isinstance(raw_models, list):
         raise ValueError("Expected 'models' list in models catalog.")
@@ -292,7 +308,9 @@ def _expand_model_items_with_presets(models_raw: dict[str, Any]) -> list[dict[st
             expanded.append(current)
             continue
         if not isinstance(preset_name, str) or not preset_name.strip():
-            raise ValueError(f"Expected non-empty string metadata_preset at models[{idx}].")
+            raise ValueError(
+                f"Expected non-empty string metadata_preset at models[{idx}]."
+            )
         preset_key = preset_name.strip()
         preset_payload = raw_presets.get(preset_key)
         if not isinstance(preset_payload, dict):
@@ -316,12 +334,12 @@ def load_internal_catalog() -> RouterCatalog:
 
     model_entries: dict[str, ModelCatalogEntry] = {}
     for item in _expand_model_items_with_presets(models_raw):
-        entry = ModelCatalogEntry.model_validate(item)
-        if entry.provider not in provider_entries:
+        model_entry = ModelCatalogEntry.model_validate(item)
+        if model_entry.provider not in provider_entries:
             raise ValueError(
-                f"Catalog model '{entry.canonical_id}' references unknown provider '{entry.provider}'."
+                f"Catalog model '{model_entry.canonical_id}' references unknown provider '{model_entry.provider}'."
             )
-        model_entries[entry.canonical_id] = entry
+        model_entries[model_entry.canonical_id] = model_entry
 
     alias_index = _build_alias_index(model_entries)
     return RouterCatalog(
@@ -349,17 +367,23 @@ def validate_routing_document_against_catalog(
             provider_value = account.get("provider")
             if isinstance(provider_value, str):
                 try:
-                    account_provider_by_index[idx] = catalog.resolve_provider_id(provider_value)
+                    account_provider_by_index[idx] = catalog.resolve_provider_id(
+                        provider_value
+                    )
                 except CatalogLookupError as exc:
                     errors.append(exc.format_for_path(f"accounts[{idx}].provider"))
 
-    def _validate_model(path: str, value: str, provider_hint: str | None = None) -> None:
+    def _validate_model(
+        path: str, value: str, provider_hint: str | None = None
+    ) -> None:
         try:
             catalog.resolve_model_id(value, provider_hint=provider_hint)
         except CatalogLookupError as exc:
             errors.append(exc.format_for_path(path))
 
-    for path, provider_hint, model_ref in _iter_model_references(raw, account_provider_by_index):
+    for path, provider_hint, model_ref in _iter_model_references(
+        raw, account_provider_by_index
+    ):
         _validate_model(path, model_ref, provider_hint=provider_hint)
 
     if errors:
@@ -409,7 +433,9 @@ def _iter_model_references(
                 elif isinstance(value, list):
                     for idx, model in enumerate(value):
                         if isinstance(model, str) and model.strip():
-                            refs.append((f"task_routes.{task}.{tier}[{idx}]", None, model))
+                            refs.append(
+                                (f"task_routes.{task}.{tier}[{idx}]", None, model)
+                            )
 
     learned = raw.get("learned_routing")
     if isinstance(learned, dict):
@@ -420,7 +446,13 @@ def _iter_model_references(
                     continue
                 for idx, model in enumerate(values):
                     if isinstance(model, str) and model.strip():
-                        refs.append((f"learned_routing.task_candidates.{task}[{idx}]", None, model))
+                        refs.append(
+                            (
+                                f"learned_routing.task_candidates.{task}[{idx}]",
+                                None,
+                                model,
+                            )
+                        )
 
     accounts = raw.get("accounts")
     if isinstance(accounts, list):
@@ -433,6 +465,12 @@ def _iter_model_references(
             provider_hint = account_provider_by_index.get(idx)
             for model_idx, model_ref in enumerate(account_models):
                 if isinstance(model_ref, str) and model_ref.strip():
-                    refs.append((f"accounts[{idx}].models[{model_idx}]", provider_hint, model_ref))
+                    refs.append(
+                        (
+                            f"accounts[{idx}].models[{model_idx}]",
+                            provider_hint,
+                            model_ref,
+                        )
+                    )
 
     return refs

@@ -6,7 +6,7 @@ from open_llm_router.catalog import CatalogValidationError, load_internal_catalo
 from open_llm_router.profile_compiler import compile_profile_document
 
 
-def test_compile_profile_document_produces_effective_routing_config():
+def test_compile_profile_document_produces_effective_routing_config() -> None:
     raw_profile = {
         "schema_version": 1,
         "profile": {
@@ -39,9 +39,7 @@ def test_compile_profile_document_produces_effective_routing_config():
 
     assert effective["default_model"]
     assert effective["accounts"][0]["provider"] == "openai-codex"
-    assert (
-        effective["accounts"][0]["base_url"] == "https://chatgpt.com/backend-api"
-    )
+    assert effective["accounts"][0]["base_url"] == "https://chatgpt.com/backend-api"
     assert "retry_statuses" in effective
     assert "complexity" in effective
     assert "learned_routing" in effective
@@ -49,7 +47,7 @@ def test_compile_profile_document_produces_effective_routing_config():
     assert any(entry.get("context") for entry in result.explain["guardrail_pruned"])
 
 
-def test_compile_profile_document_rejects_unknown_provider():
+def test_compile_profile_document_rejects_unknown_provider() -> None:
     raw_profile = {
         "profile": {"default": "auto"},
         "accounts": [
@@ -68,7 +66,7 @@ def test_compile_profile_document_rejects_unknown_provider():
     assert "Suggested canonical ids" in message
 
 
-def test_compile_profile_document_supports_nvidia_provider_models():
+def test_compile_profile_document_supports_nvidia_provider_models() -> None:
     raw_profile = {
         "schema_version": 1,
         "profile": {"default": "auto"},
@@ -95,7 +93,7 @@ def test_compile_profile_document_supports_nvidia_provider_models():
     assert effective["accounts"][0]["models"] == ["nvidia/z-ai/glm5"]
 
 
-def test_compile_profile_document_supports_nvidia_nested_slash_model_id():
+def test_compile_profile_document_supports_nvidia_nested_slash_model_id() -> None:
     raw_profile = {
         "schema_version": 1,
         "profile": {"default": "auto"},
@@ -119,7 +117,7 @@ def test_compile_profile_document_supports_nvidia_nested_slash_model_id():
     assert effective["accounts"][0]["models"] == ["nvidia/moonshotai/kimi-k2.5"]
 
 
-def test_catalog_metadata_presets_expand_into_model_entries():
+def test_catalog_metadata_presets_expand_into_model_entries() -> None:
     catalog = load_internal_catalog()
     entry = catalog.get_model("openai-codex/gpt-5.2-codex")
 
@@ -130,7 +128,7 @@ def test_catalog_metadata_presets_expand_into_model_entries():
     assert entry.task_affinity.get("coding") == 1.0
 
 
-def test_compile_profile_document_auto_aligns_routes_to_enabled_accounts():
+def test_compile_profile_document_auto_aligns_routes_to_enabled_accounts() -> None:
     raw_profile = {
         "schema_version": 1,
         "profile": {"default": "auto"},
@@ -164,7 +162,7 @@ def test_compile_profile_document_auto_aligns_routes_to_enabled_accounts():
     assert "account_alignment" in result.explain
 
 
-def test_compile_profile_document_defaults_account_models_to_provider_catalog():
+def test_compile_profile_document_defaults_account_models_to_provider_catalog() -> None:
     catalog = load_internal_catalog()
     expected_nvidia = sorted(
         model_id for model_id in catalog.model_ids if model_id.startswith("nvidia/")

@@ -61,7 +61,9 @@ def build_routing_features(
         "has_image": has_image,
         "complexity_score": COMPLEXITY_SCORES.get(complexity, 0.5),
         "max_output_k_tokens": float(max_tokens) / 1000.0,
-        "reasoning_effort_high": 1.0 if reasoning_effort in {"high", "xhigh", "max"} else 0.0,
+        "reasoning_effort_high": (
+            1.0 if reasoning_effort in {"high", "xhigh", "max"} else 0.0
+        ),
         "task_coding": 1.0 if task == "coding" else 0.0,
         "task_thinking": 1.0 if task == "thinking" else 0.0,
         "task_instruction_following": 1.0 if task == "instruction_following" else 0.0,
@@ -82,7 +84,11 @@ def score_model(
     for name, value in features.items():
         weighted_feature_sum += learned_cfg.feature_weights.get(name, 0.0) * value
 
-    z = learned_cfg.bias + profile.quality_bias + profile.quality_sensitivity * weighted_feature_sum
+    z = (
+        learned_cfg.bias
+        + profile.quality_bias
+        + profile.quality_sensitivity * weighted_feature_sum
+    )
     quality_probability = _sigmoid(z)
 
     input_char_count = float(
@@ -95,10 +101,9 @@ def score_model(
     if not isinstance(max_output_tokens, (int, float)) or max_output_tokens <= 0:
         max_output_tokens = float(learned_cfg.default_output_tokens)
 
-    estimated_cost = (
-        (input_tokens / 1000.0) * profile.cost_input_per_1k
-        + (float(max_output_tokens) / 1000.0) * profile.cost_output_per_1k
-    )
+    estimated_cost = (input_tokens / 1000.0) * profile.cost_input_per_1k + (
+        float(max_output_tokens) / 1000.0
+    ) * profile.cost_output_per_1k
 
     utility_penalty = (
         learned_cfg.utility_weights.cost * estimated_cost

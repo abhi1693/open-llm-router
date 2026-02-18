@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from open_llm_router.log_analysis_cli import main, summarize_log
 
 
-def _write_log(path: Path, objects: list[dict], *, pretty_first: bool = True) -> None:
+def _write_log(
+    path: Path, objects: list[dict[str, Any]], *, pretty_first: bool = True
+) -> None:
     parts: list[str] = []
     for idx, obj in enumerate(objects):
         if idx == 0 and pretty_first:
@@ -126,11 +129,15 @@ def test_summarize_log_aggregates_performance_metrics(tmp_path: Path) -> None:
     assert summary["latency"]["connect_ms"]["count"] == 1
     assert summary["latency"]["connect_ms"]["p50"] == 300.0
 
-    start_to_response = summary["latency"]["request_durations"]["proxy_start_to_response_seconds"]
+    start_to_response = summary["latency"]["request_durations"][
+        "proxy_start_to_response_seconds"
+    ]
     assert start_to_response["count"] == 2
     assert start_to_response["p50"] == 2.0
 
-    response_to_result = summary["latency"]["request_durations"]["proxy_response_to_result_seconds"]
+    response_to_result = summary["latency"]["request_durations"][
+        "proxy_response_to_result_seconds"
+    ]
     assert response_to_result["count"] == 1
     assert response_to_result["p50"] == 3.0
 
@@ -193,7 +200,9 @@ def test_main_writes_json_report(tmp_path: Path) -> None:
     assert payload["routing"]["selected_models"]["gemini/gemini-2.5-flash-lite"] == 1
 
 
-def test_consistency_prefers_runtime_selected_model_from_proxy_start(tmp_path: Path) -> None:
+def test_consistency_prefers_runtime_selected_model_from_proxy_start(
+    tmp_path: Path,
+) -> None:
     log_path = tmp_path / "router_decisions.jsonl"
     _write_log(
         log_path,

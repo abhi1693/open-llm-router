@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 from open_llm_router.catalog_sync import sync_catalog_models_pricing
 
 
-def test_sync_catalog_models_pricing_updates_using_provider_aliases():
-    catalog_document = {
+def test_sync_catalog_models_pricing_updates_using_provider_aliases() -> None:
+    catalog_document: dict[str, Any] = {
         "version": 1,
         "models": [
             {
@@ -21,7 +23,7 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases():
             },
         ],
     }
-    openrouter_models = [
+    openrouter_models: list[dict[str, Any]] = [
         {
             "id": "openai/gpt-5.2",
             "pricing": {"prompt": "0.0000019", "completion": "0.0000067"},
@@ -54,8 +56,10 @@ def test_sync_catalog_models_pricing_updates_using_provider_aliases():
     assert models[1]["created"] == 1770000002
 
 
-def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing():
-    catalog_document = {
+def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing() -> (
+    None
+):
+    catalog_document: dict[str, Any] = {
         "version": 1,
         "models": [
             {
@@ -72,7 +76,7 @@ def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing()
             },
         ],
     }
-    openrouter_models = [
+    openrouter_models: list[dict[str, Any]] = [
         {"id": "openai/model-a", "pricing": {"prompt": "0.000001"}},
     ]
 
@@ -88,8 +92,8 @@ def test_sync_catalog_models_pricing_tracks_missing_remote_and_missing_pricing()
     assert stats.missing_pricing == 1
 
 
-def test_sync_catalog_models_pricing_updates_created_when_pricing_missing():
-    catalog_document = {
+def test_sync_catalog_models_pricing_updates_created_when_pricing_missing() -> None:
+    catalog_document: dict[str, Any] = {
         "version": 1,
         "models": [
             {
@@ -100,8 +104,12 @@ def test_sync_catalog_models_pricing_updates_created_when_pricing_missing():
             },
         ],
     }
-    openrouter_models = [
-        {"id": "openai/model-a", "pricing": {"prompt": "0.000001"}, "created": 1770000004},
+    openrouter_models: list[dict[str, Any]] = [
+        {
+            "id": "openai/model-a",
+            "pricing": {"prompt": "0.000001"},
+            "created": 1770000004,
+        },
     ]
 
     stats = sync_catalog_models_pricing(

@@ -80,7 +80,9 @@ def _extract_reasoning_effort(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _collect_text_and_signals(value: Any, parent_key: str, texts: list[str], signals: dict[str, Any]) -> None:
+def _collect_text_and_signals(
+    value: Any, parent_key: str, texts: list[str], signals: dict[str, Any]
+) -> None:
     if value is None:
         return
 
@@ -110,7 +112,9 @@ def _collect_text_and_signals(value: Any, parent_key: str, texts: list[str], sig
             _collect_text_and_signals(child, key, texts, signals)
 
 
-def _collect_user_message_texts(payload: dict[str, Any], signals: dict[str, Any]) -> list[str]:
+def _collect_user_message_texts(
+    payload: dict[str, Any], signals: dict[str, Any]
+) -> list[str]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
         return []
@@ -122,7 +126,9 @@ def _collect_user_message_texts(payload: dict[str, Any], signals: dict[str, Any]
         role = message.get("role")
         if not isinstance(role, str) or role.lower().strip() != "user":
             continue
-        _collect_text_and_signals(message.get("content"), "content", user_texts, signals)
+        _collect_text_and_signals(
+            message.get("content"), "content", user_texts, signals
+        )
     return user_texts
 
 
@@ -164,7 +170,9 @@ def classify_request(
 
     matched_code_hints = [hint for hint in CODE_HINTS if hint in text_lower]
     matched_thinking_hints = [hint for hint in THINKING_HINTS if hint in text_lower]
-    matched_instruction_hints = [hint for hint in INSTRUCTION_HINTS if hint in text_lower]
+    matched_instruction_hints = [
+        hint for hint in INSTRUCTION_HINTS if hint in text_lower
+    ]
 
     code_score = len(matched_code_hints)
     think_score = len(matched_thinking_hints)
@@ -208,7 +216,11 @@ def classify_request(
         complexity_adjustments.append("bump:think_score>=4")
     # Avoid escalating short coding prompts too aggressively; keep low-tier routing for
     # concise requests and reserve medium-tier bumps for longer prompts.
-    if task == "coding" and complexity == "low" and text_length > int(complexity_cfg.low_max_chars * 0.8):
+    if (
+        task == "coding"
+        and complexity == "low"
+        and text_length > int(complexity_cfg.low_max_chars * 0.8)
+    ):
         complexity = "medium"
         complexity_adjustments.append("set:low->medium_for_coding_mid_length")
     if reasoning_effort in {"high", "xhigh", "max"}:

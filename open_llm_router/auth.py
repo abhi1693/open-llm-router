@@ -8,6 +8,7 @@ import jwt
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from jwt import InvalidTokenError, PyJWKClient
+from jwt.types import Options
 
 from open_llm_router.settings import Settings
 
@@ -58,7 +59,7 @@ class OAuthVerifier:
                 raise AuthConfigurationError("OAuth verifier is missing a JWKS client.")
             signing_key = self.jwks_client.get_signing_key_from_jwt(token).key
 
-        options = {"verify_aud": self.audience is not None}
+        options: Options = {"verify_aud": self.audience is not None}
         claims = jwt.decode(
             token,
             signing_key,
@@ -74,8 +75,15 @@ class OAuthVerifier:
             missing = sorted(self.required_scopes - scopes)
             raise InvalidTokenError(f"Missing required scopes: {', '.join(missing)}")
 
-        principal = str(claims.get("sub") or claims.get("email") or claims.get("client_id") or "oauth-user")
-        return AuthResult(method="oauth", principal=principal, scopes=scopes, claims=claims)
+        principal = str(
+            claims.get("sub")
+            or claims.get("email")
+            or claims.get("client_id")
+            or "oauth-user"
+        )
+        return AuthResult(
+            method="oauth", principal=principal, scopes=scopes, claims=claims
+        )
 
 
 class Authenticator:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -9,18 +10,18 @@ import yaml
 from open_llm_router.config_cli import main
 
 
-def _load(path: Path) -> dict:
+def _load(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
 
 
-def _save(path: Path, data: dict) -> None:
+def _save(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, sort_keys=False)
 
 
-def test_cli_add_account_and_route(tmp_path):
+def test_cli_add_account_and_route(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
 
     assert (
@@ -72,7 +73,7 @@ def test_cli_add_account_and_route(tmp_path):
     assert config["models"]["openai/gpt-5.2"]["id"] == "gpt-5.2"
 
 
-def test_cli_set_route_accepts_multiple_models(tmp_path):
+def test_cli_set_route_accepts_multiple_models(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
     assert (
         main(
@@ -117,7 +118,7 @@ def test_cli_set_route_accepts_multiple_models(tmp_path):
     assert config["task_routes"]["coding"]["medium"] == ["m-1", "m-2", "m-3"]
 
 
-def test_cli_set_route_accepts_provider_qualified_models(tmp_path):
+def test_cli_set_route_accepts_provider_qualified_models(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
 
     assert (
@@ -148,7 +149,7 @@ def test_cli_set_route_accepts_provider_qualified_models(tmp_path):
     assert config["models"]["openai-codex/gpt-5.2-codex"]["id"] == "gpt-5.2-codex"
 
 
-def test_cli_set_profile_candidates_and_learned_options(tmp_path):
+def test_cli_set_profile_candidates_and_learned_options(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
 
     assert (
@@ -234,11 +235,13 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path):
     assert profile["quality_bias"] == 0.65
     assert profile["cost_output_per_1k"] == 0.004
     assert config["learned_routing"]["enabled"] is True
-    assert config["learned_routing"]["task_candidates"]["coding"][-1] == "openai/gpt-5.2"
+    assert (
+        config["learned_routing"]["task_candidates"]["coding"][-1] == "openai/gpt-5.2"
+    )
     assert config["learned_routing"]["feature_weights"]["complexity_score"] == 1.4
 
 
-def test_cli_add_oauth_account(tmp_path):
+def test_cli_add_oauth_account(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
 
     assert (
@@ -279,7 +282,7 @@ def test_cli_add_oauth_account(tmp_path):
     assert account["base_url"] == "https://chatgpt.com/backend-api"
 
 
-def test_cli_add_gemini_api_key_account(tmp_path):
+def test_cli_add_gemini_api_key_account(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
 
     assert (
@@ -319,10 +322,10 @@ def test_cli_add_gemini_api_key_account(tmp_path):
     assert config["default_model"] == "gemini/gemini-2.5-pro"
 
 
-def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
+def test_cli_login_chatgpt_saves_oauth_fields(tmp_path: Any, monkeypatch: Any) -> None:
     config_path = tmp_path / "router.yaml"
 
-    def _fake_login(_args):
+    def _fake_login(_args: Any) -> Any:
         return {
             "oauth_access_token": "access-token-1",
             "oauth_refresh_token": "refresh-token-1",
@@ -376,7 +379,9 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path, monkeypatch):
     assert config["default_model"] == "openai-codex/gpt-5.2-codex"
 
 
-def test_cli_login_chatgpt_normalizes_existing_default_model(tmp_path, monkeypatch):
+def test_cli_login_chatgpt_normalizes_existing_default_model(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     config_path = tmp_path / "router.yaml"
     _save(
         config_path,
@@ -387,7 +392,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(tmp_path, monkeypat
         },
     )
 
-    def _fake_login(_args):
+    def _fake_login(_args: Any) -> Any:
         return {
             "oauth_access_token": "access-token-1",
             "oauth_refresh_token": "refresh-token-1",
@@ -425,7 +430,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(tmp_path, monkeypat
     assert "openai-codex/gpt-5.2" in config["models"]
 
 
-def test_cli_login_chatgpt_rejects_non_openai_codex_provider(tmp_path):
+def test_cli_login_chatgpt_rejects_non_openai_codex_provider(tmp_path: Any) -> None:
     config_path = tmp_path / "router.yaml"
     with pytest.raises(SystemExit):
         main(
@@ -443,7 +448,9 @@ def test_cli_login_chatgpt_rejects_non_openai_codex_provider(tmp_path):
         )
 
 
-def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch):
+def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
+    monkeypatch: Any,
+) -> None:
     import open_llm_router.config_cli as config_cli
 
     class _DummyServer:
@@ -459,7 +466,7 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch
 
     wait_called = {"value": False}
 
-    def _fake_wait_for_callback(_server, _timeout):
+    def _fake_wait_for_callback(_server: Any, _timeout: Any) -> Any:
         wait_called["value"] = True
         return None
 
@@ -468,14 +475,16 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch
         text = "ok"
 
         @staticmethod
-        def json() -> dict:
+        def json() -> dict[str, Any]:
             return {
                 "access_token": "header.payload.signature",
                 "refresh_token": "refresh-1",
                 "expires_in": 3600,
             }
 
-    monkeypatch.setattr(config_cli, "_generate_pkce", lambda: ("verifier-1", "challenge-1"))
+    monkeypatch.setattr(
+        config_cli, "_generate_pkce", lambda: ("verifier-1", "challenge-1")
+    )
     monkeypatch.setattr(config_cli.secrets, "token_hex", lambda _size: "state-123")
     monkeypatch.setattr(
         config_cli,
@@ -486,9 +495,13 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch
     monkeypatch.setattr(config_cli.webbrowser, "open", lambda _url: False)
     monkeypatch.setattr(
         "builtins.input",
-        lambda _prompt: "http://localhost:1455/auth/callback?code=abc123&state=state-123",
+        lambda _prompt: (
+            "http://localhost:1455/auth/callback?code=abc123&state=state-123"
+        ),
     )
-    monkeypatch.setattr(config_cli.httpx, "post", lambda *_args, **_kwargs: _DummyResponse())
+    monkeypatch.setattr(
+        config_cli.httpx, "post", lambda *_args, **_kwargs: _DummyResponse()
+    )
 
     args = argparse.Namespace(
         client_id="client-1",
@@ -510,7 +523,9 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(monkeypatch
     assert result["oauth_token_url"] == "https://auth.openai.com/oauth/token"
 
 
-def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(monkeypatch):
+def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(
+    monkeypatch: Any,
+) -> None:
     import open_llm_router.config_cli as config_cli
 
     class _DummyServer:
@@ -527,11 +542,11 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(monkeyp
     browser_called = {"value": False}
     wait_called = {"value": False}
 
-    def _fake_browser_open(_url):
+    def _fake_browser_open(_url: Any) -> Any:
         browser_called["value"] = True
         return True
 
-    def _fake_wait_for_callback(_server, _timeout):
+    def _fake_wait_for_callback(_server: Any, _timeout: Any) -> Any:
         wait_called["value"] = True
         return None
 
@@ -540,14 +555,16 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(monkeyp
         text = "ok"
 
         @staticmethod
-        def json() -> dict:
+        def json() -> dict[str, Any]:
             return {
                 "access_token": "header.payload.signature",
                 "refresh_token": "refresh-2",
                 "expires_in": 3600,
             }
 
-    monkeypatch.setattr(config_cli, "_generate_pkce", lambda: ("verifier-1", "challenge-1"))
+    monkeypatch.setattr(
+        config_cli, "_generate_pkce", lambda: ("verifier-1", "challenge-1")
+    )
     monkeypatch.setattr(config_cli.secrets, "token_hex", lambda _size: "state-123")
     monkeypatch.setattr(
         config_cli,
@@ -558,9 +575,13 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(monkeyp
     monkeypatch.setattr(config_cli, "_wait_for_callback_code", _fake_wait_for_callback)
     monkeypatch.setattr(
         "builtins.input",
-        lambda _prompt: "http://localhost:1455/auth/callback?code=abc999&state=state-123",
+        lambda _prompt: (
+            "http://localhost:1455/auth/callback?code=abc999&state=state-123"
+        ),
     )
-    monkeypatch.setattr(config_cli.httpx, "post", lambda *_args, **_kwargs: _DummyResponse())
+    monkeypatch.setattr(
+        config_cli.httpx, "post", lambda *_args, **_kwargs: _DummyResponse()
+    )
 
     args = argparse.Namespace(
         client_id="client-1",
@@ -584,7 +605,7 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(monkeyp
     assert result["oauth_token_url"] == "https://auth.openai.com/oauth/token"
 
 
-def test_cli_show_outputs_summary(tmp_path, capsys):
+def test_cli_show_outputs_summary(tmp_path: Any, capsys: Any) -> None:
     config_path = tmp_path / "router.yaml"
     assert (
         main(

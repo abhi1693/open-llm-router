@@ -33,6 +33,14 @@ router-log-analyze = "open_llm_router.log_analysis_cli:main"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+strict = true
+files = ["open_llm_router", "tests"]
+python_version = "3.12"
+
 [tool.uv]
 package = true
 
@@ -45,3 +53,16 @@ exclude = ["config*"]
 
 [tool.setuptools.package-data]
 open_llm_router = ["catalog/*.yaml"]
+
+[dependency-groups]
+dev = [
+    "h2>=4.3.0",
+    "mypy>=1.19.1",
+    "opentelemetry-api>=1.39.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.1",
+    "opentelemetry-instrumentation-fastapi>=0.60b1",
+    "opentelemetry-instrumentation-httpx>=0.60b1",
+    "opentelemetry-sdk>=1.39.1",
+    "redis>=7.2.0",
+    "types-pyyaml>=6.0.12.20250915",
+]

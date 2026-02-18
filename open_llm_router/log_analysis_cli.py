@@ -36,7 +36,9 @@ class AggregationState:
     routing_complexity_counts: Counter[str] = field(default_factory=Counter)
     routing_stream_counts: Counter[str] = field(default_factory=Counter)
     routing_tools_counts: Counter[str] = field(default_factory=Counter)
-    routing_selected_by_task: dict[str, Counter[str]] = field(default_factory=lambda: defaultdict(Counter))
+    routing_selected_by_task: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
     routing_selected_by_complexity: dict[str, Counter[str]] = field(
         default_factory=lambda: defaultdict(Counter)
     )
@@ -44,7 +46,9 @@ class AggregationState:
     utility_margin_values: list[float] = field(default_factory=list)
 
     connect_ms_values: list[float] = field(default_factory=list)
-    connect_ms_by_target: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
+    connect_ms_by_target: dict[str, list[float]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
 
     attempt_number_counts: Counter[str] = field(default_factory=Counter)
     response_status_counts: Counter[str] = field(default_factory=Counter)
@@ -187,7 +191,9 @@ def _parse_objects(path: Path) -> tuple[list[dict[str, Any]], ParseState]:
     return objects, parse_state
 
 
-def _update_latency_maps(state: AggregationState, event: dict[str, Any], event_name: str) -> None:
+def _update_latency_maps(
+    state: AggregationState, event: dict[str, Any], event_name: str
+) -> None:
     request_id = event.get("request_id")
     if not isinstance(request_id, str) or not request_id.strip():
         return
@@ -234,7 +240,9 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         payload_summary = event.get("payload_summary")
         if isinstance(payload_summary, dict):
             stream_value = "true" if bool(payload_summary.get("stream")) else "false"
-            has_tools_value = "true" if bool(payload_summary.get("has_tools")) else "false"
+            has_tools_value = (
+                "true" if bool(payload_summary.get("has_tools")) else "false"
+            )
             state.routing_stream_counts[stream_value] += 1
             state.routing_tools_counts[has_tools_value] += 1
 
@@ -271,7 +279,11 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         else:
             state.attempt_number_counts[str(attempt)] += 1
 
-        if isinstance(request_id, str) and request_id.strip() and request_id not in state.first_attempt_target_by_request_id:
+        if (
+            isinstance(request_id, str)
+            and request_id.strip()
+            and request_id not in state.first_attempt_target_by_request_id
+        ):
             target_label = str(event.get("target") or "")
             if target_label:
                 state.first_attempt_target_by_request_id[request_id] = target_label
@@ -279,9 +291,14 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
 
     if event_name == "proxy_start":
         if isinstance(request_id, str) and request_id.strip():
-            selected_model = event.get("selected_model")
-            if isinstance(selected_model, str) and selected_model.strip():
-                state.runtime_selected_by_request_id[request_id] = selected_model
+            runtime_selected_model = event.get("selected_model")
+            if (
+                isinstance(runtime_selected_model, str)
+                and runtime_selected_model.strip()
+            ):
+                state.runtime_selected_by_request_id[request_id] = (
+                    runtime_selected_model
+                )
         return
 
     if event_name == "proxy_response":
@@ -296,7 +313,11 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
             state.response_attempts_gt1 += 1
 
         model_used = event.get("model")
-        if isinstance(request_id, str) and request_id.strip() and isinstance(model_used, str):
+        if (
+            isinstance(request_id, str)
+            and request_id.strip()
+            and isinstance(model_used, str)
+        ):
             state.used_model_by_request_id[request_id] = model_used
         return
 
@@ -325,7 +346,9 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         state.finish_reason_counts[finish_reason] += 1
 
 
-def _build_duration_stats(state: AggregationState) -> dict[str, dict[str, float | int | None]]:
+def _build_duration_stats(
+    state: AggregationState,
+) -> dict[str, dict[str, float | int | None]]:
     start_to_response: list[float] = []
     response_to_result: list[float] = []
     start_to_result: list[float] = []
@@ -338,7 +361,11 @@ def _build_duration_stats(state: AggregationState) -> dict[str, dict[str, float 
         result_ts = state.result_ts_by_request_id.get(request_id)
         if result_ts is not None and result_ts >= start_ts:
             start_to_result.append(result_ts - start_ts)
-        if response_ts is not None and result_ts is not None and result_ts >= response_ts:
+        if (
+            response_ts is not None
+            and result_ts is not None
+            and result_ts >= response_ts
+        ):
             response_to_result.append(result_ts - response_ts)
 
     return {
@@ -348,7 +375,9 @@ def _build_duration_stats(state: AggregationState) -> dict[str, dict[str, float 
     }
 
 
-def _build_consistency_summary(state: AggregationState, *, top_n: int) -> dict[str, Any]:
+def _build_consistency_summary(
+    state: AggregationState, *, top_n: int
+) -> dict[str, Any]:
     matched = 0
     mismatched = 0
     missing = 0
@@ -410,7 +439,9 @@ def _build_consistency_summary(state: AggregationState, *, top_n: int) -> dict[s
     }
 
 
-def _build_summary(path: Path, state: AggregationState, *, top_n: int) -> dict[str, Any]:
+def _build_summary(
+    path: Path, state: AggregationState, *, top_n: int
+) -> dict[str, Any]:
     connect_by_target: dict[str, dict[str, float | int | None]] = {}
     for target, values in sorted(
         state.connect_ms_by_target.items(), key=lambda item: len(item[1]), reverse=True
@@ -420,15 +451,13 @@ def _build_summary(path: Path, state: AggregationState, *, top_n: int) -> dict[s
     by_task: dict[str, dict[str, int]] = {}
     for task, counter in sorted(state.routing_selected_by_task.items()):
         by_task[task] = {
-            model: int(count)
-            for model, count in counter.most_common(top_n)
+            model: int(count) for model, count in counter.most_common(top_n)
         }
 
     by_complexity: dict[str, dict[str, int]] = {}
     for complexity, counter in sorted(state.routing_selected_by_complexity.items()):
         by_complexity[complexity] = {
-            model: int(count)
-            for model, count in counter.most_common(top_n)
+            model: int(count) for model, count in counter.most_common(top_n)
         }
 
     return {
@@ -484,7 +513,9 @@ def _build_summary(path: Path, state: AggregationState, *, top_n: int) -> dict[s
                 "timeouts": _coerce_counter(state.request_error_timeout_counts),
                 "by_target": {
                     key: int(count)
-                    for key, count in state.request_error_target_counts.most_common(top_n)
+                    for key, count in state.request_error_target_counts.most_common(
+                        top_n
+                    )
                 },
             },
             "finish_reason_counts": _coerce_counter(state.finish_reason_counts),
@@ -586,10 +617,14 @@ def _render_text(summary: dict[str, Any]) -> str:
     lines.append(f"Attempt number counts: {retries['attempt_number_counts']}")
     lines.append(f"Response status counts: {retries['response_status_counts']}")
     lines.append(f"Response attempts counts: {retries['response_attempts_counts']}")
-    lines.append(f"Responses with retries (>1 attempt): {retries['responses_with_attempts_gt_1']}")
+    lines.append(
+        f"Responses with retries (>1 attempt): {retries['responses_with_attempts_gt_1']}"
+    )
     lines.append(f"Finish reasons: {retries['finish_reason_counts']}")
     proxy_errors = retries["proxy_request_errors"]
-    lines.append(f"Proxy request errors: total={proxy_errors['total']} timeouts={proxy_errors['timeouts']}")
+    lines.append(
+        f"Proxy request errors: total={proxy_errors['total']} timeouts={proxy_errors['timeouts']}"
+    )
     if proxy_errors["by_error_type"]:
         lines.append("Top error types:")
         for error_type, count in proxy_errors["by_error_type"].items():
@@ -609,10 +644,7 @@ def _render_text(summary: dict[str, Any]) -> str:
         for pair, count in selected_vs_used["top_mismatched_pairs"].items():
             lines.append(f"      - {pair}: {count}")
     selected_vs_target = consistency["selected_vs_first_attempt_target"]
-    lines.append(
-        "  - selected_vs_first_attempt_target: "
-        f"{selected_vs_target}"
-    )
+    lines.append(f"  - selected_vs_first_attempt_target: {selected_vs_target}")
     if selected_vs_target["top_rough_mismatched_pairs"]:
         lines.append("    top mismatched selected->first-target pairs:")
         for pair, count in selected_vs_target["top_rough_mismatched_pairs"].items():

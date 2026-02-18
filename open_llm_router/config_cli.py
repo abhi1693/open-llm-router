@@ -4,14 +4,14 @@ import argparse
 import base64
 import hashlib
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 import secrets
 import threading
 import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
-import webbrowser
 
 import httpx
 import yaml
@@ -28,6 +28,7 @@ CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_REDIRECT_URI = "http://localhost:1455/auth/callback"
 CHATGPT_SCOPE = "openid profile email offline_access"
 CHATGPT_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth"
+__all__ = ["main", "httpx", "secrets", "webbrowser"]
 
 
 def _parse_csv(value: str | None) -> list[str]:
@@ -80,7 +81,7 @@ def _coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
                 coerced.setdefault(model_key, _normalize_model_metadata(model_key, {}))
         return coerced
     if isinstance(value, dict):
-        coerced: dict[str, dict[str, Any]] = {}
+        normalized_models: dict[str, dict[str, Any]] = {}
         for raw_model_key, raw_metadata in value.items():
             if not isinstance(raw_model_key, str):
                 continue
@@ -88,14 +89,14 @@ def _coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
             if not model_key:
                 continue
             if raw_metadata is None:
-                coerced[model_key] = _normalize_model_metadata(model_key, {})
+                normalized_models[model_key] = _normalize_model_metadata(model_key, {})
                 continue
             if not isinstance(raw_metadata, dict):
-                raise ValueError(
-                    f"Model metadata for '{model_key}' must be an object."
-                )
-            coerced[model_key] = _normalize_model_metadata(model_key, raw_metadata)
-        return coerced
+                raise ValueError(f"Model metadata for '{model_key}' must be an object.")
+            normalized_models[model_key] = _normalize_model_metadata(
+                model_key, raw_metadata
+            )
+        return normalized_models
     raise ValueError("Expected 'models' to be either a list or a mapping.")
 
 
@@ -158,8 +159,8 @@ def _parse_authorization_input(value: str) -> tuple[str | None, str | None]:
         parsed = urlparse(raw)
         if parsed.scheme and parsed.netloc:
             params = parse_qs(parsed.query)
-            code = (params.get("code") or [None])[0]
-            state = (params.get("state") or [None])[0]
+            code = _first_query_param(params, "code")
+            state = _first_query_param(params, "state")
             return code, state
     except Exception:
         pass
@@ -170,11 +171,19 @@ def _parse_authorization_input(value: str) -> tuple[str | None, str | None]:
 
     if "code=" in raw:
         params = parse_qs(raw)
-        code = (params.get("code") or [None])[0]
-        state = (params.get("state") or [None])[0]
+        code = _first_query_param(params, "code")
+        state = _first_query_param(params, "state")
         return code, state
 
     return raw, None
+
+
+def _first_query_param(params: dict[str, list[str]], key: str) -> str | None:
+    values = params.get(key)
+    if not values:
+        return None
+    first = values[0].strip()
+    return first or None
 
 
 def _extract_chatgpt_account_id(access_token: str) -> str | None:
@@ -200,11 +209,11 @@ def _extract_chatgpt_account_id(access_token: str) -> str | None:
 
 
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args) -> None:  # noqa: A003
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return
 
     def do_GET(self) -> None:  # noqa: N802
-        server = self.server  # type: ignore[attr-defined]
+        server = self.server
         parsed = urlparse(self.path)
         if parsed.path != "/auth/callback":
             self.send_response(404)
@@ -213,8 +222,8 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
             return
 
         params = parse_qs(parsed.query)
-        state = (params.get("state") or [None])[0]
-        code = (params.get("code") or [None])[0]
+        state = _first_query_param(params, "state")
+        code = _first_query_param(params, "code")
         if not code:
             self.send_response(400)
             self.end_headers()
@@ -235,7 +244,9 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
         )
 
 
-def _start_callback_server(host: str, port: int, expected_state: str) -> tuple[ThreadingHTTPServer | None, threading.Thread | None]:
+def _start_callback_server(
+    host: str, port: int, expected_state: str
+) -> tuple[ThreadingHTTPServer | None, threading.Thread | None]:
     try:
         server = ThreadingHTTPServer((host, port), _OAuthCallbackHandler)
     except OSError:
@@ -249,7 +260,9 @@ def _start_callback_server(host: str, port: int, expected_state: str) -> tuple[T
     return server, thread
 
 
-def _wait_for_callback_code(server: ThreadingHTTPServer, timeout_seconds: int) -> str | None:
+def _wait_for_callback_code(
+    server: ThreadingHTTPServer, timeout_seconds: int
+) -> str | None:
     deadline = time.time() + max(1, timeout_seconds)
     while time.time() < deadline:
         code = getattr(server, "auth_code", None)
@@ -283,7 +296,9 @@ def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
         host = parsed_redirect.hostname or "127.0.0.1"
         port = parsed_redirect.port or 1455
         if host in {"localhost", "127.0.0.1"}:
-            server, _thread = _start_callback_server(host="127.0.0.1", port=port, expected_state=state)
+            server, _thread = _start_callback_server(
+                host="127.0.0.1", port=port, expected_state=state
+            )
 
     print(f"\nOpen this URL in your browser and complete sign-in:\n{auth_url}\n")
     force_paste_mode = bool(getattr(args, "paste_url", False))
@@ -345,15 +360,23 @@ def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
         timeout=30.0,
     )
     if response.status_code >= 400:
-        raise RuntimeError(f"OAuth token exchange failed ({response.status_code}): {response.text}")
+        raise RuntimeError(
+            f"OAuth token exchange failed ({response.status_code}): {response.text}"
+        )
 
     body = response.json()
     access_token = str(body.get("access_token") or "").strip()
     refresh_token = str(body.get("refresh_token") or "").strip()
     expires_in = body.get("expires_in")
 
-    if not access_token or not refresh_token or not isinstance(expires_in, (int, float)):
-        raise RuntimeError("OAuth response missing required fields: access_token/refresh_token/expires_in.")
+    if (
+        not access_token
+        or not refresh_token
+        or not isinstance(expires_in, (int, float))
+    ):
+        raise RuntimeError(
+            "OAuth response missing required fields: access_token/refresh_token/expires_in."
+        )
 
     expires_at = int(time.time()) + int(expires_in)
     account_id = _extract_chatgpt_account_id(access_token)
@@ -372,7 +395,9 @@ def _load_config(path: Path) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
         if not isinstance(data, dict):
-            raise ValueError(f"Expected root object in {path}, found: {type(data).__name__}")
+            raise ValueError(
+                f"Expected root object in {path}, found: {type(data).__name__}"
+            )
     else:
         data = {}
     _ensure_schema(data)
@@ -455,11 +480,15 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.oauth_access_token is not None:
         account["oauth_access_token"] = _normalize_optional(args.oauth_access_token)
     if args.oauth_access_token_env is not None:
-        account["oauth_access_token_env"] = _normalize_optional(args.oauth_access_token_env)
+        account["oauth_access_token_env"] = _normalize_optional(
+            args.oauth_access_token_env
+        )
     if args.oauth_refresh_token is not None:
         account["oauth_refresh_token"] = _normalize_optional(args.oauth_refresh_token)
     if args.oauth_refresh_token_env is not None:
-        account["oauth_refresh_token_env"] = _normalize_optional(args.oauth_refresh_token_env)
+        account["oauth_refresh_token_env"] = _normalize_optional(
+            args.oauth_refresh_token_env
+        )
     if args.oauth_expires_at is not None:
         account["oauth_expires_at"] = args.oauth_expires_at
     if args.oauth_expires_at_env is not None:
@@ -473,7 +502,9 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.oauth_client_secret is not None:
         account["oauth_client_secret"] = _normalize_optional(args.oauth_client_secret)
     if args.oauth_client_secret_env is not None:
-        account["oauth_client_secret_env"] = _normalize_optional(args.oauth_client_secret_env)
+        account["oauth_client_secret_env"] = _normalize_optional(
+            args.oauth_client_secret_env
+        )
     if args.oauth_account_id is not None:
         account["oauth_account_id"] = _normalize_optional(args.oauth_account_id)
     if args.oauth_account_id_env is not None:
@@ -498,9 +529,7 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.provider != "openai-codex":
-        raise ValueError(
-            "login-chatgpt only supports --provider openai-codex."
-        )
+        raise ValueError("login-chatgpt only supports --provider openai-codex.")
 
     accounts = data["accounts"]
     account = _find_account(accounts, args.account)
@@ -530,7 +559,9 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
         if current_default:
             raw_to_qualified = {
                 raw_model: qualified_model
-                for raw_model, qualified_model in zip(raw_account_models, account_models, strict=False)
+                for raw_model, qualified_model in zip(
+                    raw_account_models, account_models, strict=False
+                )
             }
             if current_default in raw_to_qualified:
                 data["default_model"] = raw_to_qualified[current_default]
@@ -551,7 +582,9 @@ def cmd_add_model(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.account:
         account = _find_account(data["accounts"], args.account)
         if account is None:
-            raise ValueError(f"Account '{args.account}' not found. Add it first with add-account.")
+            raise ValueError(
+                f"Account '{args.account}' not found. Add it first with add-account."
+            )
         account["models"] = _dedupe([*account.get("models", []), args.model])
 
     if args.set_default:
@@ -649,12 +682,18 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="router",
         description="Manage open-llm-router router.yaml entries from CLI.",
     )
-    parser.add_argument("--path", default="router.yaml", help="Path to router YAML config.")
-    parser.add_argument("--dry-run", action="store_true", help="Print changes without writing file.")
+    parser.add_argument(
+        "--path", default="router.yaml", help="Path to router YAML config."
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print changes without writing file."
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_account = subparsers.add_parser("add-account", help="Add or update a backend account/provider.")
+    add_account = subparsers.add_parser(
+        "add-account", help="Add or update a backend account/provider."
+    )
     add_account.add_argument("--name", required=True)
     add_account.add_argument("--provider", required=True)
     add_account.add_argument("--base-url", required=True)
@@ -711,7 +750,9 @@ def _build_parser() -> argparse.ArgumentParser:
     login_chatgpt.add_argument("--no-local-callback", action="store_true")
     login_chatgpt.set_defaults(handler=cmd_login_chatgpt, mutates=True)
 
-    add_model = subparsers.add_parser("add-model", help="Add model globally and optionally to one account.")
+    add_model = subparsers.add_parser(
+        "add-model", help="Add model globally and optionally to one account."
+    )
     add_model.add_argument(
         "--model",
         required=True,
@@ -723,7 +764,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     set_route = subparsers.add_parser("set-route", help="Set task routing tier model.")
     set_route.add_argument("--task", required=True)
-    set_route.add_argument("--tier", required=True, choices=["low", "medium", "high", "xhigh", "default"])
+    set_route.add_argument(
+        "--tier", required=True, choices=["low", "medium", "high", "xhigh", "default"]
+    )
     set_route.add_argument(
         "--model",
         required=True,
@@ -734,7 +777,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     set_route.set_defaults(handler=cmd_set_route, mutates=True)
 
-    set_fallbacks = subparsers.add_parser("set-fallbacks", help="Set or append fallback models.")
+    set_fallbacks = subparsers.add_parser(
+        "set-fallbacks", help="Set or append fallback models."
+    )
     set_fallbacks.add_argument(
         "--models",
         required=True,
@@ -769,14 +814,18 @@ def _build_parser() -> argparse.ArgumentParser:
     set_candidates.add_argument("--enable", action="store_true")
     set_candidates.set_defaults(handler=cmd_set_candidates, mutates=True)
 
-    set_learned = subparsers.add_parser("set-learned", help="Set learned-routing options and weights.")
+    set_learned = subparsers.add_parser(
+        "set-learned", help="Set learned-routing options and weights."
+    )
     set_learned.add_argument("--enabled", help="true/false")
     set_learned.add_argument("--bias", type=float)
     set_learned.add_argument("--default-output-tokens", type=int)
     set_learned.add_argument("--utility-cost", type=float)
     set_learned.add_argument("--utility-latency", type=float)
     set_learned.add_argument("--utility-failure", type=float)
-    set_learned.add_argument("--set-feature", action="append", help="Feature weight KEY=VALUE (repeatable).")
+    set_learned.add_argument(
+        "--set-feature", action="append", help="Feature weight KEY=VALUE (repeatable)."
+    )
     set_learned.add_argument("--clear-features", action="store_true")
     set_learned.set_defaults(handler=cmd_set_learned, mutates=True)
 

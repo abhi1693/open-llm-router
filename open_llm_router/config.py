@@ -55,9 +55,7 @@ class TaskRoute(BaseModel):
         return cleaned
 
     @staticmethod
-    def _pick_first_non_empty(
-        *candidates: str | list[str] | None
-    ) -> list[str]:
+    def _pick_first_non_empty(*candidates: str | list[str] | None) -> list[str]:
         for candidate in candidates:
             models = TaskRoute._coerce_models(candidate)
             if models:
@@ -125,10 +123,15 @@ class BackendAccount(BaseModel):
             if not expected:
                 return False
             for configured in self.models:
-                configured_provider, configured_model_id = self._split_model_ref(configured)
+                configured_provider, configured_model_id = self._split_model_ref(
+                    configured
+                )
                 if configured_model_id != expected:
                     continue
-                if configured_provider and configured_provider.lower() != self.provider.strip().lower():
+                if (
+                    configured_provider
+                    and configured_provider.lower() != self.provider.strip().lower()
+                ):
                     continue
                 return True
             return False
@@ -164,27 +167,37 @@ class BackendAccount(BaseModel):
     def resolved_oauth_access_token(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
-        return self._resolve_env_or_value(self.oauth_access_token_env, self.oauth_access_token)
+        return self._resolve_env_or_value(
+            self.oauth_access_token_env, self.oauth_access_token
+        )
 
     def resolved_oauth_refresh_token(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
-        return self._resolve_env_or_value(self.oauth_refresh_token_env, self.oauth_refresh_token)
+        return self._resolve_env_or_value(
+            self.oauth_refresh_token_env, self.oauth_refresh_token
+        )
 
     def resolved_oauth_client_id(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
-        return self._resolve_env_or_value(self.oauth_client_id_env, self.oauth_client_id)
+        return self._resolve_env_or_value(
+            self.oauth_client_id_env, self.oauth_client_id
+        )
 
     def resolved_oauth_client_secret(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
-        return self._resolve_env_or_value(self.oauth_client_secret_env, self.oauth_client_secret)
+        return self._resolve_env_or_value(
+            self.oauth_client_secret_env, self.oauth_client_secret
+        )
 
     def resolved_oauth_account_id(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
-        return self._resolve_env_or_value(self.oauth_account_id_env, self.oauth_account_id)
+        return self._resolve_env_or_value(
+            self.oauth_account_id_env, self.oauth_account_id
+        )
 
     def resolved_oauth_expires_at(self) -> int | None:
         if self.auth_mode != "oauth":
@@ -263,9 +276,7 @@ class RoutingConfig(BaseModel):
 
     @field_validator("models", mode="before")
     @classmethod
-    def _coerce_models(
-        cls, value: Any
-    ) -> dict[str, dict[str, Any]]:
+    def _coerce_models(cls, value: Any) -> dict[str, dict[str, Any]]:
         if value is None:
             return {}
         if isinstance(value, list):
@@ -280,7 +291,7 @@ class RoutingConfig(BaseModel):
                     )
             return coerced
         if isinstance(value, dict):
-            coerced: dict[str, dict[str, Any]] = {}
+            normalized_models: dict[str, dict[str, Any]] = {}
             for raw_model_key, raw_metadata in value.items():
                 if not isinstance(raw_model_key, str):
                     continue
@@ -288,16 +299,18 @@ class RoutingConfig(BaseModel):
                 if not model_key:
                     continue
                 if raw_metadata is None:
-                    coerced[model_key] = cls._normalize_model_metadata(model_key, {})
+                    normalized_models[model_key] = cls._normalize_model_metadata(
+                        model_key, {}
+                    )
                     continue
                 if not isinstance(raw_metadata, dict):
                     raise ValueError(
                         f"Model metadata for '{model_key}' must be an object."
                     )
-                coerced[model_key] = cls._normalize_model_metadata(
+                normalized_models[model_key] = cls._normalize_model_metadata(
                     model_key, raw_metadata
                 )
-            return coerced
+            return normalized_models
         raise ValueError("Expected 'models' to be either a list or a mapping.")
 
     def should_auto_route(self, requested_model: str | None) -> bool:
