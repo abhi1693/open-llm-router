@@ -1,80 +1,165 @@
 # Open-LLM Router
 
-Open-LLM Router is a FastAPI gateway that exposes OpenAI-compatible endpoints and routes requests to configured backend models based on request/task complexity and routing rules.
+Open-LLM Router is a FastAPI gateway that exposes OpenAI-compatible endpoints and routes requests across configured provider accounts and models.
 
-## What it does
+It supports `model: "auto"` routing, task/complexity-aware model selection, provider-aware failover, idempotency, live runtime metrics, and OpenAI-style proxy behavior.
 
-- Accepts OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/responses`, etc.)
-- Supports `model: "auto"` routing across accounts and models
-- Applies fallback when a request fails on retryable upstream statuses (`429`, `5xx`)
-- Logs structured routing/proxy events for observability
+## Highlights
 
-## Quickstart
+- OpenAI-compatible API surface (`/v1/chat/completions`, `/v1/responses`, `/v1/completions`, etc.)
+- Auto-routing (`model: "auto"`) with task and complexity classification
+- Profile-driven configuration (`router.profile.yaml`) with built-in routing profiles
+- Provider/account-aware target selection and fallback retries (`429`, `5xx` by default)
+- Request-level routing controls (`allowed_models`, `provider.only`, `provider.ignore`, `provider.sort`, `provider.partition`, `provider.require_parameters`, `provider.allow_fallbacks`)
+- Ingress authentication (API keys and/or OAuth token verification)
+- Runtime resilience features: circuit breakers and idempotency replay
+- JSONL audit logs plus log-analysis CLI (`router-log-analyze`)
+- Live metrics endpoints and Prometheus `/metrics`
+- Dockerfile + docker-compose local workflow
 
-```bash
-pip install -e .
+## Architecture
+
+### High-level request flow
+
+1. Request enters FastAPI on `/v1/*`
+2. Ingress auth middleware validates Bearer token (if enabled)
+3. Router classifies request (`general`, `coding`, `thinking`, `instruction_following`, `image`) and complexity (`low` → `xhigh`)
+4. Routing engine picks candidate models from profile routes + fallback chain
+5. Hard constraints are applied (capabilities, allowed models, provider filters)
+6. Backend proxy forwards to provider/account targets with retry/fallback behavior
+7. Response is returned with routing diagnostics (`_router` object for JSON responses; `x-router-*` headers for streaming)
+8. Audit and live metrics pipelines ingest routing/proxy events
+
+### Runtime components
+
+- `SmartModelRouter` (`open_llm_router/router_engine.py`): classification + model decisioning
+- `BackendProxy` (`open_llm_router/proxy.py`): upstream target resolution, auth propagation, retries, streaming, fallback
+- `RuntimePolicyUpdater` (`open_llm_router/policy_updater.py`): adjusts in-memory model profile priors from live traffic
+- `LiveMetricsCollector` (`open_llm_router/live_metrics.py`): aggregates event-based model and target metrics
+- `JsonlAuditLogger` (`open_llm_router/audit.py`): async JSONL decision/proxy event writer
+- `IdempotencyStore` (`open_llm_router/idempotency.py`): replay/wait/store semantics for non-streaming requests with `Idempotency-Key`
+
+### Repository layout
+
+```text
+.
+├── open_llm_router/
+│   ├── main.py                 # FastAPI app, startup/shutdown wiring, API endpoints
+│   ├── router_engine.py        # Auto-routing decision engine
+│   ├── proxy.py                # Upstream forwarding, retries, fallback, streaming
+│   ├── config.py               # Runtime config schema and config loader
+│   ├── profile_compiler.py     # Profile -> effective routing config compiler
+│   ├── router_cli.py           # `router` command (init/validate/compile/provider/catalog)
+│   ├── log_analysis_cli.py     # `router-log-analyze` command
+│   ├── settings.py             # Environment-backed settings
+│   └── catalog/
+│       ├── providers.yaml      # Provider registry (base URLs, auth modes)
+│       ├── models.yaml         # Model catalog + metadata presets
+│       └── profiles.yaml       # Built-in routing profiles
+├── tests/
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+├── router.profile.yaml
+└── pyproject.toml
 ```
 
-1. Set required config path:
+## Prerequisites
+
+- Python `3.12+`
+- One of:
+  - `uv` (recommended)
+  - `pip`
+- Optional but recommended:
+  - Redis (for shared idempotency/metrics backing)
+
+## Quick Start (Local)
+
+### 1. Install dependencies
+
+Using `uv` (recommended):
 
 ```bash
-export ROUTING_CONFIG_PATH="router.profile.yaml"
+uv sync --dev
 ```
 
-2. Start the server:
+Using `pip`:
+
+```bash
+pip install -e ".[dev]"
+```
+
+### 2. Create environment file
+
+```bash
+cp .env.example .env
+```
+
+### 3. Create or validate router profile
+
+Create a fresh profile:
+
+```bash
+router init --path router.profile.yaml
+```
+
+List built-in profiles:
+
+```bash
+router profile list
+```
+
+Validate current profile:
+
+```bash
+router validate-config --path router.profile.yaml
+```
+
+Inspect compiled effective config:
+
+```bash
+router compile-config --path router.profile.yaml --stdout
+```
+
+### 4. Add provider account(s)
+
+Examples:
+
+```bash
+# OpenAI via ChatGPT OAuth
+router provider login openai --kind chatgpt --name openai-codex-work
+
+# OpenAI via API key
+router provider login openai --kind apikey --name openai-work --api-key-env OPENAI_API_KEY
+
+# Gemini via API key
+router provider login gemini --name gemini-work --api-key-env GEMINI_API_KEY
+
+# NVIDIA via API key
+router provider login nvidia --name nvidia-work --api-key-env NVIDIA_API_KEY
+```
+
+### 5. Run the API server
 
 ```bash
 open-llm-router
 ```
 
-By default, this uses FastAPI via `uvicorn` on:
-
-- Host: `0.0.0.0`
-- Port: `8000`
-
-For custom FastAPI run options, you can run `uvicorn` directly:
+Or with hot reload during development:
 
 ```bash
-uvicorn open_llm_router.main:app --host 127.0.0.1 --port 8080 --reload
+uvicorn open_llm_router.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Health check:
+### 6. Smoke test
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-## Docker (Local)
-
-Build image:
-
 ```bash
-docker build -t open-llm-router:local .
+curl http://localhost:8000/v1/models
 ```
-
-Run with Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-Then call:
-
-```bash
-curl http://localhost:8000/health
-```
-
-Notes:
-- `router.profile.yaml` is mounted read-only into the container.
-- Logs are written to `./logs` on the host.
-
-## Client usage
-
-Point your OpenAI client to:
-
-- `base_url = "http://localhost:8000/v1"`
-
-Example:
 
 ```bash
 curl -s http://localhost:8000/v1/chat/completions \
@@ -82,156 +167,107 @@ curl -s http://localhost:8000/v1/chat/completions \
   -H "Authorization: Bearer local-key" \
   -d '{
     "model": "auto",
-    "messages": [
-      {"role": "user", "content": "Refactor this function and explain it."}
-    ]
+    "messages": [{"role": "user", "content": "Explain quicksort in 5 bullets."}]
   }'
 ```
 
-### Routing diagnostics in JSON responses
+## Configuration Model
 
-For non-stream JSON responses, the router appends a top-level `_router` object with routing metadata (request id, selected provider/account/model, attempt history, and latency).
+### Profile-first config (recommended)
 
-Example shape:
+`router.profile.yaml` is the high-level authoring format.
+
+It supports:
+
+- global and per-task profile selection
+- account definitions
+- cost/latency/failure guardrails
+- optional raw overrides
+
+Compile profile -> effective routing schema:
+
+```bash
+router compile-config --path router.profile.yaml --output router.effective.yaml --explain
+```
+
+### Raw routing schema (advanced)
+
+The runtime also accepts a raw routing document (legacy/manual mode), but profile mode is preferred.
+
+### Built-in profiles
+
+- `auto`
+- `balanced`
+- `cost`
+- `latency`
+- `quality`
+
+Show a profile template:
+
+```bash
+router profile show auto
+```
+
+### Route explanation utility
+
+```bash
+router explain-route --task coding --complexity high --path router.profile.yaml
+```
+
+This command prints candidate chain, selected model, fallback chain, and learned scoring summary (if enabled).
+
+## Request Routing Controls
+
+### `model`
+
+- `"auto"` (or omitted): routing engine decides target model
+- explicit model id: router validates model exists and uses it directly
+
+### `allowed_models`
+
+Constrain auto-routing candidates with wildcard patterns.
 
 ```json
 {
-  "id": "chatcmpl-...",
-  "model": "openai-codex/gpt-5.2",
-  "_router": {
-    "request_id": "abc123def456",
-    "selected_model": "openai-codex/gpt-5.2",
-    "upstream_model": "gpt-5.2",
-    "provider": "openai-codex",
-    "account": "openai-codex-work",
-    "attempted_targets": ["openai-codex-work:gpt-5.2"]
-  }
+  "model": "auto",
+  "allowed_models": ["openai-codex/*", "gemini/gemini-2.5-flash"],
+  "messages": [{"role": "user", "content": "..."}]
 }
 ```
 
-Streaming responses keep transport-level diagnostics in `x-router-*` headers.
+### `provider` preferences
 
-### Provider routing controls
+Supported request-level controls:
 
-The request `provider` object supports OpenRouter-style target controls:
-
-- `order`: preferred provider order
+- `order`: provider/account preference order
 - `sort`: `price`, `latency`, or `throughput`
 - `partition`: `model` (default) or `none`
-- `allow_fallbacks`: when `false`, only the primary target is attempted
-- `require_parameters`: only keep targets that support all request params
-- `only`: allow-list specific providers/accounts for this request
-- `ignore`: deny-list specific providers/accounts for this request
+- `allow_fallbacks`: enable/disable fallback attempts
+- `require_parameters`: require target to support all request parameters
+- `only`: allow-list providers/accounts
+- `ignore`: deny-list providers/accounts
 
-## Routing config
+Example:
 
-Routing behavior is driven by `ROUTING_CONFIG_PATH`.
-
-- Recommended: `router.profile.yaml` (profile compiler input)
-- Legacy/manual support: `router.yaml` (raw runtime schema)
-
-Minimum required shape:
-
-```yaml
-default_model: openai-codex/gpt-5.2
-models:
-  openai-codex/gpt-5.2: {}
-accounts:
-  - name: default
-    provider: openai-codex
-    base_url: http://localhost:11434
-    enabled: true
-    auth_mode: api_key
-    models:
-      - openai-codex/gpt-5.2
-task_routes:
-  general:
-    low:
-      - openai-codex/gpt-5.2
-    medium:
-      - openai-codex/gpt-5.2
-    high:
-      - openai-codex/gpt-5.2
-  coding:
-    low:
-      - openai-codex/gpt-5.2-codex
-      - openai-codex/gpt-5.3-codex-spark
-    medium:
-      - openai-codex/gpt-5.2-codex
-    high:
-      - openai-codex/gpt-5.3-codex-spark
-    default:
-      - openai-codex/gpt-5.2
-  thinking:
-    low:
-      - openai-codex/gpt-5.2
-    medium:
-      - openai-codex/gpt-5.2
-    high:
-      - openai-codex/gpt-5.3
-    xhigh:
-      - openai-codex/gpt-5.3
-  image:
-    default:
-      - openai-codex/gpt-5.2
-  instruction_following:
-    low:
-      - openai-codex/gpt-5.2
-    medium:
-      - openai-codex/gpt-5.2
-    high:
-      - openai-codex/gpt-5.2
-    xhigh:
-      - openai-codex/gpt-5.3
-fallback_models:
-  - openai-codex/gpt-5.2
-retry_statuses:
-  - 429
-  - 500
-  - 502
-  - 503
-  - 504
+```json
+{
+  "model": "auto",
+  "provider": {
+    "order": ["gemini", "openai-codex"],
+    "sort": "latency",
+    "partition": "model",
+    "allow_fallbacks": true,
+    "require_parameters": true,
+    "only": ["gemini-work", "openai-codex-work"],
+    "ignore": ["nvidia-work"]
+  },
+  "messages": [{"role": "user", "content": "..."}]
+}
 ```
 
-Top-level `models` is a mapping keyed by `provider/modelId`, which allows attaching model metadata (for example `name`, `id`, or custom attributes) without ambiguity.
-If `id` is omitted, it defaults to the `modelId` segment of the key (for example `openai-codex/gpt-5.2` -> `id: gpt-5.2`).
+## API Endpoints
 
-Catalog model metadata now supports reusable presets and routing-oriented attributes:
-- `metadata_presets` in `open_llm_router/catalog/models.yaml` to avoid repeating shared `capabilities`/`limits`.
-- Per-model metadata: `tier`, `type`, and `task_affinity` for smarter defaults.
-
-Profile compilation auto-aligns default routes to enabled account models.  
-This means a mixed account setup can prefer coding models for `coding` and multimodal models for `image` without heavy `raw_overrides`.
-
-Unified provider login flow (recommended):
-
-```bash
-# OpenAI via ChatGPT OAuth
-router provider login openai --kind chatgpt --name openai-codex-work
-
-# OpenAI via API key
-router provider login openai --kind apikey --name openai-work
-
-# Gemini via API key (apikey is default kind)
-router provider login gemini --name gemini-work
-
-# NVIDIA NIM via API key (apikey is default kind)
-router provider login nvidia --name nvidia-work
-
-# Inline key instead of env var
-router provider login openai --kind apikey --name openai-work --apikey sk-...
-
-# Explicit env-var name (alias: --api-key-env)
-router provider login gemini --name gemini-work --apikey-env GEMINI_API_KEY
-router provider login nvidia --name nvidia-work --apikey-env NVIDIA_API_KEY
-```
-
-This stores provider-qualified model keys like `gemini/gemini-2.5-pro` or `nvidia/z-ai/glm5` and defaults model metadata `id` to the provider-local model id.
-For NVIDIA models that include `/` in the model id (for example `moonshotai/kimi-k2.5`), configure them under the NVIDIA provider as either:
-- provider-qualified: `nvidia/moonshotai/kimi-k2.5`
-- provider-local in account models: `moonshotai/kimi-k2.5`
-
-## Supported routes
+### Core
 
 - `GET /health`
 - `GET /v1/models`
@@ -240,53 +276,180 @@ For NVIDIA models that include `/` in the model id (for example `moonshotai/kimi
 - `POST /v1/completions`
 - `POST /v1/embeddings`
 - `POST /v1/images/generations`
-- `POST /v1/{any-other-openai-compatible-json-path}`
+- `POST /v1/{subpath}` (catch-all passthrough for OpenAI-compatible JSON routes)
 
-## Auth
+### Router introspection
 
-Ingress auth is controlled through environment:
+- `GET /v1/router/live-metrics`
+- `GET /v1/router/policy`
 
-- `INGRESS_AUTH_REQUIRED`
-- `INGRESS_API_KEYS`
-- `OAUTH_ENABLED`, `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, `OAUTH_JWKS_URL`
-- `OAUTH_ALGORITHMS`, `OAUTH_REQUIRED_SCOPES`
-- `OAUTH_JWT_SECRET` (optional override path)
+### Observability
 
-`INGRESS_API_KEYS` format is comma-separated (`key1,key2`).
+- `GET /metrics` (Prometheus format; controlled by `OBSERVABILITY_METRICS_ENABLED`)
 
-## Observability
+## Authentication
 
-- `ROUTER_AUDIT_LOG_ENABLED` (default: `true`)
-- `ROUTER_AUDIT_LOG_PATH` (default: `logs/router_decisions.jsonl`)
+Ingress auth is configured via environment variables.
 
-JSONL entries include route decisions and proxy attempt/response events.
+- `INGRESS_AUTH_REQUIRED=true` enables auth enforcement for `/v1/*`
+- API key mode: set `INGRESS_API_KEYS=key1,key2,...`
+- OAuth mode: set `OAUTH_ENABLED=true` and configure JWT verification settings
 
-### Live Metrics + Runtime Policy Updates
+If ingress auth is disabled, requests pass through without auth checks.
 
-The router can continuously update in-memory model priors (latency/failure rate) from live traffic.
+## Environment Variables
 
-Environment knobs:
+All settings are read from environment (or `.env`). Key variables:
 
-- `LIVE_METRICS_ENABLED` (default: `true`)
-- `LIVE_METRICS_EWMA_ALPHA` (default: `0.2`)
-- `LIVE_METRICS_UPDATE_INTERVAL_SECONDS` (default: `30`)
-- `LIVE_METRICS_MIN_SAMPLES` (default: `30`)
-- `RUNTIME_POLICY_MAX_ADJUSTMENT_RATIO` (default: `0.15`)
-- `ROUTER_RUNTIME_OVERRIDES_PATH` (default: `logs/router.runtime.overrides.yaml`)
+### Core
 
-Runtime endpoints:
+| Variable | Default | Description |
+|---|---|---|
+| `ROUTING_CONFIG_PATH` | `router.profile.yaml` | Profile/raw routing config file path |
+| `BACKEND_BASE_URL` | `http://localhost:11434` | Legacy single-backend base URL (used if no accounts configured) |
+| `BACKEND_API_KEY` | unset | Legacy single-backend API key |
+| `BACKEND_TIMEOUT_SECONDS` | `120.0` | Overall request timeout fallback |
+| `BACKEND_CONNECT_TIMEOUT_SECONDS` | `5.0` | Upstream connect timeout |
+| `BACKEND_READ_TIMEOUT_SECONDS` | `30.0` | Upstream read timeout |
+| `BACKEND_WRITE_TIMEOUT_SECONDS` | `30.0` | Upstream write timeout |
+| `BACKEND_POOL_TIMEOUT_SECONDS` | `5.0` | HTTP pool acquisition timeout |
 
-- `GET /v1/router/live-metrics` (EWMA live metrics snapshot)
-- `GET /v1/router/policy` (active runtime-adjusted model profiles + updater status)
+### Ingress auth
 
-## Important configuration note
+| Variable | Default | Description |
+|---|---|---|
+| `INGRESS_AUTH_REQUIRED` | `false` | Require Bearer auth on `/v1/*` |
+| `INGRESS_API_KEYS` | empty | Comma-separated static API keys |
+| `OAUTH_ENABLED` | `false` | Enable OAuth JWT verification |
+| `OAUTH_ISSUER` | unset | JWT issuer claim |
+| `OAUTH_AUDIENCE` | unset | JWT audience claim |
+| `OAUTH_JWKS_URL` | unset | JWKS endpoint |
+| `OAUTH_ALGORITHMS` | `RS256` | Comma-separated JWT algorithms |
+| `OAUTH_REQUIRED_SCOPES` | empty | Required OAuth scopes |
+| `OAUTH_JWT_SECRET` | unset | Shared secret JWT verification option |
+| `OAUTH_CLOCK_SKEW_SECONDS` | `30` | Allowed clock skew |
 
-`BACKEND_BASE_URL` is intentionally not part of the default sample environment.  
-Backend connectivity can be configured through:
+### Audit, retries, resilience
 
-- `backend_base_url`/`backend_api_key` settings in code defaults and env loading
-- account-level `base_url` and auth fields in `router.yaml` (or generated effective config)
+| Variable | Default | Description |
+|---|---|---|
+| `ROUTER_AUDIT_LOG_ENABLED` | `true` | Enable JSONL audit logging |
+| `ROUTER_AUDIT_LOG_PATH` | `logs/router_decisions.jsonl` | Audit log path |
+| `CIRCUIT_BREAKER_ENABLED` | `true` | Enable per-target circuit breakers |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Failure count before opening breaker |
+| `CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS` | `30.0` | Breaker recovery interval |
+| `CIRCUIT_BREAKER_HALF_OPEN_MAX_REQUESTS` | `1` | Requests allowed during half-open |
+| `IDEMPOTENCY_ENABLED` | `true` | Enable idempotency behavior |
+| `IDEMPOTENCY_TTL_SECONDS` | `120` | Idempotency cache TTL |
+| `IDEMPOTENCY_WAIT_TIMEOUT_SECONDS` | `30.0` | Wait timeout for in-flight duplicate |
+| `REDIS_URL` | unset | Redis backend for shared idempotency/live metrics |
 
-`router provider login ...` writes/updates `router.profile.yaml` (profile format), not raw `router.yaml`.
+### Live metrics and runtime policy updates
 
-If you keep only one default backend account, `ROUTING_CONFIG_PATH` is the only required external setting to get started.
+| Variable | Default | Description |
+|---|---|---|
+| `LIVE_METRICS_ENABLED` | `true` | Enable live metrics ingestion and policy updater |
+| `LIVE_METRICS_EWMA_ALPHA` | `0.2` | EWMA smoothing factor |
+| `LIVE_METRICS_CONNECT_LATENCY_WINDOW_SIZE` | `256` | Rolling connect-latency sample window per target |
+| `LIVE_METRICS_CONNECT_LATENCY_ALERT_THRESHOLD_MS` | `8000.0` | SLO alert threshold for connect p95 |
+| `LIVE_METRICS_UPDATE_INTERVAL_SECONDS` | `30.0` | Runtime policy update interval |
+| `LIVE_METRICS_MIN_SAMPLES` | `30` | Min samples before updating model priors |
+| `RUNTIME_POLICY_MAX_ADJUSTMENT_RATIO` | `0.15` | Max per-update profile adjustment |
+| `ROUTER_RUNTIME_OVERRIDES_PATH` | `logs/router.runtime.overrides.yaml` | Persisted runtime overrides file |
+
+### Observability
+
+| Variable | Default | Description |
+|---|---|---|
+| `OBSERVABILITY_METRICS_ENABLED` | `true` | Enable `/metrics` endpoint |
+| `OBSERVABILITY_METRICS_PATH` | `/metrics` | Metrics path setting (currently endpoint is bound at `/metrics`) |
+| `OBSERVABILITY_TRACING_ENABLED` | `false` | Enable OpenTelemetry instrumentation |
+| `OBSERVABILITY_SERVICE_NAME` | `open-llm-router` | OTel service name |
+| `OBSERVABILITY_OTLP_ENDPOINT` | unset | OTLP HTTP exporter endpoint |
+
+## CLI Reference
+
+### `open-llm-router`
+
+Runs the FastAPI gateway.
+
+### `router`
+
+Main configuration and setup CLI.
+
+Common commands:
+
+```bash
+router init --path router.profile.yaml
+router validate-config --path router.profile.yaml
+router compile-config --path router.profile.yaml --stdout
+router show --path router.profile.yaml
+router explain-route --task coding --complexity medium --path router.profile.yaml
+router profile list
+router profile show auto
+router provider login openai --kind apikey --name openai-work
+router catalog sync --dry-run
+```
+
+### `router-log-analyze`
+
+Aggregate JSONL audit logs into text or JSON reports.
+
+```bash
+router-log-analyze --log-path logs/router_decisions.jsonl --format text
+router-log-analyze --log-path logs/router_decisions.jsonl --format json --output logs/report.json
+```
+
+## Docker
+
+### Build image
+
+```bash
+docker build -t open-llm-router:local .
+```
+
+### Run with compose
+
+```bash
+docker compose up --build
+```
+
+Compose behavior:
+
+- maps `8000:8000`
+- mounts `./router.profile.yaml` to `/app/router.profile.yaml` (read-only)
+- mounts `./logs` to `/app/logs`
+- sets runtime defaults for routing path, audit path, and live metrics toggles
+
+## Development Workflow
+
+### Quality checks
+
+```bash
+make lint
+make format
+make test
+```
+
+`make lint` runs compile checks, `ruff`, `flake8`, `isort --check`, and `mypy` when available.
+
+### Run tests directly
+
+```bash
+uv run pytest tests
+```
+
+## Troubleshooting
+
+- **`Routing config not found`**: set `ROUTING_CONFIG_PATH` or create `router.profile.yaml`
+- **`validate-config` fails**: run `router profile list` and ensure models/providers are valid catalog IDs
+- **No viable routing target**: check account `enabled` flags, guardrails, and `allowed_models` / provider filters
+- **401s on `/v1/*`**: verify `INGRESS_AUTH_REQUIRED` and bearer token setup
+- **No metrics at `/metrics`**: ensure `OBSERVABILITY_METRICS_ENABLED=true`
+
+## Security Notes
+
+- Do not commit real API keys or OAuth tokens into `router.profile.yaml`
+- Prefer `*_ENV` fields (for example `api_key_env`) over inline secrets
+- Keep `.env` out of version control
+- Rotate provider credentials immediately if leaked
