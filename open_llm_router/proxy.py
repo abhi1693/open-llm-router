@@ -2015,20 +2015,14 @@ class TargetSelectionPolicy:
             sort_by = ""
 
         def _sort_key(target: BackendTarget) -> tuple[float, float, str]:
-            order_rank = float(order_index.get(target.provider.strip().lower(), 10_000))
-            if order_rank >= 10_000:
-                order_rank = float(
-                    order_index.get(target.account_name.strip().lower(), 10_000)
-                )
-
-            metric = 0.0
-            if sort_by == "price":
-                metric = self.target_effective_price(target)
-            elif sort_by == "latency":
-                metric = self.target_latency_ms(target)
-            elif sort_by == "throughput":
-                metric = -self.target_throughput(target)
-
+            order_rank = self.target_order_rank(
+                target=target,
+                order_index=order_index,
+            )
+            metric = self.target_sort_metric(
+                target=target,
+                sort_by=sort_by,
+            )
             return (
                 order_rank,
                 metric,
@@ -2036,6 +2030,31 @@ class TargetSelectionPolicy:
             )
 
         return sorted(model_targets, key=_sort_key)
+
+    @staticmethod
+    def target_order_rank(
+        *,
+        target: BackendTarget,
+        order_index: dict[str, int],
+    ) -> float:
+        order_rank = float(order_index.get(target.provider.strip().lower(), 10_000))
+        if order_rank < 10_000:
+            return order_rank
+        return float(order_index.get(target.account_name.strip().lower(), 10_000))
+
+    def target_sort_metric(
+        self,
+        *,
+        target: BackendTarget,
+        sort_by: str,
+    ) -> float:
+        if sort_by == "price":
+            return self.target_effective_price(target)
+        if sort_by == "latency":
+            return self.target_latency_ms(target)
+        if sort_by == "throughput":
+            return -self.target_throughput(target)
+        return 0.0
 
     @staticmethod
     def extract_request_parameter_names(payload: dict[str, Any]) -> set[str]:
@@ -2072,6 +2091,27 @@ class TargetSelectionPolicy:
                 output.add(normalized)
         return output
 
+    def parameter_rejection_reasons(
+        self,
+        *,
+        target: BackendTarget,
+        requested: set[str],
+    ) -> list[str]:
+        metadata = self.target_metadata(target)
+        supported = self.normalize_parameter_set(metadata.get("supported_parameters"))
+        unsupported = self.normalize_parameter_set(metadata.get("unsupported_parameters"))
+
+        reasons: list[str] = []
+        if supported:
+            missing = sorted(requested - supported)
+            if missing:
+                reasons.append(f"missing_supported_parameters:{','.join(missing)}")
+
+        blocked = sorted(requested & unsupported)
+        if blocked:
+            reasons.append(f"unsupported_parameters:{','.join(blocked)}")
+        return reasons
+
     def filter_targets_by_parameter_support(
         self,
         *,
@@ -2086,22 +2126,10 @@ class TargetSelectionPolicy:
         accepted: list[BackendTarget] = []
         rejected: dict[str, list[str]] = {}
         for target in candidate_targets:
-            metadata = self.target_metadata(target)
-            supported = self.normalize_parameter_set(metadata.get("supported_parameters"))
-            unsupported = self.normalize_parameter_set(
-                metadata.get("unsupported_parameters")
+            reasons = self.parameter_rejection_reasons(
+                target=target,
+                requested=requested,
             )
-
-            reasons: list[str] = []
-            if supported:
-                missing = sorted(requested - supported)
-                if missing:
-                    reasons.append(f"missing_supported_parameters:{','.join(missing)}")
-
-            blocked = sorted(requested & unsupported)
-            if blocked:
-                reasons.append(f"unsupported_parameters:{','.join(blocked)}")
-
             if reasons:
                 rejected[target.label] = reasons
                 continue
