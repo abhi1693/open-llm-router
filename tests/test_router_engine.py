@@ -392,7 +392,9 @@ def test_hard_constraints_filter_models_that_exceed_output_token_limit() -> None
     assert decision.selected_model == "large-model"
 
 
-def test_hard_constraints_allow_small_context_overflow_with_tolerance() -> None:
+def test_hard_constraints_allow_small_context_overflow_with_tolerance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "small-model",
@@ -413,21 +415,28 @@ def test_hard_constraints_allow_small_context_overflow_with_tolerance() -> None:
             },
         }
     )
+    monkeypatch.setattr(
+        "open_llm_router.router_engine._estimate_payload_tokens",
+        lambda **_: (1050, "test_override"),
+    )
     router = SmartModelRouter(config)
     payload = {
         "model": "auto",
-        "messages": [{"role": "user", "content": "x" * 4200}],
+        "messages": [{"role": "user", "content": "hello"}],
     }
 
     decision = router.decide(payload, "/v1/chat/completions")
     assert decision.selected_model == "large-model"
-    assert (
-        "context_window_exceeded:1050>800"
-        in decision.decision_trace["hard_constraint_rejections"]["small-model"]
+    assert any(
+        reason.startswith("context_window_exceeded:")
+        for reason in decision.decision_trace["hard_constraint_rejections"]["small-model"]
     )
+    assert decision.decision_trace["hard_constraint_token_estimation"] == "test_override"
 
 
-def test_hard_constraints_supplement_large_context_single_candidate_chain() -> None:
+def test_hard_constraints_supplement_large_context_single_candidate_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "primary-model",
@@ -449,6 +458,10 @@ def test_hard_constraints_supplement_large_context_single_candidate_chain() -> N
             },
         }
     )
+    monkeypatch.setattr(
+        "open_llm_router.router_engine._estimate_payload_tokens",
+        lambda **_: (130000, "test_override"),
+    )
     router = SmartModelRouter(config)
     payload = {
         "model": "auto",
@@ -459,7 +472,7 @@ def test_hard_constraints_supplement_large_context_single_candidate_chain() -> N
                 "function": {"name": "noop", "parameters": {"type": "object"}},
             }
         ],
-        "messages": [{"role": "user", "content": "x" * 500000}],
+        "messages": [{"role": "user", "content": "hello"}],
     }
 
     decision = router.decide(payload, "/v1/chat/completions")

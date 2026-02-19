@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from typing import Any
+from functools import lru_cache
+import json
+from math import log, sqrt
+from threading import Lock
+from typing import Any, Iterator
 
 from open_llm_router.classifier import classify_request
 from open_llm_router.config import ModelProfile, RoutingConfig
-from open_llm_router.scoring import build_routing_features, score_model
+from open_llm_router.scoring import ModelScore, build_routing_features, score_model
 
 _CONTEXT_WINDOW_OVERFLOW_TOLERANCE = 0.10
 _HIGH_CONTEXT_SUPPLEMENT_TOKENS = 120_000
 _MAX_SUPPLEMENTAL_MODELS = 2
+_UCB_EXPLORATION_WEIGHT = 0.25
 
 
 class InvalidModelError(ValueError):
@@ -58,6 +63,9 @@ __all__ = [
 class SmartModelRouter:
     def __init__(self, config: RoutingConfig):
         self.config = config
+        self._bandit_lock = Lock()
+        self._bandit_total_decisions = 0
+        self._bandit_selection_counts: dict[str, int] = {}
 
     @staticmethod
     def _normalize_requested_model(requested_model: Any) -> str | None:
@@ -111,6 +119,8 @@ class SmartModelRouter:
                 default_chain,
                 hard_constraint_trace,
                 supplemented_models,
+                estimated_input_tokens,
+                token_estimation_method,
             ) = self._apply_hard_constraints(
                 candidate_models=allowed_filtered_chain,
                 required_capabilities=required_capabilities,
@@ -131,6 +141,8 @@ class SmartModelRouter:
                 "hard_constraint_required_capabilities": sorted(required_capabilities),
                 "hard_constraint_filtered_chain": list(default_chain),
                 "hard_constraint_rejections": hard_constraint_trace,
+                "hard_constraint_estimated_input_tokens": estimated_input_tokens,
+                "hard_constraint_token_estimation": token_estimation_method,
                 "provider_preferences": dict(provider_preferences),
             }
             if supplemented_models:
@@ -315,10 +327,30 @@ class SmartModelRouter:
             )
 
         scored.sort(key=lambda item: item.utility, reverse=True)
+        bandit_scores: dict[str, float] = {}
+        bandit_bonus: dict[str, float] = {}
+        bandit_counts: dict[str, int] = {}
+        bandit_total_decisions = 0
+        if len(scored) >= 2:
+            (
+                scored,
+                bandit_scores,
+                bandit_bonus,
+                bandit_counts,
+                bandit_total_decisions,
+            ) = self._rank_with_ucb(scored)
+
         ranked_models = [item.model for item in scored]
         selected_model = ranked_models[0]
+        self._record_bandit_selection(selected_model)
         fallbacks = ranked_models[1:]
-        candidate_scores = [item.as_dict() for item in scored]
+        candidate_scores: list[dict[str, Any]] = []
+        for item in scored:
+            row = item.as_dict()
+            if item.model in bandit_scores:
+                row["bandit_selection_score"] = round(bandit_scores[item.model], 6)
+                row["bandit_exploration_bonus"] = round(bandit_bonus[item.model], 6)
+            candidate_scores.append(row)
         return (
             selected_model,
             fallbacks,
@@ -328,8 +360,54 @@ class SmartModelRouter:
                 "candidate_source": candidate_source,
                 "configured_candidates": configured_candidates,
                 "default_chain": default_chain,
+                "bandit": {
+                    "strategy": "ucb1",
+                    "enabled": len(scored) >= 2,
+                    "exploration_weight": _UCB_EXPLORATION_WEIGHT,
+                    "total_decisions_before_selection": bandit_total_decisions,
+                    "selection_counts_before_selection": bandit_counts,
+                },
             },
         )
+
+    def _rank_with_ucb(
+        self, scored: list[ModelScore]
+    ) -> tuple[
+        list[ModelScore],
+        dict[str, float],
+        dict[str, float],
+        dict[str, int],
+        int,
+    ]:
+        with self._bandit_lock:
+            counts = {
+                item.model: self._bandit_selection_counts.get(item.model, 0)
+                for item in scored
+            }
+            total_decisions = self._bandit_total_decisions
+
+        log_term = log(float(total_decisions) + 2.0)
+        selection_scores: dict[str, float] = {}
+        exploration_bonus: dict[str, float] = {}
+        for item in scored:
+            pulls = counts[item.model]
+            bonus = _UCB_EXPLORATION_WEIGHT * sqrt(log_term / float(pulls + 1))
+            exploration_bonus[item.model] = bonus
+            selection_scores[item.model] = item.utility + bonus
+
+        ranked = sorted(
+            scored,
+            key=lambda item: (selection_scores[item.model], item.utility),
+            reverse=True,
+        )
+        return ranked, selection_scores, exploration_bonus, counts, total_decisions
+
+    def _record_bandit_selection(self, model: str) -> None:
+        with self._bandit_lock:
+            self._bandit_total_decisions += 1
+            self._bandit_selection_counts[model] = (
+                self._bandit_selection_counts.get(model, 0) + 1
+            )
 
     @staticmethod
     def _required_capabilities(
@@ -365,14 +443,15 @@ class SmartModelRouter:
         payload: dict[str, Any],
         signals: dict[str, Any],
         allowed_model_patterns: list[str],
-    ) -> tuple[list[str], dict[str, list[str]], list[str]]:
+    ) -> tuple[list[str], dict[str, list[str]], list[str], int, str]:
         if not candidate_models:
-            return [], {}, []
+            return [], {}, [], 1, "char_heuristic"
 
         requested_output_tokens = _extract_requested_output_tokens(payload)
-        # Char-count is a cheap approximation and keeps routing on the fast path.
-        estimated_input_tokens = max(
-            1, int(float(signals.get("text_length_total", 0)) / 4.0)
+        estimated_input_tokens, token_estimation_method = _estimate_payload_tokens(
+            payload=payload,
+            model_hint=self._resolve_tokenizer_model_hint(candidate_models),
+            fallback_char_count=float(signals.get("text_length_total", 0)),
         )
 
         accepted: list[str] = []
@@ -399,9 +478,32 @@ class SmartModelRouter:
                 estimated_input_tokens=estimated_input_tokens,
                 allowed_model_patterns=allowed_model_patterns,
             )
-            return accepted, rejected, supplemented
+            return (
+                accepted,
+                rejected,
+                supplemented,
+                estimated_input_tokens,
+                token_estimation_method,
+            )
         # If all candidates were rejected, keep original chain to avoid complete outage.
-        return candidate_models, rejected, []
+        return (
+            candidate_models,
+            rejected,
+            [],
+            estimated_input_tokens,
+            token_estimation_method,
+        )
+
+    def _resolve_tokenizer_model_hint(self, candidate_models: list[str]) -> str | None:
+        for model in candidate_models:
+            metadata = self.config.models.get(model)
+            if isinstance(metadata, dict):
+                model_id = metadata.get("id")
+                if isinstance(model_id, str) and model_id.strip():
+                    return model_id.strip()
+            if model.strip():
+                return model.strip()
+        return None
 
     def _constraint_reasons_for_model(
         self,
@@ -550,6 +652,100 @@ def _as_positive_int(value: Any) -> int | None:
     if parsed <= 0:
         return None
     return parsed
+
+
+def _estimate_payload_tokens(
+    *,
+    payload: dict[str, Any],
+    model_hint: str | None,
+    fallback_char_count: float = 0.0,
+) -> tuple[int, str]:
+    encoder = _resolve_token_encoder(model_hint)
+    texts = list(_iter_payload_text(payload))
+
+    if encoder is not None:
+        token_count = 0
+        for text in texts:
+            token_count += len(encoder.encode(text, disallowed_special=()))
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            token_count += len(messages) * 3
+        return max(1, token_count), "tiktoken"
+
+    if texts:
+        fallback_char_count = float(sum(len(text) for text in texts))
+    return max(1, int(fallback_char_count / 4.0)), "char_heuristic"
+
+
+def _iter_payload_text(payload: dict[str, Any]) -> Iterator[str]:
+    for key in ("messages", "input", "prompt"):
+        value = payload.get(key)
+        yield from _iter_text_fragments(value)
+
+    for key in ("tools", "functions", "response_format"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        try:
+            yield json.dumps(value, separators=(",", ":"), sort_keys=True)
+        except (TypeError, ValueError):
+            continue
+
+
+def _iter_text_fragments(value: Any) -> Iterator[str]:
+    if isinstance(value, str):
+        if value:
+            yield value
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from _iter_text_fragments(item)
+        return
+    if not isinstance(value, dict):
+        return
+
+    text = value.get("text")
+    if isinstance(text, str) and text:
+        yield text
+    input_text = value.get("input_text")
+    if isinstance(input_text, str) and input_text:
+        yield input_text
+    content = value.get("content")
+    if content is not None:
+        yield from _iter_text_fragments(content)
+    prompt = value.get("prompt")
+    if prompt is not None:
+        yield from _iter_text_fragments(prompt)
+
+
+@lru_cache(maxsize=32)
+def _resolve_token_encoder(model_hint: str | None) -> Any | None:
+    try:
+        import tiktoken  # type: ignore
+    except ImportError:
+        return None
+
+    hints: list[str] = []
+    if isinstance(model_hint, str):
+        normalized = model_hint.strip()
+        if normalized:
+            hints.append(normalized)
+            if "/" in normalized:
+                _, _, suffix = normalized.partition("/")
+                suffix = suffix.strip()
+                if suffix:
+                    hints.append(suffix)
+
+    for hint in hints:
+        try:
+            return tiktoken.encoding_for_model(hint)
+        except KeyError:
+            continue
+
+    try:
+        return tiktoken.get_encoding("cl100k_base")
+    except KeyError:
+        return None
 
 
 def _extract_allowed_model_patterns(payload: dict[str, Any]) -> list[str]:

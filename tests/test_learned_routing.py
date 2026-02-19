@@ -181,3 +181,54 @@ def test_learned_router_keeps_candidates_within_rule_chain() -> None:
 
     assert decision.complexity == "low"
     assert "xhigh-model" not in decision.ranked_models
+
+
+def test_learned_router_ucb_explores_underused_models() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "model-a",
+            "task_routes": {
+                "general": {
+                    "low": ["model-a", "model-b"],
+                },
+            },
+            "fallback_models": [],
+            "learned_routing": {
+                "enabled": True,
+                "task_candidates": {
+                    "general": ["model-a", "model-b"],
+                },
+            },
+            "model_profiles": {
+                "model-a": {
+                    "quality_bias": 0.35,
+                    "quality_sensitivity": 1.0,
+                    "cost_input_per_1k": 0.0002,
+                    "cost_output_per_1k": 0.0006,
+                    "latency_ms": 300,
+                    "failure_rate": 0.01,
+                },
+                "model-b": {
+                    "quality_bias": 0.33,
+                    "quality_sensitivity": 1.0,
+                    "cost_input_per_1k": 0.0002,
+                    "cost_output_per_1k": 0.0006,
+                    "latency_ms": 300,
+                    "failure_rate": 0.01,
+                },
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    first = router.decide(payload, "/v1/chat/completions")
+    second = router.decide(payload, "/v1/chat/completions")
+
+    assert first.selected_model == "model-a"
+    assert second.selected_model == "model-b"
+    assert second.decision_trace["learned_trace"]["bandit"]["enabled"] is True
+    assert "bandit_selection_score" in second.candidate_scores[0]
