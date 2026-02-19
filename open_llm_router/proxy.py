@@ -839,174 +839,48 @@ class ProxyRequestExecutor:
         stream: bool,
         request_id: str | None = None,
     ) -> Response:
-        candidate_targets = self._proxy.build_candidate_targets(route_decision)
-        parameter_rejections: dict[str, list[str]] = {}
-        requested_parameters: list[str] = []
-        if self._proxy.requires_parameter_compatibility(
-            route_decision.provider_preferences
-        ):
-            (
-                candidate_targets,
-                parameter_rejections,
-                requested_parameters,
-            ) = self._proxy.filter_targets_by_parameter_support(
-                candidate_targets=candidate_targets,
-                payload=payload,
-            )
         rid = request_id or "-"
-        allow_fallbacks = self._proxy.allows_fallbacks(
-            route_decision.provider_preferences
+        (
+            candidate_targets,
+            parameter_rejections,
+            requested_parameters,
+        ) = self._prepare_candidate_targets(route_decision=route_decision, payload=payload)
+        candidate_targets = self._apply_fallback_policy(
+            candidate_targets=candidate_targets,
+            route_decision=route_decision,
+            request_id=rid,
         )
-        if not allow_fallbacks and len(candidate_targets) > 1:
-            primary_target = candidate_targets[0]
-            candidate_targets = [primary_target]
-            self._proxy.audit(
-                "proxy_fallbacks_disabled",
-                request_id=rid,
-                selected_model=primary_target.model,
-                primary_target=primary_target.label,
+        effective_selected_model, effective_fallback_models = (
+            self._effective_model_selection(
+                candidate_targets=candidate_targets,
+                route_decision=route_decision,
             )
-        effective_model_chain = _dedupe_preserving_order(
-            [target.model for target in candidate_targets]
-        )
-        effective_selected_model = (
-            effective_model_chain[0]
-            if effective_model_chain
-            else route_decision.selected_model
-        )
-        effective_fallback_models = (
-            effective_model_chain[1:] if effective_model_chain else []
         )
         request_started = time.perf_counter()
-        logger.info(
-            (
-                "proxy_start request_id=%s path=%s selected_model=%s stream=%s "
-                "candidate_targets=%d"
-            ),
-            rid,
-            path,
-            effective_selected_model,
-            stream,
-            len(candidate_targets),
-        )
-        self._proxy.audit(
-            "proxy_start",
-            request_id=rid,
+        self._emit_proxy_start(
             path=path,
-            selected_model=effective_selected_model,
-            source=route_decision.source,
-            task=route_decision.task,
-            complexity=route_decision.complexity,
-            requested_model=route_decision.requested_model,
-            fallback_models=effective_fallback_models,
-            provider_preferences=route_decision.provider_preferences,
+            route_decision=route_decision,
             stream=stream,
+            request_id=rid,
+            selected_model=effective_selected_model,
+            fallback_models=effective_fallback_models,
             candidate_targets=len(candidate_targets),
         )
         if parameter_rejections:
-            self._proxy.audit(
-                "proxy_parameter_compatibility_filter",
+            self._emit_parameter_filter_audit(
                 request_id=rid,
                 requested_parameters=requested_parameters,
-                rejections=parameter_rejections,
+                parameter_rejections=parameter_rejections,
             )
-        if (
-            self._proxy.requires_parameter_compatibility(
-                route_decision.provider_preferences
-            )
-            and not candidate_targets
-        ):
-            logger.warning(
-                "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
-                rid,
-                ",".join(requested_parameters),
-            )
-            self._proxy.audit(
-                "proxy_require_parameters_no_target",
-                request_id=rid,
-                requested_parameters=requested_parameters,
-                rejections=parameter_rejections,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": {
-                        "type": "routing_constraints_unsatisfied",
-                        "message": (
-                            "No provider/account targets satisfy require_parameters constraints."
-                        ),
-                        "constraint": "require_parameters",
-                        "details": {
-                            "requested_parameters": requested_parameters,
-                            "rejections": parameter_rejections,
-                        },
-                    }
-                },
-            )
-        if (
-            self._proxy.has_provider_filters(route_decision.provider_preferences)
-            and not candidate_targets
-        ):
-            only = self._proxy.normalized_provider_filter_values(
-                route_decision.provider_preferences.get("only")
-            )
-            ignore = self._proxy.normalized_provider_filter_values(
-                route_decision.provider_preferences.get("ignore")
-            )
-            logger.warning(
-                "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
-                rid,
-                ",".join(only),
-                ",".join(ignore),
-            )
-            self._proxy.audit(
-                "proxy_provider_filters_no_target",
-                request_id=rid,
-                selected_model=route_decision.selected_model,
-                fallback_models=route_decision.fallback_models,
-                only=only,
-                ignore=ignore,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": {
-                        "type": "routing_constraints_unsatisfied",
-                        "message": (
-                            "No provider/account targets satisfy provider only/ignore constraints."
-                        ),
-                        "constraint": "provider",
-                        "details": {
-                            "only": only,
-                            "ignore": ignore,
-                        },
-                    }
-                },
-            )
-        if not candidate_targets:
-            logger.warning(
-                "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
-                rid,
-                route_decision.selected_model,
-                ",".join(route_decision.fallback_models),
-            )
-            self._proxy.audit(
-                "proxy_no_target",
-                request_id=rid,
-                selected_model=route_decision.selected_model,
-                fallback_models=route_decision.fallback_models,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={
-                    "error": {
-                        "type": "no_backend_target",
-                        "message": "No backend account supports the selected model set.",
-                        "selected_model": route_decision.selected_model,
-                        "fallback_models": route_decision.fallback_models,
-                    }
-                },
-            )
+        preflight_response = self._preflight_constraint_response(
+            route_decision=route_decision,
+            candidate_targets=candidate_targets,
+            requested_parameters=requested_parameters,
+            parameter_rejections=parameter_rejections,
+            request_id=rid,
+        )
+        if preflight_response is not None:
+            return preflight_response
 
         stats = ProxyExecutionStats(
             attempted_targets=[],
@@ -1112,13 +986,247 @@ class ProxyRequestExecutor:
                 audit_hook=self._proxy.audit_hook,
             )
 
+        return self._routing_exhausted_response(
+            request_id=rid,
+            candidate_targets_total=candidate_targets_total,
+            stats=stats,
+        )
+
+    def _prepare_candidate_targets(
+        self,
+        *,
+        route_decision: RouteDecision,
+        payload: dict[str, Any],
+    ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
+        candidate_targets = self._proxy.build_candidate_targets(route_decision)
+        parameter_rejections: dict[str, list[str]] = {}
+        requested_parameters: list[str] = []
+        if self._proxy.requires_parameter_compatibility(
+            route_decision.provider_preferences
+        ):
+            (
+                candidate_targets,
+                parameter_rejections,
+                requested_parameters,
+            ) = self._proxy.filter_targets_by_parameter_support(
+                candidate_targets=candidate_targets,
+                payload=payload,
+            )
+        return candidate_targets, parameter_rejections, requested_parameters
+
+    def _apply_fallback_policy(
+        self,
+        *,
+        candidate_targets: list[BackendTarget],
+        route_decision: RouteDecision,
+        request_id: str,
+    ) -> list[BackendTarget]:
+        allow_fallbacks = self._proxy.allows_fallbacks(
+            route_decision.provider_preferences
+        )
+        if allow_fallbacks or len(candidate_targets) <= 1:
+            return candidate_targets
+
+        primary_target = candidate_targets[0]
+        self._proxy.audit(
+            "proxy_fallbacks_disabled",
+            request_id=request_id,
+            selected_model=primary_target.model,
+            primary_target=primary_target.label,
+        )
+        return [primary_target]
+
+    @staticmethod
+    def _effective_model_selection(
+        *,
+        candidate_targets: list[BackendTarget],
+        route_decision: RouteDecision,
+    ) -> tuple[str, list[str]]:
+        effective_model_chain = _dedupe_preserving_order(
+            [target.model for target in candidate_targets]
+        )
+        effective_selected_model = (
+            effective_model_chain[0]
+            if effective_model_chain
+            else route_decision.selected_model
+        )
+        effective_fallback_models = (
+            effective_model_chain[1:] if effective_model_chain else []
+        )
+        return effective_selected_model, effective_fallback_models
+
+    def _emit_proxy_start(
+        self,
+        *,
+        path: str,
+        route_decision: RouteDecision,
+        stream: bool,
+        request_id: str,
+        selected_model: str,
+        fallback_models: list[str],
+        candidate_targets: int,
+    ) -> None:
+        logger.info(
+            (
+                "proxy_start request_id=%s path=%s selected_model=%s stream=%s "
+                "candidate_targets=%d"
+            ),
+            request_id,
+            path,
+            selected_model,
+            stream,
+            candidate_targets,
+        )
+        self._proxy.audit(
+            "proxy_start",
+            request_id=request_id,
+            path=path,
+            selected_model=selected_model,
+            source=route_decision.source,
+            task=route_decision.task,
+            complexity=route_decision.complexity,
+            requested_model=route_decision.requested_model,
+            fallback_models=fallback_models,
+            provider_preferences=route_decision.provider_preferences,
+            stream=stream,
+            candidate_targets=candidate_targets,
+        )
+
+    def _emit_parameter_filter_audit(
+        self,
+        *,
+        request_id: str,
+        requested_parameters: list[str],
+        parameter_rejections: dict[str, list[str]],
+    ) -> None:
+        self._proxy.audit(
+            "proxy_parameter_compatibility_filter",
+            request_id=request_id,
+            requested_parameters=requested_parameters,
+            rejections=parameter_rejections,
+        )
+
+    def _preflight_constraint_response(
+        self,
+        *,
+        route_decision: RouteDecision,
+        candidate_targets: list[BackendTarget],
+        requested_parameters: list[str],
+        parameter_rejections: dict[str, list[str]],
+        request_id: str,
+    ) -> JSONResponse | None:
+        if not candidate_targets and self._proxy.requires_parameter_compatibility(
+            route_decision.provider_preferences
+        ):
+            logger.warning(
+                "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
+                request_id,
+                ",".join(requested_parameters),
+            )
+            self._proxy.audit(
+                "proxy_require_parameters_no_target",
+                request_id=request_id,
+                requested_parameters=requested_parameters,
+                rejections=parameter_rejections,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "type": "routing_constraints_unsatisfied",
+                        "message": (
+                            "No provider/account targets satisfy require_parameters constraints."
+                        ),
+                        "constraint": "require_parameters",
+                        "details": {
+                            "requested_parameters": requested_parameters,
+                            "rejections": parameter_rejections,
+                        },
+                    }
+                },
+            )
+
+        if not candidate_targets and self._proxy.has_provider_filters(
+            route_decision.provider_preferences
+        ):
+            only = self._proxy.normalized_provider_filter_values(
+                route_decision.provider_preferences.get("only")
+            )
+            ignore = self._proxy.normalized_provider_filter_values(
+                route_decision.provider_preferences.get("ignore")
+            )
+            logger.warning(
+                "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
+                request_id,
+                ",".join(only),
+                ",".join(ignore),
+            )
+            self._proxy.audit(
+                "proxy_provider_filters_no_target",
+                request_id=request_id,
+                selected_model=route_decision.selected_model,
+                fallback_models=route_decision.fallback_models,
+                only=only,
+                ignore=ignore,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "type": "routing_constraints_unsatisfied",
+                        "message": (
+                            "No provider/account targets satisfy provider only/ignore constraints."
+                        ),
+                        "constraint": "provider",
+                        "details": {
+                            "only": only,
+                            "ignore": ignore,
+                        },
+                    }
+                },
+            )
+
+        if not candidate_targets:
+            logger.warning(
+                "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
+                request_id,
+                route_decision.selected_model,
+                ",".join(route_decision.fallback_models),
+            )
+            self._proxy.audit(
+                "proxy_no_target",
+                request_id=request_id,
+                selected_model=route_decision.selected_model,
+                fallback_models=route_decision.fallback_models,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "error": {
+                        "type": "no_backend_target",
+                        "message": "No backend account supports the selected model set.",
+                        "selected_model": route_decision.selected_model,
+                        "fallback_models": route_decision.fallback_models,
+                    }
+                },
+            )
+
+        return None
+
+    def _routing_exhausted_response(
+        self,
+        *,
+        request_id: str,
+        candidate_targets_total: int,
+        stats: ProxyExecutionStats,
+    ) -> JSONResponse:
         logger.error(
             (
                 "proxy_exhausted request_id=%s attempted_targets=%s "
                 "candidate_targets_total=%d skipped_rate_limited=%d "
                 "skipped_circuit_open=%d skipped_oauth_token_missing=%d"
             ),
-            rid,
+            request_id,
             ",".join(stats.attempted_targets),
             candidate_targets_total,
             stats.skipped_rate_limited,
@@ -1127,7 +1235,7 @@ class ProxyRequestExecutor:
         )
         self._proxy.audit(
             "proxy_exhausted",
-            request_id=rid,
+            request_id=request_id,
             candidate_targets_total=candidate_targets_total,
             attempted_count=len(stats.attempted_targets),
             attempted_targets=stats.attempted_targets,
