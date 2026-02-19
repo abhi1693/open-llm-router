@@ -469,65 +469,165 @@ def _feature_weight_scale_for_stability(
     return min(max(scale, 0.55), 1.0)
 
 
+class RuntimeOverridesManager:
+    def __init__(
+        self,
+        *,
+        routing_config: RoutingConfig,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._routing_config = routing_config
+        self._logger = logger
+
+    def apply_from_path(self, *, path: str | None) -> int:
+        if not path:
+            return 0
+        file_path = Path(path)
+        if not file_path.exists():
+            return 0
+
+        try:
+            raw = YamlFileStore(file_path).load(default={})
+        except Exception as exc:
+            if self._logger is not None:
+                self._logger.warning(
+                    "runtime_overrides_load_failed path=%s error=%s",
+                    file_path,
+                    str(exc),
+                )
+            return 0
+        if not isinstance(raw, dict):
+            if self._logger is not None:
+                self._logger.warning(
+                    "runtime_overrides_load_failed path=%s error=invalid_root",
+                    file_path,
+                )
+            return 0
+        return self.apply_from_raw(raw=raw, source_path=file_path)
+
+    def apply_from_raw(
+        self,
+        *,
+        raw: dict[str, Any],
+        source_path: Path | None = None,
+    ) -> int:
+        overrides = raw.get("model_profiles")
+        if not isinstance(overrides, dict):
+            overrides = {}
+
+        applied = 0
+        for model, fields in overrides.items():
+            if not isinstance(model, str) or not isinstance(fields, dict):
+                continue
+            profile = self._routing_config.model_profiles.get(model) or ModelProfile()
+            changed = False
+            latency_ms = fields.get("latency_ms")
+            failure_rate = fields.get("failure_rate")
+            if isinstance(latency_ms, (int, float)) and float(latency_ms) > 0:
+                profile.latency_ms = float(latency_ms)
+                changed = True
+            if isinstance(failure_rate, (int, float)):
+                profile.failure_rate = min(max(float(failure_rate), 0.0), 1.0)
+                changed = True
+            if changed:
+                self._routing_config.model_profiles[model] = profile
+                applied += 1
+
+        self.apply_classifier_calibration_overrides(raw=raw)
+        self.apply_learned_feature_weight_overrides(raw=raw)
+
+        if applied and self._logger is not None and source_path is not None:
+            self._logger.info(
+                "runtime_overrides_applied path=%s models=%d", source_path, applied
+            )
+        return applied
+
+    def write(
+        self,
+        *,
+        path: Path,
+        snapshot: dict[str, ModelMetricsSnapshot],
+        classifier_calibration: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "generated_at_epoch": time.time(),
+            "model_profiles": {},
+            "metrics_snapshot": snapshot_to_dict(snapshot),
+        }
+
+        for model, profile in sorted(self._routing_config.model_profiles.items()):
+            payload["model_profiles"][model] = {
+                "latency_ms": float(profile.latency_ms),
+                "failure_rate": float(profile.failure_rate),
+            }
+
+        if isinstance(classifier_calibration, dict):
+            payload["classifier_calibration"] = classifier_calibration
+        payload["learned_routing"] = {
+            "feature_weights": {
+                name: float(value)
+                for name, value in sorted(
+                    self._routing_config.learned_routing.feature_weights.items()
+                )
+                if isinstance(value, (int, float))
+            }
+        }
+
+        YamlFileStore(path).write(payload, sort_keys=False)
+
+    def apply_classifier_calibration_overrides(self, *, raw: dict[str, Any]) -> None:
+        calibration_raw = raw.get("classifier_calibration")
+        if not isinstance(calibration_raw, dict):
+            return
+
+        cfg = self._routing_config.classifier_calibration
+        low_raw = calibration_raw.get("secondary_low_confidence_min_confidence")
+        mixed_raw = calibration_raw.get("secondary_mixed_signal_min_confidence")
+        low = (
+            float(low_raw)
+            if isinstance(low_raw, (int, float))
+            else float(cfg.secondary_low_confidence_min_confidence)
+        )
+        mixed = (
+            float(mixed_raw)
+            if isinstance(mixed_raw, (int, float))
+            else float(cfg.secondary_mixed_signal_min_confidence)
+        )
+        min_threshold = float(cfg.min_threshold)
+        max_threshold = float(cfg.max_threshold)
+        low = min(max(low, min_threshold), max_threshold)
+        mixed = min(max(mixed, min_threshold), max_threshold)
+        mixed = max(mixed, low)
+
+        cfg.secondary_low_confidence_min_confidence = low
+        cfg.secondary_mixed_signal_min_confidence = mixed
+
+    def apply_learned_feature_weight_overrides(self, *, raw: dict[str, Any]) -> None:
+        learned_raw = raw.get("learned_routing")
+        if not isinstance(learned_raw, dict):
+            return
+        feature_weights_raw = learned_raw.get("feature_weights")
+        if not isinstance(feature_weights_raw, dict):
+            return
+
+        for name, value in feature_weights_raw.items():
+            if not isinstance(name, str):
+                continue
+            if not isinstance(value, (int, float)):
+                continue
+            self._routing_config.learned_routing.feature_weights[name] = float(value)
+
+
 def apply_runtime_overrides(
     *,
     path: str | None,
     routing_config: RoutingConfig,
     logger: logging.Logger | None = None,
 ) -> int:
-    if not path:
-        return 0
-    file_path = Path(path)
-    if not file_path.exists():
-        return 0
-
-    try:
-        raw = YamlFileStore(file_path).load(default={})
-    except Exception as exc:
-        if logger is not None:
-            logger.warning(
-                "runtime_overrides_load_failed path=%s error=%s", file_path, str(exc)
-            )
-        return 0
-    if not isinstance(raw, dict):
-        if logger is not None:
-            logger.warning("runtime_overrides_load_failed path=%s error=invalid_root", file_path)
-        return 0
-
-    overrides = raw.get("model_profiles")
-    if not isinstance(overrides, dict):
-        overrides = {}
-
-    applied = 0
-    for model, fields in overrides.items():
-        if not isinstance(model, str) or not isinstance(fields, dict):
-            continue
-        profile = routing_config.model_profiles.get(model) or ModelProfile()
-        changed = False
-        latency_ms = fields.get("latency_ms")
-        failure_rate = fields.get("failure_rate")
-        if isinstance(latency_ms, (int, float)) and float(latency_ms) > 0:
-            profile.latency_ms = float(latency_ms)
-            changed = True
-        if isinstance(failure_rate, (int, float)):
-            profile.failure_rate = min(max(float(failure_rate), 0.0), 1.0)
-            changed = True
-        if changed:
-            routing_config.model_profiles[model] = profile
-            applied += 1
-
-    _apply_classifier_calibration_overrides(
-        raw=raw,
+    return RuntimeOverridesManager(
         routing_config=routing_config,
-    )
-    _apply_learned_feature_weight_overrides(
-        raw=raw,
-        routing_config=routing_config,
-    )
-
-    if applied and logger is not None:
-        logger.info("runtime_overrides_applied path=%s models=%d", file_path, applied)
-    return applied
+        logger=logger,
+    ).apply_from_path(path=path)
 
 
 def _write_runtime_overrides(
@@ -537,29 +637,11 @@ def _write_runtime_overrides(
     snapshot: dict[str, ModelMetricsSnapshot],
     classifier_calibration: dict[str, Any] | None = None,
 ) -> None:
-    payload: dict[str, Any] = {
-        "generated_at_epoch": time.time(),
-        "model_profiles": {},
-        "metrics_snapshot": snapshot_to_dict(snapshot),
-    }
-
-    for model, profile in sorted(routing_config.model_profiles.items()):
-        payload["model_profiles"][model] = {
-            "latency_ms": float(profile.latency_ms),
-            "failure_rate": float(profile.failure_rate),
-        }
-
-    if isinstance(classifier_calibration, dict):
-        payload["classifier_calibration"] = classifier_calibration
-    payload["learned_routing"] = {
-        "feature_weights": {
-            name: float(value)
-            for name, value in sorted(routing_config.learned_routing.feature_weights.items())
-            if isinstance(value, (int, float))
-        }
-    }
-
-    YamlFileStore(path).write(payload, sort_keys=False)
+    RuntimeOverridesManager(routing_config=routing_config).write(
+        path=path,
+        snapshot=snapshot,
+        classifier_calibration=classifier_calibration,
+    )
 
 
 def _apply_classifier_calibration_overrides(
@@ -567,31 +649,9 @@ def _apply_classifier_calibration_overrides(
     raw: dict[str, Any],
     routing_config: RoutingConfig,
 ) -> None:
-    calibration_raw = raw.get("classifier_calibration")
-    if not isinstance(calibration_raw, dict):
-        return
-
-    cfg = routing_config.classifier_calibration
-    low_raw = calibration_raw.get("secondary_low_confidence_min_confidence")
-    mixed_raw = calibration_raw.get("secondary_mixed_signal_min_confidence")
-    low = (
-        float(low_raw)
-        if isinstance(low_raw, (int, float))
-        else float(cfg.secondary_low_confidence_min_confidence)
-    )
-    mixed = (
-        float(mixed_raw)
-        if isinstance(mixed_raw, (int, float))
-        else float(cfg.secondary_mixed_signal_min_confidence)
-    )
-    min_threshold = float(cfg.min_threshold)
-    max_threshold = float(cfg.max_threshold)
-    low = min(max(low, min_threshold), max_threshold)
-    mixed = min(max(mixed, min_threshold), max_threshold)
-    mixed = max(mixed, low)
-
-    cfg.secondary_low_confidence_min_confidence = low
-    cfg.secondary_mixed_signal_min_confidence = mixed
+    RuntimeOverridesManager(
+        routing_config=routing_config
+    ).apply_classifier_calibration_overrides(raw=raw)
 
 
 def _apply_learned_feature_weight_overrides(
@@ -599,16 +659,6 @@ def _apply_learned_feature_weight_overrides(
     raw: dict[str, Any],
     routing_config: RoutingConfig,
 ) -> None:
-    learned_raw = raw.get("learned_routing")
-    if not isinstance(learned_raw, dict):
-        return
-    feature_weights_raw = learned_raw.get("feature_weights")
-    if not isinstance(feature_weights_raw, dict):
-        return
-
-    for name, value in feature_weights_raw.items():
-        if not isinstance(name, str):
-            continue
-        if not isinstance(value, (int, float)):
-            continue
-        routing_config.learned_routing.feature_weights[name] = float(value)
+    RuntimeOverridesManager(
+        routing_config=routing_config
+    ).apply_learned_feature_weight_overrides(raw=raw)

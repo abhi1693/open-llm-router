@@ -746,162 +746,226 @@ def cmd_show(_: argparse.Namespace, data: dict[str, Any]) -> str:
     return yaml.safe_dump(summary, sort_keys=False).rstrip()
 
 
+class RouterConfigCliParserBuilder:
+    _MODEL_HELP_SINGLE = (
+        "Model id (e.g. gpt-5.2) or provider-qualified model (provider/modelId)."
+    )
+    _MODEL_LIST_HELP = (
+        "Comma-separated model list. Model ids may be plain or provider/modelId."
+    )
+
+    def __init__(self) -> None:
+        self._parser = argparse.ArgumentParser(
+            prog="router",
+            description="Manage open-llm-router router.yaml entries from CLI.",
+        )
+        self._parser.add_argument(
+            "--path", default="router.yaml", help="Path to router YAML config."
+        )
+        self._parser.add_argument(
+            "--dry-run", action="store_true", help="Print changes without writing file."
+        )
+        self._subparsers = self._parser.add_subparsers(dest="command", required=True)
+
+    def build(self) -> argparse.ArgumentParser:
+        self._build_add_account()
+        self._build_login_chatgpt()
+        self._build_add_model()
+        self._build_set_route()
+        self._build_set_fallbacks()
+        self._build_set_profile()
+        self._build_set_candidates()
+        self._build_set_learned()
+        self._build_show()
+        return self._parser
+
+    def _add_models_argument(
+        self,
+        parser: argparse.ArgumentParser,
+        *,
+        required: bool,
+        default: str | None,
+        help_text: str | None = None,
+    ) -> None:
+        kwargs: dict[str, Any] = {"required": required}
+        if default is not None:
+            kwargs["default"] = default
+        if help_text:
+            kwargs["help"] = help_text
+        parser.add_argument("--models", **kwargs)
+
+    @staticmethod
+    def _add_set_default_argument(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--set-default", action="store_true")
+
+    def _build_add_account(self) -> None:
+        parser = self._subparsers.add_parser(
+            "add-account", help="Add or update a backend account/provider."
+        )
+        parser.add_argument("--name", required=True)
+        parser.add_argument("--provider", required=True)
+        parser.add_argument("--base-url", required=True)
+        parser.add_argument(
+            "--auth-mode",
+            choices=["api_key", "oauth", "passthrough"],
+            help="Backend auth mode for this account.",
+        )
+        parser.add_argument("--api-key")
+        parser.add_argument("--api-key-env")
+        parser.add_argument("--oauth-access-token")
+        parser.add_argument("--oauth-access-token-env")
+        parser.add_argument("--oauth-refresh-token")
+        parser.add_argument("--oauth-refresh-token-env")
+        parser.add_argument("--oauth-expires-at", type=int)
+        parser.add_argument("--oauth-expires-at-env")
+        parser.add_argument("--oauth-token-url")
+        parser.add_argument("--oauth-client-id")
+        parser.add_argument("--oauth-client-id-env")
+        parser.add_argument("--oauth-client-secret")
+        parser.add_argument("--oauth-client-secret-env")
+        parser.add_argument("--oauth-account-id")
+        parser.add_argument("--oauth-account-id-env")
+        parser.add_argument("--organization")
+        parser.add_argument("--project")
+        self._add_models_argument(parser, required=False, default="", help_text=None)
+        self._add_set_default_argument(parser)
+        parser.add_argument("--disabled", action="store_true")
+        parser.set_defaults(handler=cmd_add_account, mutates=True)
+
+    def _build_login_chatgpt(self) -> None:
+        parser = self._subparsers.add_parser(
+            "login-chatgpt",
+            help="Run ChatGPT/Codex OAuth login and save tokens into an account.",
+        )
+        parser.add_argument("--account", required=True)
+        parser.add_argument("--provider", required=True, choices=["openai-codex"])
+        parser.add_argument("--base-url", default="https://chatgpt.com/backend-api")
+        self._add_models_argument(parser, required=False, default="", help_text=None)
+        self._add_set_default_argument(parser)
+        parser.add_argument("--client-id", default=CHATGPT_CLIENT_ID)
+        parser.add_argument("--authorize-url", default=CHATGPT_AUTHORIZE_URL)
+        parser.add_argument("--token-url", default=CHATGPT_TOKEN_URL)
+        parser.add_argument("--redirect-uri", default=CHATGPT_REDIRECT_URI)
+        parser.add_argument("--scope", default=CHATGPT_SCOPE)
+        parser.add_argument("--originator", default="pi")
+        parser.add_argument("--manual-code")
+        parser.add_argument(
+            "--paste-url",
+            action="store_true",
+            help=(
+                "Force manual paste flow (do not open browser; "
+                "paste redirect URL/code in terminal)."
+            ),
+        )
+        parser.add_argument("--timeout-seconds", type=int, default=180)
+        parser.add_argument("--no-browser", action="store_true")
+        parser.add_argument("--no-local-callback", action="store_true")
+        parser.set_defaults(handler=cmd_login_chatgpt, mutates=True)
+
+    def _build_add_model(self) -> None:
+        parser = self._subparsers.add_parser(
+            "add-model", help="Add model globally and optionally to one account."
+        )
+        parser.add_argument(
+            "--model",
+            required=True,
+            help=self._MODEL_HELP_SINGLE,
+        )
+        parser.add_argument("--account")
+        self._add_set_default_argument(parser)
+        parser.set_defaults(handler=cmd_add_model, mutates=True)
+
+    def _build_set_route(self) -> None:
+        parser = self._subparsers.add_parser(
+            "set-route", help="Set task routing tier model."
+        )
+        parser.add_argument("--task", required=True)
+        parser.add_argument(
+            "--tier",
+            required=True,
+            choices=["low", "medium", "high", "xhigh", "default"],
+        )
+        parser.add_argument(
+            "--model",
+            required=True,
+            help=(
+                "Comma-separated model list (single value is supported). "
+                "Each value may be modelId or provider/modelId."
+            ),
+        )
+        parser.set_defaults(handler=cmd_set_route, mutates=True)
+
+    def _build_set_fallbacks(self) -> None:
+        parser = self._subparsers.add_parser(
+            "set-fallbacks", help="Set or append fallback models."
+        )
+        self._add_models_argument(
+            parser,
+            required=True,
+            default=None,
+            help_text=self._MODEL_LIST_HELP,
+        )
+        parser.add_argument("--append", action="store_true")
+        parser.set_defaults(handler=cmd_set_fallbacks, mutates=True)
+
+    def _build_set_profile(self) -> None:
+        parser = self._subparsers.add_parser(
+            "set-profile", help="Set model profile fields."
+        )
+        parser.add_argument(
+            "--model",
+            required=True,
+            help=self._MODEL_HELP_SINGLE,
+        )
+        parser.add_argument("--quality-bias", type=float)
+        parser.add_argument("--quality-sensitivity", type=float)
+        parser.add_argument("--cost-input-per-1k", type=float)
+        parser.add_argument("--cost-output-per-1k", type=float)
+        parser.add_argument("--latency-ms", type=float)
+        parser.add_argument("--failure-rate", type=float)
+        parser.set_defaults(handler=cmd_set_profile, mutates=True)
+
+    def _build_set_candidates(self) -> None:
+        parser = self._subparsers.add_parser(
+            "set-candidates", help="Set learned-routing candidate models for a task."
+        )
+        parser.add_argument("--task", required=True)
+        self._add_models_argument(
+            parser,
+            required=True,
+            default=None,
+            help_text=self._MODEL_LIST_HELP,
+        )
+        parser.add_argument("--enable", action="store_true")
+        parser.set_defaults(handler=cmd_set_candidates, mutates=True)
+
+    def _build_set_learned(self) -> None:
+        parser = self._subparsers.add_parser(
+            "set-learned", help="Set learned-routing options and weights."
+        )
+        parser.add_argument("--enabled", help="true/false")
+        parser.add_argument("--bias", type=float)
+        parser.add_argument("--default-output-tokens", type=int)
+        parser.add_argument("--utility-cost", type=float)
+        parser.add_argument("--utility-latency", type=float)
+        parser.add_argument("--utility-failure", type=float)
+        parser.add_argument(
+            "--set-feature",
+            action="append",
+            help="Feature weight KEY=VALUE (repeatable).",
+        )
+        parser.add_argument("--clear-features", action="store_true")
+        parser.set_defaults(handler=cmd_set_learned, mutates=True)
+
+    def _build_show(self) -> None:
+        parser = self._subparsers.add_parser(
+            "show", help="Show a short config summary."
+        )
+        parser.set_defaults(handler=cmd_show, mutates=False)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="router",
-        description="Manage open-llm-router router.yaml entries from CLI.",
-    )
-    parser.add_argument(
-        "--path", default="router.yaml", help="Path to router YAML config."
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print changes without writing file."
-    )
-
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    add_account = subparsers.add_parser(
-        "add-account", help="Add or update a backend account/provider."
-    )
-    add_account.add_argument("--name", required=True)
-    add_account.add_argument("--provider", required=True)
-    add_account.add_argument("--base-url", required=True)
-    add_account.add_argument(
-        "--auth-mode",
-        choices=["api_key", "oauth", "passthrough"],
-        help="Backend auth mode for this account.",
-    )
-    add_account.add_argument("--api-key")
-    add_account.add_argument("--api-key-env")
-    add_account.add_argument("--oauth-access-token")
-    add_account.add_argument("--oauth-access-token-env")
-    add_account.add_argument("--oauth-refresh-token")
-    add_account.add_argument("--oauth-refresh-token-env")
-    add_account.add_argument("--oauth-expires-at", type=int)
-    add_account.add_argument("--oauth-expires-at-env")
-    add_account.add_argument("--oauth-token-url")
-    add_account.add_argument("--oauth-client-id")
-    add_account.add_argument("--oauth-client-id-env")
-    add_account.add_argument("--oauth-client-secret")
-    add_account.add_argument("--oauth-client-secret-env")
-    add_account.add_argument("--oauth-account-id")
-    add_account.add_argument("--oauth-account-id-env")
-    add_account.add_argument("--organization")
-    add_account.add_argument("--project")
-    add_account.add_argument("--models", default="")
-    add_account.add_argument("--set-default", action="store_true")
-    add_account.add_argument("--disabled", action="store_true")
-    add_account.set_defaults(handler=cmd_add_account, mutates=True)
-
-    login_chatgpt = subparsers.add_parser(
-        "login-chatgpt",
-        help="Run ChatGPT/Codex OAuth login and save tokens into an account.",
-    )
-    login_chatgpt.add_argument("--account", required=True)
-    login_chatgpt.add_argument("--provider", required=True, choices=["openai-codex"])
-    login_chatgpt.add_argument("--base-url", default="https://chatgpt.com/backend-api")
-    login_chatgpt.add_argument("--models", default="")
-    login_chatgpt.add_argument("--set-default", action="store_true")
-    login_chatgpt.add_argument("--client-id", default=CHATGPT_CLIENT_ID)
-    login_chatgpt.add_argument("--authorize-url", default=CHATGPT_AUTHORIZE_URL)
-    login_chatgpt.add_argument("--token-url", default=CHATGPT_TOKEN_URL)
-    login_chatgpt.add_argument("--redirect-uri", default=CHATGPT_REDIRECT_URI)
-    login_chatgpt.add_argument("--scope", default=CHATGPT_SCOPE)
-    login_chatgpt.add_argument("--originator", default="pi")
-    login_chatgpt.add_argument("--manual-code")
-    login_chatgpt.add_argument(
-        "--paste-url",
-        action="store_true",
-        help="Force manual paste flow (do not open browser; paste redirect URL/code in terminal).",
-    )
-    login_chatgpt.add_argument("--timeout-seconds", type=int, default=180)
-    login_chatgpt.add_argument("--no-browser", action="store_true")
-    login_chatgpt.add_argument("--no-local-callback", action="store_true")
-    login_chatgpt.set_defaults(handler=cmd_login_chatgpt, mutates=True)
-
-    add_model = subparsers.add_parser(
-        "add-model", help="Add model globally and optionally to one account."
-    )
-    add_model.add_argument(
-        "--model",
-        required=True,
-        help="Model id (e.g. gpt-5.2) or provider-qualified model (provider/modelId).",
-    )
-    add_model.add_argument("--account")
-    add_model.add_argument("--set-default", action="store_true")
-    add_model.set_defaults(handler=cmd_add_model, mutates=True)
-
-    set_route = subparsers.add_parser("set-route", help="Set task routing tier model.")
-    set_route.add_argument("--task", required=True)
-    set_route.add_argument(
-        "--tier", required=True, choices=["low", "medium", "high", "xhigh", "default"]
-    )
-    set_route.add_argument(
-        "--model",
-        required=True,
-        help=(
-            "Comma-separated model list (single value is supported). "
-            "Each value may be modelId or provider/modelId."
-        ),
-    )
-    set_route.set_defaults(handler=cmd_set_route, mutates=True)
-
-    set_fallbacks = subparsers.add_parser(
-        "set-fallbacks", help="Set or append fallback models."
-    )
-    set_fallbacks.add_argument(
-        "--models",
-        required=True,
-        help="Comma-separated model list. Model ids may be plain or provider/modelId.",
-    )
-    set_fallbacks.add_argument("--append", action="store_true")
-    set_fallbacks.set_defaults(handler=cmd_set_fallbacks, mutates=True)
-
-    set_profile = subparsers.add_parser("set-profile", help="Set model profile fields.")
-    set_profile.add_argument(
-        "--model",
-        required=True,
-        help="Model id (e.g. gpt-5.2) or provider-qualified model (provider/modelId).",
-    )
-    set_profile.add_argument("--quality-bias", type=float)
-    set_profile.add_argument("--quality-sensitivity", type=float)
-    set_profile.add_argument("--cost-input-per-1k", type=float)
-    set_profile.add_argument("--cost-output-per-1k", type=float)
-    set_profile.add_argument("--latency-ms", type=float)
-    set_profile.add_argument("--failure-rate", type=float)
-    set_profile.set_defaults(handler=cmd_set_profile, mutates=True)
-
-    set_candidates = subparsers.add_parser(
-        "set-candidates", help="Set learned-routing candidate models for a task."
-    )
-    set_candidates.add_argument("--task", required=True)
-    set_candidates.add_argument(
-        "--models",
-        required=True,
-        help="Comma-separated model list. Model ids may be plain or provider/modelId.",
-    )
-    set_candidates.add_argument("--enable", action="store_true")
-    set_candidates.set_defaults(handler=cmd_set_candidates, mutates=True)
-
-    set_learned = subparsers.add_parser(
-        "set-learned", help="Set learned-routing options and weights."
-    )
-    set_learned.add_argument("--enabled", help="true/false")
-    set_learned.add_argument("--bias", type=float)
-    set_learned.add_argument("--default-output-tokens", type=int)
-    set_learned.add_argument("--utility-cost", type=float)
-    set_learned.add_argument("--utility-latency", type=float)
-    set_learned.add_argument("--utility-failure", type=float)
-    set_learned.add_argument(
-        "--set-feature", action="append", help="Feature weight KEY=VALUE (repeatable)."
-    )
-    set_learned.add_argument("--clear-features", action="store_true")
-    set_learned.set_defaults(handler=cmd_set_learned, mutates=True)
-
-    show = subparsers.add_parser("show", help="Show a short config summary.")
-    show.set_defaults(handler=cmd_show, mutates=False)
-
-    return parser
+    return RouterConfigCliParserBuilder().build()
 
 
 def main(argv: list[str] | None = None) -> int:
