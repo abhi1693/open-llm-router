@@ -1247,6 +1247,68 @@ class BackendTargetPlanner:
         return targets
 
 
+class RateLimitTracker:
+    def __init__(
+        self,
+        *,
+        rate_limited_until: dict[str, float],
+        audit_emitter: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> None:
+        self._rate_limited_until = rate_limited_until
+        self._audit_emitter = audit_emitter
+
+    def is_temporarily_rate_limited(self, account_name: str) -> bool:
+        until = self._rate_limited_until.get(account_name)
+        if not until:
+            return False
+        now = time.time()
+        if now >= until:
+            self._rate_limited_until.pop(account_name, None)
+            return False
+        return True
+
+    def mark_rate_limited(
+        self,
+        account_name: str,
+        headers: httpx.Headers,
+        *,
+        request_id: str | None = None,
+        target: str | None = None,
+        model: str | None = None,
+        upstream_model: str | None = None,
+    ) -> None:
+        retry_after_seconds = _parse_retry_after_seconds(headers)
+        until = time.time() + retry_after_seconds
+        current = self._rate_limited_until.get(account_name, 0.0)
+        if until > current:
+            self._rate_limited_until[account_name] = until
+        logger.info(
+            (
+                "proxy_rate_limited request_id=%s account=%s target=%s "
+                "retry_after_seconds=%.1f"
+            ),
+            request_id,
+            account_name,
+            target,
+            retry_after_seconds,
+        )
+        fields: dict[str, Any] = {
+            "account": account_name,
+            "retry_after_seconds": retry_after_seconds,
+            "until_epoch": until,
+        }
+        if request_id:
+            fields["request_id"] = request_id
+        if target:
+            fields["target"] = target
+        if model:
+            fields["model"] = model
+        if upstream_model:
+            fields["upstream_model"] = upstream_model
+        if self._audit_emitter is not None:
+            self._audit_emitter("proxy_rate_limited", fields)
+
+
 class BackendProxy:
     def __init__(
         self,
@@ -1305,10 +1367,14 @@ class BackendProxy:
             if oauth_state_persistence_path is not None
             else None
         )
-        self._rate_limited_until: dict[str, float] = {}
         self._model_registry = model_registry or {}
         self._audit_hook = audit_hook
         self._circuit_breakers = circuit_breakers
+        self._rate_limited_until: dict[str, float] = {}
+        self._rate_limit_tracker = RateLimitTracker(
+            rate_limited_until=self._rate_limited_until,
+            audit_emitter=lambda event, fields: self._audit(event, **fields),
+        )
         if accounts:
             self.accounts = [account for account in accounts if account.enabled]
         else:
@@ -2436,14 +2502,7 @@ class BackendProxy:
         return 1000.0 / latency_ms
 
     def _is_temporarily_rate_limited(self, account_name: str) -> bool:
-        until = self._rate_limited_until.get(account_name)
-        if not until:
-            return False
-        now = time.time()
-        if now >= until:
-            self._rate_limited_until.pop(account_name, None)
-            return False
-        return True
+        return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
 
     def _mark_rate_limited(
         self,
@@ -2455,35 +2514,14 @@ class BackendProxy:
         model: str | None = None,
         upstream_model: str | None = None,
     ) -> None:
-        retry_after_seconds = _parse_retry_after_seconds(headers)
-        until = time.time() + retry_after_seconds
-        current = self._rate_limited_until.get(account_name, 0.0)
-        if until > current:
-            self._rate_limited_until[account_name] = until
-        logger.info(
-            (
-                "proxy_rate_limited request_id=%s account=%s target=%s "
-                "retry_after_seconds=%.1f"
-            ),
-            request_id,
+        self._rate_limit_tracker.mark_rate_limited(
             account_name,
-            target,
-            retry_after_seconds,
+            headers,
+            request_id=request_id,
+            target=target,
+            model=model,
+            upstream_model=upstream_model,
         )
-        fields: dict[str, Any] = {
-            "account": account_name,
-            "retry_after_seconds": retry_after_seconds,
-            "until_epoch": until,
-        }
-        if request_id:
-            fields["request_id"] = request_id
-        if target:
-            fields["target"] = target
-        if model:
-            fields["model"] = model
-        if upstream_model:
-            fields["upstream_model"] = upstream_model
-        self._audit("proxy_rate_limited", **fields)
 
     async def _resolve_bearer_token(self, account: BackendAccount) -> str | None:
         if account.auth_mode == "api_key":

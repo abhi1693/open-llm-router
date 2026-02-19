@@ -14,6 +14,7 @@ from open_llm_router.config import BackendAccount
 from open_llm_router.proxy import (
     BackendProxy,
     BackendTarget,
+    RateLimitTracker,
     _build_upstream_headers,
     _parse_retry_after_seconds,
     _prepare_upstream_request,
@@ -1815,6 +1816,46 @@ def test_parse_retry_after_seconds_http_date() -> None:
     )
     value = _parse_retry_after_seconds(headers, default_seconds=30.0)
     assert 0 < value <= 8.5
+
+
+def test_rate_limit_tracker_marks_and_expires_limits() -> None:
+    limits: dict[str, float] = {}
+    tracker = RateLimitTracker(rate_limited_until=limits)
+
+    tracker.mark_rate_limited("acct-a", httpx.Headers({"Retry-After": "1"}))
+    assert tracker.is_temporarily_rate_limited("acct-a") is True
+
+    limits["acct-a"] = time.time() - 1.0
+    assert tracker.is_temporarily_rate_limited("acct-a") is False
+    assert "acct-a" not in limits
+
+
+def test_rate_limit_tracker_emits_audit_fields() -> None:
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    limits: dict[str, float] = {}
+    tracker = RateLimitTracker(
+        rate_limited_until=limits,
+        audit_emitter=lambda event, fields: emitted.append((event, fields)),
+    )
+
+    tracker.mark_rate_limited(
+        "acct-a",
+        httpx.Headers({"Retry-After": "7"}),
+        request_id="req-1",
+        target="acct-a:m1",
+        model="openai/m1",
+        upstream_model="m1",
+    )
+
+    assert len(emitted) == 1
+    event, fields = emitted[0]
+    assert event == "proxy_rate_limited"
+    assert fields["account"] == "acct-a"
+    assert fields["request_id"] == "req-1"
+    assert fields["target"] == "acct-a:m1"
+    assert fields["model"] == "openai/m1"
+    assert fields["upstream_model"] == "m1"
+    assert fields["retry_after_seconds"] == 7.0
 
 
 def test_to_fastapi_response_injects_router_diagnostics_into_json_payload() -> None:
