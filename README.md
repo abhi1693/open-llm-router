@@ -221,6 +221,36 @@ router explain-route --task coding --complexity high --path router.profile.yaml
 
 This command prints candidate chain, selected model, fallback chain, and learned scoring summary (if enabled).
 
+### Local semantic classifier (optional)
+
+You can enable a local embedding-based semantic classifier instead of relying only on static prototype scoring.
+
+Dependency note:
+
+- Local semantic classification uses `transformers` and `torch`.
+- These are already declared in `pyproject.toml`, so the normal project install is enough.
+- Only install them manually if you are using a custom/minimal environment.
+
+For profile-based config, set it under `raw_overrides` in `router.profile.yaml`:
+
+```yaml
+raw_overrides:
+  semantic_classifier:
+    enabled: true
+    backend: local_embedding
+    local_model_name: sentence-transformers/all-MiniLM-L6-v2
+    local_files_only: false
+    local_max_length: 256
+    min_confidence: 0.2
+```
+
+Behavior:
+
+- On server startup, the router prefetches the local embedding runtime when `enabled=true` and `backend=local_embedding`.
+- If `local_files_only: false`, startup can download model artifacts into local cache.
+- If `local_files_only: true`, startup only uses already-cached/local files (offline-friendly).
+- If local embedding runtime is unavailable at request time, classifier falls back to the prototype semantic path and records `semantic_classifier_status=local_embedding_unavailable` in routing signals.
+
 ## Request Routing Controls
 
 ### `model`
