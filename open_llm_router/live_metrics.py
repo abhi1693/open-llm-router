@@ -7,14 +7,9 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from math import ceil
 from typing import Any, Protocol
 
-from open_llm_router.bounded_maps import (
-    BoundedCounterMap,
-    BoundedDequeMap,
-    BoundedValueMap,
-)
+from open_llm_router.proxy_metrics import ProxyMetricsAccumulator
 
 TARGET_METRICS_KEY_PREFIX = "target::"
 
@@ -116,15 +111,6 @@ def _ewma(previous: float | None, value: float, alpha: float) -> float:
 
 def _is_failure_status(status: int) -> bool:
     return status == 429 or status >= 500
-
-
-def _percentile(values: list[float], percentile: float) -> float | None:
-    if not values:
-        return None
-    sorted_values = sorted(values)
-    rank = max(1, ceil(percentile * len(sorted_values)))
-    idx = min(len(sorted_values) - 1, rank - 1)
-    return float(sorted_values[idx])
 
 
 def _normalize_dimension(value: str | None) -> str | None:
@@ -583,43 +569,13 @@ class LiveMetricsCollector:
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(
             maxsize=max(1, queue_size)
         )
-        self._connect_latency_window_size = max(10, int(connect_latency_window_size))
-        self._connect_latency_alert_threshold_ms = max(
-            0.0, float(connect_latency_alert_threshold_ms)
-        )
-        self._target_dimension_max_keys = max(1, int(target_dimension_max_keys))
-        self._error_type_max_keys = max(1, int(error_type_max_keys))
         self._worker_task: asyncio.Task[None] | None = None
         self._dropped_events = 0
-        self._proxy_retries_total = 0
-        self._proxy_timeouts_total = 0
-        self._proxy_rate_limited_total = 0
-        self._proxy_connect_latency_alerts_total = 0
-        self._proxy_attempt_latency_sum_ms = 0.0
-        self._proxy_attempt_latency_count = 0
-        self._proxy_retries_by_target: BoundedCounterMap[tuple[str, str]] = (
-            BoundedCounterMap(max_keys=self._target_dimension_max_keys)
-        )
-        self._proxy_timeouts_by_target: BoundedCounterMap[tuple[str, str]] = (
-            BoundedCounterMap(max_keys=self._target_dimension_max_keys)
-        )
-        self._proxy_connect_latency_alerts_by_target: BoundedCounterMap[
-            tuple[str, str, str]
-        ] = BoundedCounterMap(max_keys=self._target_dimension_max_keys)
-        self._proxy_connect_latency_alert_active_by_target: BoundedValueMap[
-            tuple[str, str, str], bool
-        ] = BoundedValueMap(max_keys=self._target_dimension_max_keys)
-        self._proxy_connect_latency_samples_by_target: BoundedDequeMap[
-            tuple[str, str, str], float
-        ] = BoundedDequeMap(
-            max_keys=self._target_dimension_max_keys,
-            window_size=self._connect_latency_window_size,
-        )
-        self._proxy_errors_by_type: BoundedCounterMap[str] = BoundedCounterMap(
-            max_keys=self._error_type_max_keys
-        )
-        self._proxy_responses_by_status_class: BoundedCounterMap[str] = (
-            BoundedCounterMap(max_keys=16)
+        self._proxy_metrics = ProxyMetricsAccumulator(
+            connect_latency_window_size=connect_latency_window_size,
+            connect_latency_alert_threshold_ms=connect_latency_alert_threshold_ms,
+            target_dimension_max_keys=target_dimension_max_keys,
+            error_type_max_keys=error_type_max_keys,
         )
         self._classifier_secondary_total = 0
         self._classifier_secondary_success = 0
@@ -642,72 +598,61 @@ class LiveMetricsCollector:
 
     @property
     def proxy_retries_total(self) -> int:
-        return self._proxy_retries_total
+        return self._proxy_metrics.proxy_retries_total
 
     @property
     def proxy_timeouts_total(self) -> int:
-        return self._proxy_timeouts_total
+        return self._proxy_metrics.proxy_timeouts_total
 
     @property
     def proxy_rate_limited_total(self) -> int:
-        return self._proxy_rate_limited_total
+        return self._proxy_metrics.proxy_rate_limited_total
 
     @property
     def proxy_connect_latency_window_size(self) -> int:
-        return self._connect_latency_window_size
+        return self._proxy_metrics.connect_latency_window_size
 
     @property
     def proxy_connect_latency_alert_threshold_ms(self) -> float:
-        return self._connect_latency_alert_threshold_ms
+        return self._proxy_metrics.connect_latency_alert_threshold_ms
 
     @property
     def proxy_connect_latency_alerts_total(self) -> int:
-        return self._proxy_connect_latency_alerts_total
+        return self._proxy_metrics.proxy_connect_latency_alerts_total
 
     @property
     def proxy_attempt_latency_sum_ms(self) -> float:
-        return self._proxy_attempt_latency_sum_ms
+        return self._proxy_metrics.proxy_attempt_latency_sum_ms
 
     @property
     def proxy_attempt_latency_count(self) -> int:
-        return self._proxy_attempt_latency_count
+        return self._proxy_metrics.proxy_attempt_latency_count
 
     @property
     def proxy_retries_by_target(self) -> dict[tuple[str, str], int]:
-        return self._proxy_retries_by_target.to_dict()
+        return self._proxy_metrics.proxy_retries_by_target
 
     @property
     def proxy_timeouts_by_target(self) -> dict[tuple[str, str], int]:
-        return self._proxy_timeouts_by_target.to_dict()
+        return self._proxy_metrics.proxy_timeouts_by_target
 
     @property
     def proxy_connect_latency_alerts_by_target(self) -> dict[tuple[str, str, str], int]:
-        return self._proxy_connect_latency_alerts_by_target.to_dict()
+        return self._proxy_metrics.proxy_connect_latency_alerts_by_target
 
     @property
     def proxy_connect_latency_quantiles_by_target(
         self,
     ) -> dict[tuple[str, str, str], dict[str, float | int]]:
-        output: dict[tuple[str, str, str], dict[str, float | int]] = {}
-        for key, samples in self._proxy_connect_latency_samples_by_target.items():
-            values = list(samples)
-            if not values:
-                continue
-            output[key] = {
-                "count": len(values),
-                "p50": _percentile(values, 0.50) or 0.0,
-                "p95": _percentile(values, 0.95) or 0.0,
-                "p99": _percentile(values, 0.99) or 0.0,
-            }
-        return output
+        return self._proxy_metrics.proxy_connect_latency_quantiles_by_target
 
     @property
     def proxy_errors_by_type(self) -> dict[str, int]:
-        return self._proxy_errors_by_type.to_dict()
+        return self._proxy_metrics.proxy_errors_by_type
 
     @property
     def proxy_responses_by_status_class(self) -> dict[str, int]:
-        return self._proxy_responses_by_status_class.to_dict()
+        return self._proxy_metrics.proxy_responses_by_status_class
 
     @property
     def classifier_calibration_snapshot(self) -> ClassifierCalibrationSnapshot:
@@ -821,37 +766,14 @@ class LiveMetricsCollector:
                     account=account,
                 )
                 connect_target_key = (provider or "unknown", account or "unknown", model)
-                samples = self._proxy_connect_latency_samples_by_target.append(
-                    connect_target_key, connect_value
-                )
-                if self._connect_latency_alert_threshold_ms > 0.0:
-                    p95_value = _percentile(list(samples), 0.95)
-                    is_alerting = (
-                        p95_value is not None
-                        and p95_value > self._connect_latency_alert_threshold_ms
-                    )
-                    was_alerting = self._proxy_connect_latency_alert_active_by_target.get(
-                        connect_target_key, False
-                    )
-                    if is_alerting and not was_alerting:
-                        self._proxy_connect_latency_alerts_total += 1
-                        self._proxy_connect_latency_alerts_by_target.increment(
-                            connect_target_key
-                        )
-                    self._proxy_connect_latency_alert_active_by_target.set(
-                        connect_target_key, is_alerting
-                    )
+                self._proxy_metrics.record_connect(connect_target_key, connect_value)
             return
 
         if event_name == "proxy_response":
             status = event.get("status")
             if not isinstance(status, int):
                 return
-            self._proxy_responses_by_status_class.increment(
-                f"{max(0, status) // 100}xx"
-            )
-            if status == 429:
-                self._proxy_rate_limited_total += 1
+            self._proxy_metrics.record_response(status)
             request_latency_ms = event.get("request_latency_ms")
             latency_value = (
                 float(request_latency_ms)
@@ -868,22 +790,23 @@ class LiveMetricsCollector:
             return
 
         if event_name == "proxy_retry":
-            self._proxy_retries_total += 1
-            self._proxy_retries_by_target.increment(target_key)
+            self._proxy_metrics.record_retry(target_key)
             return
 
         if event_name == "proxy_request_error":
             error_type = str(event.get("error_type") or "").strip() or "unknown"
-            self._proxy_errors_by_type.increment(error_type)
-            if bool(event.get("is_timeout")):
-                self._proxy_timeouts_total += 1
-                self._proxy_timeouts_by_target.increment(target_key)
             attempt_latency_ms = event.get("attempt_latency_ms")
-            if isinstance(attempt_latency_ms, (int, float)):
-                self._proxy_attempt_latency_sum_ms += max(
-                    0.0, float(attempt_latency_ms)
-                )
-                self._proxy_attempt_latency_count += 1
+            attempt_latency_value = (
+                float(attempt_latency_ms)
+                if isinstance(attempt_latency_ms, (int, float))
+                else None
+            )
+            self._proxy_metrics.record_error(
+                target_key=target_key,
+                error_type=error_type,
+                is_timeout=bool(event.get("is_timeout")),
+                attempt_latency_ms=attempt_latency_value,
+            )
             await self._store.record_error(
                 model=model,
                 error_type=error_type,

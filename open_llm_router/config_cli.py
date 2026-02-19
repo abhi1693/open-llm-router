@@ -163,6 +163,38 @@ def _normalize_optional(value: str | None) -> str | None:
     return stripped or None
 
 
+class AccountConfigMutator:
+    _NORMALIZED_OPTIONAL_FIELDS: dict[str, str] = {
+        "api_key": "api_key",
+        "api_key_env": "api_key_env",
+        "oauth_access_token": "oauth_access_token",
+        "oauth_access_token_env": "oauth_access_token_env",
+        "oauth_refresh_token": "oauth_refresh_token",
+        "oauth_refresh_token_env": "oauth_refresh_token_env",
+        "oauth_expires_at_env": "oauth_expires_at_env",
+        "oauth_token_url": "oauth_token_url",
+        "oauth_client_id": "oauth_client_id",
+        "oauth_client_id_env": "oauth_client_id_env",
+        "oauth_client_secret": "oauth_client_secret",
+        "oauth_client_secret_env": "oauth_client_secret_env",
+        "oauth_account_id": "oauth_account_id",
+        "oauth_account_id_env": "oauth_account_id_env",
+        "organization": "organization",
+        "project": "project",
+    }
+
+    @classmethod
+    def apply_from_args(cls, *, account: dict[str, Any], args: argparse.Namespace) -> None:
+        for arg_name, config_key in cls._NORMALIZED_OPTIONAL_FIELDS.items():
+            value = getattr(args, arg_name, None)
+            if value is not None:
+                account[config_key] = _normalize_optional(value)
+
+        oauth_expires_at = getattr(args, "oauth_expires_at", None)
+        if oauth_expires_at is not None:
+            account["oauth_expires_at"] = oauth_expires_at
+
+
 def _drop_none_fields(data: dict[str, Any]) -> None:
     for key in [item_key for item_key, value in data.items() if value is None]:
         data.pop(key, None)
@@ -507,46 +539,7 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
     elif "auth_mode" not in account:
         account["auth_mode"] = "api_key"
 
-    if args.api_key is not None:
-        account["api_key"] = _normalize_optional(args.api_key)
-    if args.api_key_env is not None:
-        account["api_key_env"] = _normalize_optional(args.api_key_env)
-    if args.oauth_access_token is not None:
-        account["oauth_access_token"] = _normalize_optional(args.oauth_access_token)
-    if args.oauth_access_token_env is not None:
-        account["oauth_access_token_env"] = _normalize_optional(
-            args.oauth_access_token_env
-        )
-    if args.oauth_refresh_token is not None:
-        account["oauth_refresh_token"] = _normalize_optional(args.oauth_refresh_token)
-    if args.oauth_refresh_token_env is not None:
-        account["oauth_refresh_token_env"] = _normalize_optional(
-            args.oauth_refresh_token_env
-        )
-    if args.oauth_expires_at is not None:
-        account["oauth_expires_at"] = args.oauth_expires_at
-    if args.oauth_expires_at_env is not None:
-        account["oauth_expires_at_env"] = _normalize_optional(args.oauth_expires_at_env)
-    if args.oauth_token_url is not None:
-        account["oauth_token_url"] = _normalize_optional(args.oauth_token_url)
-    if args.oauth_client_id is not None:
-        account["oauth_client_id"] = _normalize_optional(args.oauth_client_id)
-    if args.oauth_client_id_env is not None:
-        account["oauth_client_id_env"] = _normalize_optional(args.oauth_client_id_env)
-    if args.oauth_client_secret is not None:
-        account["oauth_client_secret"] = _normalize_optional(args.oauth_client_secret)
-    if args.oauth_client_secret_env is not None:
-        account["oauth_client_secret_env"] = _normalize_optional(
-            args.oauth_client_secret_env
-        )
-    if args.oauth_account_id is not None:
-        account["oauth_account_id"] = _normalize_optional(args.oauth_account_id)
-    if args.oauth_account_id_env is not None:
-        account["oauth_account_id_env"] = _normalize_optional(args.oauth_account_id_env)
-    if args.organization is not None:
-        account["organization"] = _normalize_optional(args.organization)
-    if args.project is not None:
-        account["project"] = _normalize_optional(args.project)
+    AccountConfigMutator.apply_from_args(account=account, args=args)
 
     account_models = _qualify_models(args.provider, _parse_csv(args.models))
     if account_models:
