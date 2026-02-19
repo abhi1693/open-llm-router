@@ -694,6 +694,137 @@ def _prepare_upstream_request(
     return UpstreamRequestSpec(path=path, payload=payload, stream=stream)
 
 
+@dataclass(slots=True)
+class ProxyExecutionStats:
+    attempted_targets: list[str]
+    attempted_upstream_models: list[str]
+    skipped_rate_limited: int = 0
+    skipped_circuit_open: int = 0
+    skipped_oauth_token_missing: int = 0
+
+
+class ProxyResponseAdapter:
+    @staticmethod
+    async def to_fastapi_response(
+        *,
+        upstream: httpx.Response,
+        stream: bool,
+        upstream_stream: bool,
+        target: BackendTarget,
+        attempted_targets: list[str],
+        attempted_upstream_models: list[str],
+        request_latency_ms: float,
+        route_decision: RouteDecision,
+        request_id: str,
+        adapter: Literal["passthrough", "chat_completions"],
+        audit_hook: Callable[[dict[str, Any]], None] | None,
+    ) -> Response:
+        response_headers = _filter_response_headers(upstream.headers)
+        response_headers["x-router-request-id"] = request_id
+        response_headers["x-router-model"] = target.model
+        response_headers["x-router-account"] = target.account_name
+        response_headers["x-router-provider"] = target.provider
+        response_headers["x-router-auth-mode"] = target.auth_mode
+        response_headers["x-router-upstream-model"] = target.upstream_model
+        response_headers["x-router-task"] = route_decision.task
+        response_headers["x-router-complexity"] = route_decision.complexity
+        response_headers["x-router-source"] = route_decision.source
+        response_headers["x-router-request-latency-ms"] = f"{request_latency_ms:.3f}"
+        response_headers["x-router-attempted-targets"] = ",".join(attempted_targets)
+        if route_decision.ranked_models:
+            response_headers["x-router-ranked-models"] = ",".join(
+                route_decision.ranked_models
+            )
+        if route_decision.candidate_scores:
+            top = route_decision.candidate_scores[0]
+            response_headers["x-router-top-utility"] = str(top.get("utility", ""))
+        routing_diagnostics = _build_routing_diagnostics(
+            request_id=request_id,
+            target=target,
+            route_decision=route_decision,
+            request_latency_ms=request_latency_ms,
+            attempted_targets=attempted_targets,
+            attempted_upstream_models=attempted_upstream_models,
+        )
+
+        logger.info(
+            "proxy_response request_id=%s target=%s status=%d attempts=%d",
+            request_id,
+            target.label,
+            upstream.status_code,
+            len(attempted_targets),
+        )
+        if audit_hook is not None:
+            try:
+                audit_hook(
+                    {
+                        "event": "proxy_response",
+                        "request_id": request_id,
+                        "target": target.label,
+                        "account": target.account_name,
+                        "provider": target.provider,
+                        "model": target.model,
+                        "upstream_model": target.upstream_model,
+                        "status": upstream.status_code,
+                        "request_latency_ms": request_latency_ms,
+                        "attempts": len(attempted_targets),
+                        "attempted_targets": attempted_targets,
+                        "attempted_upstream_models": attempted_upstream_models,
+                    }
+                )
+            except Exception:
+                pass
+
+        if adapter == "chat_completions":
+            return await BackendProxy._to_chat_completions_response(
+                upstream=upstream,
+                stream=stream,
+                response_headers=response_headers,
+                model=target.model,
+                request_id=request_id,
+                audit_hook=audit_hook,
+                routing_diagnostics=routing_diagnostics,
+            )
+
+        if stream:
+            media_type = response_headers.pop("content-type", "text/event-stream")
+
+            async def stream_generator() -> AsyncIterator[bytes]:
+                try:
+                    if upstream_stream:
+                        async for chunk in upstream.aiter_raw():
+                            yield chunk
+                    else:
+                        body = await upstream.aread()
+                        if body:
+                            yield body
+                finally:
+                    await upstream.aclose()
+
+            return StreamingResponse(
+                content=stream_generator(),
+                status_code=upstream.status_code,
+                headers=response_headers,
+                media_type=media_type,
+            )
+
+        body = await upstream.aread()
+        await upstream.aclose()
+        diagnostics_response = _json_response_with_routing_diagnostics(
+            status_code=upstream.status_code,
+            body=body,
+            response_headers=response_headers,
+            routing_diagnostics=routing_diagnostics,
+        )
+        if diagnostics_response is not None:
+            return diagnostics_response
+        return Response(
+            content=body,
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
+
+
 class ProxyRequestExecutor:
     def __init__(self, *, proxy: BackendProxy) -> None:
         self._proxy = proxy
@@ -877,75 +1008,36 @@ class ProxyRequestExecutor:
                 },
             )
 
-        attempted_targets: list[str] = []
-        attempted_upstream_models: list[str] = []
+        stats = ProxyExecutionStats(
+            attempted_targets=[],
+            attempted_upstream_models=[],
+        )
         candidate_targets_total = len(candidate_targets)
-        skipped_rate_limited = 0
-        skipped_circuit_open = 0
-        skipped_oauth_token_missing = 0
         trial_payload = dict(payload)
 
         for index, target in enumerate(candidate_targets):
+            has_more_targets = index < len(candidate_targets) - 1
             breaker_key = f"{target.account_name}:{target.provider}"
-            if (
-                self._proxy.circuit_breakers is not None
-                and not self._proxy.circuit_breakers.allow_request(breaker_key)
+            if self._skip_target_for_circuit_breaker(
+                target=target,
+                breaker_key=breaker_key,
+                request_id=rid,
+                stats=stats,
             ):
-                snapshot = self._proxy.circuit_breakers.snapshot(breaker_key)
-                logger.info(
-                    "proxy_skip_circuit_open request_id=%s target=%s state=%s failures=%s",
-                    rid,
-                    target.label,
-                    snapshot.get("state"),
-                    snapshot.get("failure_count"),
-                )
-                self._proxy.audit(
-                    "proxy_skip_circuit_open",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    breaker=snapshot,
-                )
-                skipped_circuit_open += 1
                 continue
-            if self._proxy.is_temporarily_rate_limited(target.account_name):
-                logger.info(
-                    "proxy_skip_rate_limited request_id=%s target=%s",
-                    rid,
-                    target.label,
-                )
-                self._proxy.audit(
-                    "proxy_skip_rate_limited",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                )
-                skipped_rate_limited += 1
+            if self._skip_target_for_rate_limit(
+                target=target,
+                request_id=rid,
+                stats=stats,
+            ):
                 continue
-            attempted_targets.append(target.label)
-            attempted_upstream_models.append(target.upstream_model)
-            logger.info(
-                "proxy_attempt request_id=%s attempt=%d/%d target=%s provider=%s auth_mode=%s",
-                rid,
-                index + 1,
-                len(candidate_targets),
-                target.label,
-                target.provider,
-                target.auth_mode,
-            )
-            self._proxy.audit(
-                "proxy_attempt",
+
+            self._record_attempt(
+                target=target,
                 request_id=rid,
                 attempt=index + 1,
                 total_attempts=len(candidate_targets),
-                target=target.label,
-                account=target.account_name,
-                provider=target.provider,
-                model=target.model,
-                upstream_model=target.upstream_model,
-                auth_mode=target.auth_mode,
+                stats=stats,
             )
             trial_payload["model"] = target.upstream_model
             request_spec = _prepare_upstream_request(
@@ -955,37 +1047,18 @@ class ProxyRequestExecutor:
                 stream=stream,
             )
             bearer_token = await self._proxy.resolve_bearer_token(target.account)
-            if target.auth_mode == "oauth" and not bearer_token:
-                logger.warning(
-                    "proxy_oauth_token_missing request_id=%s target=%s",
-                    rid,
-                    target.label,
-                )
-                self._proxy.audit(
-                    "proxy_oauth_token_missing",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                )
-                skipped_oauth_token_missing += 1
-                if index < len(candidate_targets) - 1:
-                    continue
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={
-                        "error": {
-                            "type": "oauth_credentials_unavailable",
-                            "message": (
-                                "Selected OAuth-backed target has no usable access token "
-                                "and could not refresh one."
-                            ),
-                            "attempted_targets": attempted_targets,
-                            "attempted_upstream_models": attempted_upstream_models,
-                        }
-                    },
-                )
+            skip_for_oauth, oauth_response = self._handle_missing_oauth_token(
+                target=target,
+                bearer_token=bearer_token,
+                request_id=rid,
+                has_more_targets=has_more_targets,
+                stats=stats,
+            )
+            if oauth_response is not None:
+                return oauth_response
+            if skip_for_oauth:
+                continue
+
             headers = _build_upstream_headers(
                 incoming_headers=incoming_headers,
                 bearer_token=bearer_token,
@@ -997,124 +1070,29 @@ class ProxyRequestExecutor:
                 allow_passthrough_auth=target.account.allows_passthrough_auth(),
             )
 
-            attempt_started = time.perf_counter()
-            try:
-                request = self._proxy.client.build_request(
-                    method="POST",
-                    url=f"{target.base_url.rstrip('/')}{request_spec.path}",
-                    json=request_spec.payload,
-                    headers=headers,
-                )
-                upstream = await self._proxy.client.send(
-                    request, stream=request_spec.stream
-                )
-                connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
-                logger.info(
-                    "proxy_upstream_connected request_id=%s target=%s connect_ms=%.2f status=%d",
-                    rid,
-                    target.label,
-                    connect_latency_ms,
-                    upstream.status_code,
-                )
-                self._proxy.audit(
-                    "proxy_upstream_connected",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    provider=target.provider,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                    connect_ms=round(connect_latency_ms, 3),
-                    status=upstream.status_code,
-                )
-            except httpx.RequestError as exc:
-                error_details = _request_error_details(exc)
-                attempt_number = index + 1
-                total_attempts = len(candidate_targets)
-                if self._proxy.circuit_breakers is not None:
-                    self._proxy.circuit_breakers.on_failure(breaker_key)
-                logger.warning(
-                    (
-                        "proxy_request_error request_id=%s target=%s "
-                        "attempt=%d/%d error_type=%s status_code=%s error=%s"
-                    ),
-                    rid,
-                    target.label,
-                    attempt_number,
-                    total_attempts,
-                    error_details["error_type"],
-                    error_details.get("status_code"),
-                    error_details["error"],
-                )
-                self._proxy.audit(
-                    "proxy_request_error",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                    attempt=attempt_number,
-                    total_attempts=total_attempts,
-                    attempt_latency_ms=round(
-                        (time.perf_counter() - attempt_started) * 1000.0, 3
-                    ),
-                    **error_details,
-                )
-                if index < len(candidate_targets) - 1:
-                    continue
-                return JSONResponse(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    content={
-                        "error": {
-                            "type": "upstream_connection_error",
-                            "message": (
-                                "Could not reach backend "
-                                f"({error_details['error_type']}): {error_details['error']}"
-                            ),
-                            "error_type": error_details["error_type"],
-                            "attempted_targets": attempted_targets,
-                            "attempted_upstream_models": attempted_upstream_models,
-                        }
-                    },
-                )
-
-            should_retry = (
-                upstream.status_code in self._proxy.retry_statuses
-                and index < len(candidate_targets) - 1
+            upstream, request_error_response = await self._send_upstream_request(
+                target=target,
+                request_spec=request_spec,
+                headers=headers,
+                breaker_key=breaker_key,
+                request_id=rid,
+                attempt=index + 1,
+                total_attempts=len(candidate_targets),
+                has_more_targets=has_more_targets,
+                stats=stats,
             )
-            if upstream.status_code < 500 and upstream.status_code != 429:
-                if self._proxy.circuit_breakers is not None:
-                    self._proxy.circuit_breakers.on_success(breaker_key)
-            elif (
-                upstream.status_code in self._proxy.retry_statuses
-                and self._proxy.circuit_breakers is not None
+            if request_error_response is not None:
+                return request_error_response
+            if upstream is None:
+                continue
+
+            if self._should_retry_upstream_response(
+                upstream=upstream,
+                target=target,
+                breaker_key=breaker_key,
+                request_id=rid,
+                has_more_targets=has_more_targets,
             ):
-                self._proxy.circuit_breakers.on_failure(breaker_key)
-            if upstream.status_code == 429:
-                self._proxy.mark_rate_limited(
-                    target.account_name,
-                    upstream.headers,
-                    request_id=rid,
-                    target=target.label,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                )
-            if should_retry:
-                logger.info(
-                    "proxy_retry request_id=%s target=%s status=%d",
-                    rid,
-                    target.label,
-                    upstream.status_code,
-                )
-                self._proxy.audit(
-                    "proxy_retry",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                    status=upstream.status_code,
-                )
                 await upstream.aclose()
                 continue
 
@@ -1123,8 +1101,8 @@ class ProxyRequestExecutor:
                 stream=stream,
                 upstream_stream=request_spec.stream,
                 target=target,
-                attempted_targets=attempted_targets,
-                attempted_upstream_models=attempted_upstream_models,
+                attempted_targets=stats.attempted_targets,
+                attempted_upstream_models=stats.attempted_upstream_models,
                 request_latency_ms=round(
                     (time.perf_counter() - request_started) * 1000.0, 3
                 ),
@@ -1141,22 +1119,22 @@ class ProxyRequestExecutor:
                 "skipped_circuit_open=%d skipped_oauth_token_missing=%d"
             ),
             rid,
-            ",".join(attempted_targets),
+            ",".join(stats.attempted_targets),
             candidate_targets_total,
-            skipped_rate_limited,
-            skipped_circuit_open,
-            skipped_oauth_token_missing,
+            stats.skipped_rate_limited,
+            stats.skipped_circuit_open,
+            stats.skipped_oauth_token_missing,
         )
         self._proxy.audit(
             "proxy_exhausted",
             request_id=rid,
             candidate_targets_total=candidate_targets_total,
-            attempted_count=len(attempted_targets),
-            attempted_targets=attempted_targets,
-            attempted_upstream_models=attempted_upstream_models,
-            skipped_rate_limited=skipped_rate_limited,
-            skipped_circuit_open=skipped_circuit_open,
-            skipped_oauth_token_missing=skipped_oauth_token_missing,
+            attempted_count=len(stats.attempted_targets),
+            attempted_targets=stats.attempted_targets,
+            attempted_upstream_models=stats.attempted_upstream_models,
+            skipped_rate_limited=stats.skipped_rate_limited,
+            skipped_circuit_open=stats.skipped_circuit_open,
+            skipped_oauth_token_missing=stats.skipped_oauth_token_missing,
         )
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1165,15 +1143,291 @@ class ProxyRequestExecutor:
                     "type": "routing_exhausted",
                     "message": "All model/account targets failed.",
                     "candidate_targets_total": candidate_targets_total,
-                    "attempted_count": len(attempted_targets),
-                    "attempted_targets": attempted_targets,
-                    "attempted_upstream_models": attempted_upstream_models,
-                    "skipped_rate_limited": skipped_rate_limited,
-                    "skipped_circuit_open": skipped_circuit_open,
-                    "skipped_oauth_token_missing": skipped_oauth_token_missing,
+                    "attempted_count": len(stats.attempted_targets),
+                    "attempted_targets": stats.attempted_targets,
+                    "attempted_upstream_models": stats.attempted_upstream_models,
+                    "skipped_rate_limited": stats.skipped_rate_limited,
+                    "skipped_circuit_open": stats.skipped_circuit_open,
+                    "skipped_oauth_token_missing": stats.skipped_oauth_token_missing,
                 }
             },
         )
+
+    def _skip_target_for_circuit_breaker(
+        self,
+        *,
+        target: BackendTarget,
+        breaker_key: str,
+        request_id: str,
+        stats: ProxyExecutionStats,
+    ) -> bool:
+        if self._proxy.circuit_breakers is None:
+            return False
+        if self._proxy.circuit_breakers.allow_request(breaker_key):
+            return False
+
+        snapshot = self._proxy.circuit_breakers.snapshot(breaker_key)
+        logger.info(
+            "proxy_skip_circuit_open request_id=%s target=%s state=%s failures=%s",
+            request_id,
+            target.label,
+            snapshot.get("state"),
+            snapshot.get("failure_count"),
+        )
+        self._proxy.audit(
+            "proxy_skip_circuit_open",
+            request_id=request_id,
+            target=target.label,
+            account=target.account_name,
+            model=target.model,
+            breaker=snapshot,
+        )
+        stats.skipped_circuit_open += 1
+        return True
+
+    def _skip_target_for_rate_limit(
+        self,
+        *,
+        target: BackendTarget,
+        request_id: str,
+        stats: ProxyExecutionStats,
+    ) -> bool:
+        if not self._proxy.is_temporarily_rate_limited(target.account_name):
+            return False
+
+        logger.info(
+            "proxy_skip_rate_limited request_id=%s target=%s",
+            request_id,
+            target.label,
+        )
+        self._proxy.audit(
+            "proxy_skip_rate_limited",
+            request_id=request_id,
+            target=target.label,
+            account=target.account_name,
+            model=target.model,
+        )
+        stats.skipped_rate_limited += 1
+        return True
+
+    def _record_attempt(
+        self,
+        *,
+        target: BackendTarget,
+        request_id: str,
+        attempt: int,
+        total_attempts: int,
+        stats: ProxyExecutionStats,
+    ) -> None:
+        stats.attempted_targets.append(target.label)
+        stats.attempted_upstream_models.append(target.upstream_model)
+        logger.info(
+            "proxy_attempt request_id=%s attempt=%d/%d target=%s provider=%s auth_mode=%s",
+            request_id,
+            attempt,
+            total_attempts,
+            target.label,
+            target.provider,
+            target.auth_mode,
+        )
+        self._proxy.audit(
+            "proxy_attempt",
+            request_id=request_id,
+            attempt=attempt,
+            total_attempts=total_attempts,
+            target=target.label,
+            account=target.account_name,
+            provider=target.provider,
+            model=target.model,
+            upstream_model=target.upstream_model,
+            auth_mode=target.auth_mode,
+        )
+
+    def _handle_missing_oauth_token(
+        self,
+        *,
+        target: BackendTarget,
+        bearer_token: str | None,
+        request_id: str,
+        has_more_targets: bool,
+        stats: ProxyExecutionStats,
+    ) -> tuple[bool, JSONResponse | None]:
+        if target.auth_mode != "oauth" or bearer_token:
+            return False, None
+
+        logger.warning(
+            "proxy_oauth_token_missing request_id=%s target=%s",
+            request_id,
+            target.label,
+        )
+        self._proxy.audit(
+            "proxy_oauth_token_missing",
+            request_id=request_id,
+            target=target.label,
+            account=target.account_name,
+            model=target.model,
+            upstream_model=target.upstream_model,
+        )
+        stats.skipped_oauth_token_missing += 1
+        if has_more_targets:
+            return True, None
+
+        return False, JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": {
+                    "type": "oauth_credentials_unavailable",
+                    "message": (
+                        "Selected OAuth-backed target has no usable access token "
+                        "and could not refresh one."
+                    ),
+                    "attempted_targets": stats.attempted_targets,
+                    "attempted_upstream_models": stats.attempted_upstream_models,
+                }
+            },
+        )
+
+    async def _send_upstream_request(
+        self,
+        *,
+        target: BackendTarget,
+        request_spec: UpstreamRequestSpec,
+        headers: dict[str, str],
+        breaker_key: str,
+        request_id: str,
+        attempt: int,
+        total_attempts: int,
+        has_more_targets: bool,
+        stats: ProxyExecutionStats,
+    ) -> tuple[httpx.Response | None, JSONResponse | None]:
+        attempt_started = time.perf_counter()
+        try:
+            request = self._proxy.client.build_request(
+                method="POST",
+                url=f"{target.base_url.rstrip('/')}{request_spec.path}",
+                json=request_spec.payload,
+                headers=headers,
+            )
+            upstream = await self._proxy.client.send(request, stream=request_spec.stream)
+            connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
+            logger.info(
+                "proxy_upstream_connected request_id=%s target=%s connect_ms=%.2f status=%d",
+                request_id,
+                target.label,
+                connect_latency_ms,
+                upstream.status_code,
+            )
+            self._proxy.audit(
+                "proxy_upstream_connected",
+                request_id=request_id,
+                target=target.label,
+                account=target.account_name,
+                provider=target.provider,
+                model=target.model,
+                upstream_model=target.upstream_model,
+                connect_ms=round(connect_latency_ms, 3),
+                status=upstream.status_code,
+            )
+            return upstream, None
+        except httpx.RequestError as exc:
+            error_details = _request_error_details(exc)
+            if self._proxy.circuit_breakers is not None:
+                self._proxy.circuit_breakers.on_failure(breaker_key)
+            logger.warning(
+                (
+                    "proxy_request_error request_id=%s target=%s "
+                    "attempt=%d/%d error_type=%s status_code=%s error=%s"
+                ),
+                request_id,
+                target.label,
+                attempt,
+                total_attempts,
+                error_details["error_type"],
+                error_details.get("status_code"),
+                error_details["error"],
+            )
+            self._proxy.audit(
+                "proxy_request_error",
+                request_id=request_id,
+                target=target.label,
+                account=target.account_name,
+                model=target.model,
+                upstream_model=target.upstream_model,
+                attempt=attempt,
+                total_attempts=total_attempts,
+                attempt_latency_ms=round(
+                    (time.perf_counter() - attempt_started) * 1000.0, 3
+                ),
+                **error_details,
+            )
+            if has_more_targets:
+                return None, None
+
+            return None, JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "error": {
+                        "type": "upstream_connection_error",
+                        "message": (
+                            "Could not reach backend "
+                            f"({error_details['error_type']}): {error_details['error']}"
+                        ),
+                        "error_type": error_details["error_type"],
+                        "attempted_targets": stats.attempted_targets,
+                        "attempted_upstream_models": stats.attempted_upstream_models,
+                    }
+                },
+            )
+
+    def _should_retry_upstream_response(
+        self,
+        *,
+        upstream: httpx.Response,
+        target: BackendTarget,
+        breaker_key: str,
+        request_id: str,
+        has_more_targets: bool,
+    ) -> bool:
+        should_retry = (
+            upstream.status_code in self._proxy.retry_statuses and has_more_targets
+        )
+        if upstream.status_code < 500 and upstream.status_code != 429:
+            if self._proxy.circuit_breakers is not None:
+                self._proxy.circuit_breakers.on_success(breaker_key)
+        elif (
+            upstream.status_code in self._proxy.retry_statuses
+            and self._proxy.circuit_breakers is not None
+        ):
+            self._proxy.circuit_breakers.on_failure(breaker_key)
+
+        if upstream.status_code == 429:
+            self._proxy.mark_rate_limited(
+                target.account_name,
+                upstream.headers,
+                request_id=request_id,
+                target=target.label,
+                model=target.model,
+                upstream_model=target.upstream_model,
+            )
+        if not should_retry:
+            return False
+
+        logger.info(
+            "proxy_retry request_id=%s target=%s status=%d",
+            request_id,
+            target.label,
+            upstream.status_code,
+        )
+        self._proxy.audit(
+            "proxy_retry",
+            request_id=request_id,
+            target=target.label,
+            account=target.account_name,
+            model=target.model,
+            upstream_model=target.upstream_model,
+            status=upstream.status_code,
+        )
+        return True
 
 
 class ModelRegistryResolver:
@@ -2102,109 +2356,18 @@ class BackendProxy:
         adapter: Literal["passthrough", "chat_completions"],
         audit_hook: Callable[[dict[str, Any]], None] | None,
     ) -> Response:
-        response_headers = _filter_response_headers(upstream.headers)
-        response_headers["x-router-request-id"] = request_id
-        response_headers["x-router-model"] = target.model
-        response_headers["x-router-account"] = target.account_name
-        response_headers["x-router-provider"] = target.provider
-        response_headers["x-router-auth-mode"] = target.auth_mode
-        response_headers["x-router-upstream-model"] = target.upstream_model
-        response_headers["x-router-task"] = route_decision.task
-        response_headers["x-router-complexity"] = route_decision.complexity
-        response_headers["x-router-source"] = route_decision.source
-        response_headers["x-router-request-latency-ms"] = f"{request_latency_ms:.3f}"
-        response_headers["x-router-attempted-targets"] = ",".join(attempted_targets)
-        if route_decision.ranked_models:
-            response_headers["x-router-ranked-models"] = ",".join(
-                route_decision.ranked_models
-            )
-        if route_decision.candidate_scores:
-            top = route_decision.candidate_scores[0]
-            response_headers["x-router-top-utility"] = str(top.get("utility", ""))
-        routing_diagnostics = _build_routing_diagnostics(
-            request_id=request_id,
+        return await ProxyResponseAdapter.to_fastapi_response(
+            upstream=upstream,
+            stream=stream,
+            upstream_stream=upstream_stream,
             target=target,
-            route_decision=route_decision,
-            request_latency_ms=request_latency_ms,
             attempted_targets=attempted_targets,
             attempted_upstream_models=attempted_upstream_models,
-        )
-
-        logger.info(
-            "proxy_response request_id=%s target=%s status=%d attempts=%d",
-            request_id,
-            target.label,
-            upstream.status_code,
-            len(attempted_targets),
-        )
-        if audit_hook is not None:
-            try:
-                audit_hook(
-                    {
-                        "event": "proxy_response",
-                        "request_id": request_id,
-                        "target": target.label,
-                        "account": target.account_name,
-                        "provider": target.provider,
-                        "model": target.model,
-                        "upstream_model": target.upstream_model,
-                        "status": upstream.status_code,
-                        "request_latency_ms": request_latency_ms,
-                        "attempts": len(attempted_targets),
-                        "attempted_targets": attempted_targets,
-                        "attempted_upstream_models": attempted_upstream_models,
-                    }
-                )
-            except Exception:
-                pass
-
-        if adapter == "chat_completions":
-            return await BackendProxy._to_chat_completions_response(
-                upstream=upstream,
-                stream=stream,
-                response_headers=response_headers,
-                model=target.model,
-                request_id=request_id,
-                audit_hook=audit_hook,
-                routing_diagnostics=routing_diagnostics,
-            )
-
-        if stream:
-            media_type = response_headers.pop("content-type", "text/event-stream")
-
-            async def stream_generator() -> AsyncIterator[bytes]:
-                try:
-                    if upstream_stream:
-                        async for chunk in upstream.aiter_raw():
-                            yield chunk
-                    else:
-                        body = await upstream.aread()
-                        if body:
-                            yield body
-                finally:
-                    await upstream.aclose()
-
-            return StreamingResponse(
-                content=stream_generator(),
-                status_code=upstream.status_code,
-                headers=response_headers,
-                media_type=media_type,
-            )
-
-        body = await upstream.aread()
-        await upstream.aclose()
-        diagnostics_response = _json_response_with_routing_diagnostics(
-            status_code=upstream.status_code,
-            body=body,
-            response_headers=response_headers,
-            routing_diagnostics=routing_diagnostics,
-        )
-        if diagnostics_response is not None:
-            return diagnostics_response
-        return Response(
-            content=body,
-            status_code=upstream.status_code,
-            headers=response_headers,
+            request_latency_ms=request_latency_ms,
+            route_decision=route_decision,
+            request_id=request_id,
+            adapter=adapter,
+            audit_hook=audit_hook,
         )
 
     @staticmethod
