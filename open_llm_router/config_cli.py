@@ -16,7 +16,10 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 import yaml
 
-from open_llm_router.model_utils import default_model_id as _default_model_id
+from open_llm_router.model_utils import (
+    coerce_models_map as _coerce_models_map,
+    normalize_model_metadata as _normalize_model_metadata,
+)
 from open_llm_router.persistence import YamlFileStore
 from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
 
@@ -72,50 +75,6 @@ def _qualify_model(provider: str, model: str) -> str:
 
 def _qualify_models(provider: str, models: list[str]) -> list[str]:
     return [_qualify_model(provider, model) for model in models]
-
-
-def _normalize_model_metadata(
-    model_key: str, raw_metadata: dict[str, Any] | None
-) -> dict[str, Any]:
-    metadata = dict(raw_metadata or {})
-    raw_id = metadata.get("id")
-    if isinstance(raw_id, str) and raw_id.strip():
-        metadata["id"] = raw_id.strip()
-    else:
-        metadata["id"] = _default_model_id(model_key)
-    return metadata
-
-
-def _coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
-    if value is None:
-        return {}
-    if isinstance(value, list):
-        coerced: dict[str, dict[str, Any]] = {}
-        for item in value:
-            if not isinstance(item, str):
-                continue
-            model_key = item.strip()
-            if model_key:
-                coerced.setdefault(model_key, _normalize_model_metadata(model_key, {}))
-        return coerced
-    if isinstance(value, dict):
-        normalized_models: dict[str, dict[str, Any]] = {}
-        for raw_model_key, raw_metadata in value.items():
-            if not isinstance(raw_model_key, str):
-                continue
-            model_key = raw_model_key.strip()
-            if not model_key:
-                continue
-            if raw_metadata is None:
-                normalized_models[model_key] = _normalize_model_metadata(model_key, {})
-                continue
-            if not isinstance(raw_metadata, dict):
-                raise ValueError(f"Model metadata for '{model_key}' must be an object.")
-            normalized_models[model_key] = _normalize_model_metadata(
-                model_key, raw_metadata
-            )
-        return normalized_models
-    raise ValueError("Expected 'models' to be either a list or a mapping.")
 
 
 def _parse_bool(value: str) -> bool:

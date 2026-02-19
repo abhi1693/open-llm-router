@@ -8,7 +8,12 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from open_llm_router.account_fields import AccountCommonFields
-from open_llm_router.model_utils import default_model_id, split_model_ref
+from open_llm_router.model_utils import (
+    coerce_models_map,
+    default_model_id,
+    normalize_model_metadata,
+    split_model_ref,
+)
 
 
 class ComplexityConfig(BaseModel):
@@ -270,52 +275,12 @@ class RoutingConfig(BaseModel):
     def _normalize_model_metadata(
         cls, model_key: str, raw_metadata: dict[str, Any] | None
     ) -> dict[str, Any]:
-        metadata = dict(raw_metadata or {})
-        raw_id = metadata.get("id")
-        if isinstance(raw_id, str) and raw_id.strip():
-            metadata["id"] = raw_id.strip()
-        else:
-            metadata["id"] = cls._default_model_id(model_key)
-        return metadata
+        return normalize_model_metadata(model_key, raw_metadata)
 
     @field_validator("models", mode="before")
     @classmethod
     def _coerce_models(cls, value: Any) -> dict[str, dict[str, Any]]:
-        if value is None:
-            return {}
-        if isinstance(value, list):
-            coerced: dict[str, dict[str, Any]] = {}
-            for item in value:
-                if not isinstance(item, str):
-                    continue
-                model_key = item.strip()
-                if model_key:
-                    coerced.setdefault(
-                        model_key, cls._normalize_model_metadata(model_key, {})
-                    )
-            return coerced
-        if isinstance(value, dict):
-            normalized_models: dict[str, dict[str, Any]] = {}
-            for raw_model_key, raw_metadata in value.items():
-                if not isinstance(raw_model_key, str):
-                    continue
-                model_key = raw_model_key.strip()
-                if not model_key:
-                    continue
-                if raw_metadata is None:
-                    normalized_models[model_key] = cls._normalize_model_metadata(
-                        model_key, {}
-                    )
-                    continue
-                if not isinstance(raw_metadata, dict):
-                    raise ValueError(
-                        f"Model metadata for '{model_key}' must be an object."
-                    )
-                normalized_models[model_key] = cls._normalize_model_metadata(
-                    model_key, raw_metadata
-                )
-            return normalized_models
-        raise ValueError("Expected 'models' to be either a list or a mapping.")
+        return coerce_models_map(value)
 
     def should_auto_route(self, requested_model: str | None) -> bool:
         if not requested_model or not requested_model.strip():
