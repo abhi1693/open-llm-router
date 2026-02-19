@@ -7,6 +7,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from open_llm_router.account_fields import AccountCommonFields
 from open_llm_router.model_utils import default_model_id, split_model_ref
 
 
@@ -112,30 +113,9 @@ class TaskRoute(BaseModel):
         return self._pick_first_non_empty(self.default, self.high, self.xhigh)
 
 
-class BackendAccount(BaseModel):
-    name: str
+class BackendAccount(AccountCommonFields):
     provider: str = "openai"
     base_url: str
-    auth_mode: Literal["api_key", "oauth", "passthrough"] = "api_key"
-    api_key: str | None = None
-    api_key_env: str | None = None
-    oauth_access_token: str | None = None
-    oauth_access_token_env: str | None = None
-    oauth_refresh_token: str | None = None
-    oauth_refresh_token_env: str | None = None
-    oauth_expires_at: int | None = None
-    oauth_expires_at_env: str | None = None
-    oauth_token_url: str | None = None
-    oauth_client_id: str | None = None
-    oauth_client_id_env: str | None = None
-    oauth_client_secret: str | None = None
-    oauth_client_secret_env: str | None = None
-    oauth_account_id: str | None = None
-    oauth_account_id_env: str | None = None
-    organization: str | None = None
-    project: str | None = None
-    models: list[str] = Field(default_factory=list)
-    enabled: bool = True
 
     @staticmethod
     def _split_model_ref(model: str) -> tuple[str | None, str]:
