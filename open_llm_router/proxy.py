@@ -189,6 +189,28 @@ def _build_upstream_headers(
     stream: bool = False,
     allow_passthrough_auth: bool = False,
 ) -> dict[str, str]:
+    headers = _extract_passthrough_headers(incoming_headers)
+    _apply_authorization_header(
+        headers=headers,
+        incoming_headers=incoming_headers,
+        bearer_token=bearer_token,
+        allow_passthrough_auth=allow_passthrough_auth,
+    )
+    _apply_openai_context_headers(
+        headers=headers,
+        organization=organization,
+        project=project,
+    )
+    _apply_provider_headers(
+        headers=headers,
+        provider=provider,
+        oauth_account_id=oauth_account_id,
+    )
+    _ensure_default_content_negotiation(headers=headers, stream=stream)
+    return headers
+
+
+def _extract_passthrough_headers(incoming_headers: Headers) -> dict[str, str]:
     passthrough = {
         "accept",
         "baggage",
@@ -229,33 +251,63 @@ def _build_upstream_headers(
         if lower in {"host", "content-length", "connection", "authorization"}:
             continue
         if lower in passthrough or lower in safe_x_headers:
-            key = canonical_names.get(lower, name)
-            headers[key] = value
+            headers[canonical_names.get(lower, name)] = value
+    return headers
 
+
+def _apply_authorization_header(
+    *,
+    headers: dict[str, str],
+    incoming_headers: Headers,
+    bearer_token: str | None,
+    allow_passthrough_auth: bool,
+) -> None:
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
-    elif allow_passthrough_auth:
-        incoming_auth = incoming_headers.get("authorization", "").strip()
-        if incoming_auth.lower().startswith("bearer "):
-            headers["Authorization"] = incoming_auth
+        return
+    if not allow_passthrough_auth:
+        return
+    incoming_auth = incoming_headers.get("authorization", "").strip()
+    if incoming_auth.lower().startswith("bearer "):
+        headers["Authorization"] = incoming_auth
 
+
+def _apply_openai_context_headers(
+    *,
+    headers: dict[str, str],
+    organization: str | None,
+    project: str | None,
+) -> None:
     if organization:
         headers["OpenAI-Organization"] = organization
     if project:
         headers["OpenAI-Project"] = project
 
-    if provider.strip().lower() == "openai-codex":
-        if oauth_account_id:
-            headers["chatgpt-account-id"] = oauth_account_id
-        headers.setdefault("OpenAI-Beta", "responses=experimental")
-        headers.setdefault("originator", "pi")
-        headers["Accept"] = "text/event-stream"
 
+def _apply_provider_headers(
+    *,
+    headers: dict[str, str],
+    provider: str,
+    oauth_account_id: str | None,
+) -> None:
+    if provider.strip().lower() != "openai-codex":
+        return
+    if oauth_account_id:
+        headers["chatgpt-account-id"] = oauth_account_id
+    headers.setdefault("OpenAI-Beta", "responses=experimental")
+    headers.setdefault("originator", "pi")
+    headers["Accept"] = "text/event-stream"
+
+
+def _ensure_default_content_negotiation(
+    *,
+    headers: dict[str, str],
+    stream: bool,
+) -> None:
     if not any(key.lower() == "content-type" for key in headers):
         headers["Content-Type"] = "application/json"
     if not any(key.lower() == "accept" for key in headers):
         headers["Accept"] = "text/event-stream" if stream else "application/json"
-    return headers
 
 
 def _as_input_text_part(value: str) -> dict[str, str]:
