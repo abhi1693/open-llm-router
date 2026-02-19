@@ -398,7 +398,9 @@ def _collect_message_texts(
             continue
         role = str(message.get("role") or "").lower().strip()
         message_texts: list[str] = []
-        _collect_text_and_signals(message.get("content"), "content", message_texts, signals)
+        _collect_text_and_signals(
+            message.get("content"), "content", message_texts, signals
+        )
         all_message_texts.extend(message_texts)
         message_blob = " ".join(message_texts).strip()
         if role == "user":
@@ -588,7 +590,9 @@ def _local_embedding_for_text(
     return tuple(float(value) for value in values)
 
 
-def _mean_normalized_vector(vectors: list[tuple[float, ...]]) -> tuple[float, ...] | None:
+def _mean_normalized_vector(
+    vectors: list[tuple[float, ...]],
+) -> tuple[float, ...] | None:
     if not vectors:
         return None
     dimensions = len(vectors[0])
@@ -897,7 +901,9 @@ def _select_task_from_scores(
     semantic_override_allowed = (
         semantic_task != "general"
         and semantic_confidence >= semantic_min_confidence
-        and not (semantic_task == "instruction_following" and text_length > medium_max_chars)
+        and not (
+            semantic_task == "instruction_following" and text_length > medium_max_chars
+        )
     )
     if semantic_override_allowed and (
         confidence < 0.45
@@ -1184,7 +1190,8 @@ def classify_request(
                 _LATEST_FACTUAL_QUERY_PATTERN.search(latest_user_text)
             ),
             "latest_user_references_context": any(
-                hint in latest_user_text_lower for hint in _LATEST_CONTEXT_REFERENCE_HINTS
+                hint in latest_user_text_lower
+                for hint in _LATEST_CONTEXT_REFERENCE_HINTS
             ),
             "latest_user_structural_code_hints": latest_user_structural_code_hints,
             "latest_user_structural_code_score": round(

@@ -580,9 +580,13 @@ def test_hard_constraints_allow_small_context_overflow_with_tolerance(
     assert decision.selected_model == "large-model"
     assert any(
         reason.startswith("context_window_exceeded:")
-        for reason in decision.decision_trace["hard_constraint_rejections"]["small-model"]
+        for reason in decision.decision_trace["hard_constraint_rejections"][
+            "small-model"
+        ]
     )
-    assert decision.decision_trace["hard_constraint_token_estimation"] == "test_override"
+    assert (
+        decision.decision_trace["hard_constraint_token_estimation"] == "test_override"
+    )
 
 
 def test_hard_constraints_supplement_large_context_single_candidate_chain(
@@ -781,7 +785,12 @@ def test_semantic_classifier_routes_thinking_intent_from_tradeoff_language() -> 
     )
 
     assert decision.task == "thinking"
-    assert decision.selected_model in {"think-14b", "think-32b", "think-70b", "think-codex"}
+    assert decision.selected_model in {
+        "think-14b",
+        "think-32b",
+        "think-70b",
+        "think-codex",
+    }
     assert decision.signals["semantic_classifier_used"] is True
     assert decision.signals["task_reason"] == "semantic_classifier_override"
 
@@ -1195,7 +1204,10 @@ def test_factual_general_query_pins_rule_chain_head_over_learned_reorder() -> No
     assert decision.task == "general"
     assert decision.complexity == "low"
     assert decision.selected_model == "gemini/gemini-2.5-flash"
-    assert decision.decision_trace["selected_reason"] == "factual_query_rule_chain_guardrail"
+    assert (
+        decision.decision_trace["selected_reason"]
+        == "factual_query_rule_chain_guardrail"
+    )
 
 
 def test_factual_question_with_non_user_role_still_routes_general() -> None:

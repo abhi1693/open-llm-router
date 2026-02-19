@@ -466,7 +466,8 @@ def test_runtime_policy_updater_adjusts_classifier_thresholds_from_feedback() ->
 
         await updater.run_once()
         assert (
-            config.classifier_calibration.secondary_low_confidence_min_confidence == 0.25
+            config.classifier_calibration.secondary_low_confidence_min_confidence
+            == 0.25
         )
         assert (
             config.classifier_calibration.secondary_mixed_signal_min_confidence == 0.45
@@ -475,10 +476,9 @@ def test_runtime_policy_updater_adjusts_classifier_thresholds_from_feedback() ->
         assert updater.status.last_classifier_samples == 5
         assert updater.status.last_classifier_success_rate == pytest.approx(0.2)
         assert len(updater.status.classifier_adjustment_history) == 1
-        assert (
-            updater.status.classifier_adjustment_history[0]["threshold_low_after"]
-            == pytest.approx(0.25)
-        )
+        assert updater.status.classifier_adjustment_history[0][
+            "threshold_low_after"
+        ] == pytest.approx(0.25)
 
     asyncio.run(_run())
 
@@ -562,7 +562,9 @@ def test_apply_runtime_overrides_updates_model_profiles(tmp_path: Path) -> None:
     assert config.model_profiles["m2"].failure_rate == 0.02
 
 
-def test_apply_runtime_overrides_updates_learned_feature_weights(tmp_path: Path) -> None:
+def test_apply_runtime_overrides_updates_learned_feature_weights(
+    tmp_path: Path,
+) -> None:
     config = RoutingConfig.model_validate(
         {
             "default_model": "m1",

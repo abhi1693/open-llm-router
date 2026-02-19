@@ -220,22 +220,32 @@ class RuntimePolicyUpdater:
                 float(metrics.ewma_failure_rate)
                 if metrics.ewma_failure_rate is not None
                 else float(
-                    self._routing_config.model_profiles.get(model, ModelProfile()).failure_rate
+                    self._routing_config.model_profiles.get(
+                        model, ModelProfile()
+                    ).failure_rate
                 )
             )
             observed_failure = min(max(observed_failure, 0.0), 1.0)
 
-            observed_latency = metrics.ewma_request_latency_ms or metrics.ewma_connect_ms
+            observed_latency = (
+                metrics.ewma_request_latency_ms or metrics.ewma_connect_ms
+            )
             baseline_profile = self._baseline_model_profiles.get(model)
             baseline_latency = (
                 float(baseline_profile.latency_ms)
                 if baseline_profile is not None and baseline_profile.latency_ms > 0
                 else float(
-                    self._routing_config.model_profiles.get(model, ModelProfile()).latency_ms
+                    self._routing_config.model_profiles.get(
+                        model, ModelProfile()
+                    ).latency_ms
                 )
             )
             latency_ratio = 1.0
-            if observed_latency is not None and observed_latency > 0 and baseline_latency > 0:
+            if (
+                observed_latency is not None
+                and observed_latency > 0
+                and baseline_latency > 0
+            ):
                 latency_ratio = float(observed_latency) / baseline_latency
                 latency_ratio = min(max(latency_ratio, 0.1), 5.0)
 
@@ -405,7 +415,10 @@ class RuntimePolicyUpdater:
             "threshold_mixed_after": float(mixed_after),
         }
         self._classifier_adjustment_history.append(event)
-        if len(self._classifier_adjustment_history) > self._classifier_adjustment_history_limit:
+        if (
+            len(self._classifier_adjustment_history)
+            > self._classifier_adjustment_history_limit
+        ):
             self._classifier_adjustment_history = self._classifier_adjustment_history[
                 -self._classifier_adjustment_history_limit :
             ]
@@ -418,7 +431,9 @@ class RuntimePolicyUpdater:
             if provider is not None
             else None
         )
-        if snapshot is not None and not isinstance(snapshot, ClassifierCalibrationSnapshot):
+        if snapshot is not None and not isinstance(
+            snapshot, ClassifierCalibrationSnapshot
+        ):
             snapshot = None
 
         payload: dict[str, Any] = {

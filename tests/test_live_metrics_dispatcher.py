@@ -80,7 +80,9 @@ def test_live_metrics_event_dispatcher_processes_route_calibration_events() -> N
     asyncio.run(_run())
 
 
-def test_live_metrics_event_dispatcher_ignores_model_scoped_events_without_model() -> None:
+def test_live_metrics_event_dispatcher_ignores_model_scoped_events_without_model() -> (
+    None
+):
     async def _run() -> None:
         store, proxy_metrics, _, dispatcher = _build_dispatcher()
 

@@ -20,7 +20,9 @@ from open_llm_router.config import BackendAccount
 from open_llm_router.model_utils import split_model_ref
 from open_llm_router.persistence import YamlFileStore
 from open_llm_router.router_engine import RouteDecision
-from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe_preserving_order
+from open_llm_router.sequence_utils import (
+    dedupe_preserving_order as _dedupe_preserving_order,
+)
 
 HOP_BY_HOP_RESPONSE_HEADERS = {
     "connection",
@@ -1113,7 +1115,9 @@ class ProxyAttemptProcessor(_ProxyComponent):
                 json=request_spec.payload,
                 headers=headers,
             )
-            upstream = await self._proxy.client.send(request, stream=request_spec.stream)
+            upstream = await self._proxy.client.send(
+                request, stream=request_spec.stream
+            )
             connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
             logger.info(
                 "proxy_upstream_connected request_id=%s target=%s connect_ms=%.2f status=%d",
@@ -1520,7 +1524,12 @@ class ProxyRequestExecutor(_ProxyComponent):
         if plan.context is None:
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                content={"error": {"type": "internal_error", "message": "Missing execution context."}},
+                content={
+                    "error": {
+                        "type": "internal_error",
+                        "message": "Missing execution context.",
+                    }
+                },
             )
 
         return await self._execute_target_attempts(
@@ -1673,7 +1682,10 @@ class ProxyRequestExecutor(_ProxyComponent):
         if prepared_attempt is None:
             return None
 
-        upstream, request_error_response = await self._attempt_processor.send_upstream_request(
+        (
+            upstream,
+            request_error_response,
+        ) = await self._attempt_processor.send_upstream_request(
             target=target,
             request_spec=prepared_attempt.request_spec,
             headers=prepared_attempt.headers,
@@ -1715,12 +1727,14 @@ class ProxyRequestExecutor(_ProxyComponent):
             stream=context.stream,
         )
         bearer_token = await self._proxy.resolve_bearer_token(target.account)
-        skip_for_oauth, oauth_response = self._attempt_processor.handle_missing_oauth_token(
-            target=target,
-            bearer_token=bearer_token,
-            request_id=context.request_id,
-            has_more_targets=has_more_targets,
-            stats=stats,
+        skip_for_oauth, oauth_response = (
+            self._attempt_processor.handle_missing_oauth_token(
+                target=target,
+                bearer_token=bearer_token,
+                request_id=context.request_id,
+                has_more_targets=has_more_targets,
+                stats=stats,
+            )
         )
         if oauth_response is not None:
             return oauth_response
@@ -1963,7 +1977,9 @@ class TargetSelectionPolicy:
         if not isinstance(costs, dict):
             return float("inf")
         input_cost = self.as_non_negative_float(costs.get("input_per_1k"), default=0.0)
-        output_cost = self.as_non_negative_float(costs.get("output_per_1k"), default=0.0)
+        output_cost = self.as_non_negative_float(
+            costs.get("output_per_1k"), default=0.0
+        )
         if input_cost <= 0.0 and output_cost <= 0.0:
             return float("inf")
         return input_cost + output_cost
@@ -2090,7 +2106,9 @@ class TargetSelectionPolicy:
     ) -> list[str]:
         metadata = self.target_metadata(target)
         supported = self.normalize_parameter_set(metadata.get("supported_parameters"))
-        unsupported = self.normalize_parameter_set(metadata.get("unsupported_parameters"))
+        unsupported = self.normalize_parameter_set(
+            metadata.get("unsupported_parameters")
+        )
 
         reasons: list[str] = []
         if supported:
@@ -2146,9 +2164,8 @@ class BackendTargetPlanner(_ProxyComponent):
             for model in model_chain
         ]
 
-        if (
-            route_decision.source != "request"
-            and self._proxy.allows_fallbacks(provider_preferences)
+        if route_decision.source != "request" and self._proxy.allows_fallbacks(
+            provider_preferences
         ):
             grouped_targets = self._proxy.prioritize_model_groups_by_rate_limit(
                 grouped_targets
@@ -2209,7 +2226,9 @@ class BackendTargetPlanner(_ProxyComponent):
         partition: str,
     ) -> list[BackendTarget]:
         if partition == "none":
-            flattened_targets = [target for group in grouped_targets for target in group]
+            flattened_targets = [
+                target for group in grouped_targets for target in group
+            ]
             sorted_targets = self._proxy.sort_model_targets(
                 model_targets=flattened_targets,
                 provider_preferences=provider_preferences,
@@ -3527,7 +3546,9 @@ class BackendProxy:
 
     def _group_has_available_targets(self, model_targets: list[BackendTarget]) -> bool:
         return any(
-            not self._rate_limit_tracker.is_temporarily_rate_limited(target.account_name)
+            not self._rate_limit_tracker.is_temporarily_rate_limited(
+                target.account_name
+            )
             for target in model_targets
         )
 
@@ -3537,7 +3558,9 @@ class BackendProxy:
         healthy_targets: list[BackendTarget] = []
         limited_targets: list[BackendTarget] = []
         for target in model_targets:
-            if self._rate_limit_tracker.is_temporarily_rate_limited(target.account_name):
+            if self._rate_limit_tracker.is_temporarily_rate_limited(
+                target.account_name
+            ):
                 limited_targets.append(target)
             else:
                 healthy_targets.append(target)

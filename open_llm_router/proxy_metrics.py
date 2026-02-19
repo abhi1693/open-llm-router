@@ -135,14 +135,19 @@ class ProxyMetricsAccumulator:
             }
         return output
 
-    def record_connect(self, target_key: tuple[str, str, str], connect_ms: float) -> None:
-        samples = self._proxy_connect_latency_samples_by_target.append(target_key, connect_ms)
+    def record_connect(
+        self, target_key: tuple[str, str, str], connect_ms: float
+    ) -> None:
+        samples = self._proxy_connect_latency_samples_by_target.append(
+            target_key, connect_ms
+        )
         if self._connect_latency_alert_threshold_ms <= 0.0:
             return
 
         p95_value = _percentile(list(samples), 0.95)
         is_alerting = (
-            p95_value is not None and p95_value > self._connect_latency_alert_threshold_ms
+            p95_value is not None
+            and p95_value > self._connect_latency_alert_threshold_ms
         )
         was_alerting = self._proxy_connect_latency_alert_active_by_target.get(
             target_key, False

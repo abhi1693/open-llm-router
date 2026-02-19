@@ -11,7 +11,9 @@ from typing import Any, Iterator
 from open_llm_router.classifier import _local_embedding_for_text, classify_request
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.scoring import ModelScore, build_routing_features, score_model
-from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe_preserving_order
+from open_llm_router.sequence_utils import (
+    dedupe_preserving_order as _dedupe_preserving_order,
+)
 
 _CONTEXT_WINDOW_OVERFLOW_TOLERANCE = 0.10
 _HIGH_CONTEXT_SUPPLEMENT_TOKENS = 120_000
@@ -182,7 +184,10 @@ class SmartModelRouter:
                     signals=signals,
                 )
             )
-            if self.config.learned_routing.enabled and not use_factual_rule_chain_guardrail:
+            if (
+                self.config.learned_routing.enabled
+                and not use_factual_rule_chain_guardrail
+            ):
                 (
                     selected_model,
                     fallbacks,
@@ -238,7 +243,9 @@ class SmartModelRouter:
 
                 selected_model = chain_for_selection[0]
                 fallbacks = [
-                    model for model in chain_for_selection[1:] if model != selected_model
+                    model
+                    for model in chain_for_selection[1:]
+                    if model != selected_model
                 ]
                 ranked_models = [selected_model, *fallbacks]
                 candidate_scores = []
@@ -344,7 +351,9 @@ class SmartModelRouter:
         )
         if latest_structural_code_score > 0.0:
             return False
-        text_length = int(signals.get("latest_user_text_length", signals.get("text_length", 0)))
+        text_length = int(
+            signals.get("latest_user_text_length", signals.get("text_length", 0))
+        )
         if text_length > 220:
             return False
         return True
@@ -433,7 +442,11 @@ class SmartModelRouter:
             complexity=complexity,
         )
         scored_by_model = {item.model: item for item in scored}
-        scored = [scored_by_model[model] for model in reranked_models if model in scored_by_model]
+        scored = [
+            scored_by_model[model]
+            for model in reranked_models
+            if model in scored_by_model
+        ]
         scored.sort(
             key=lambda item: (
                 base_selection_scores[item.model],
@@ -468,9 +481,7 @@ class SmartModelRouter:
                 row["bandit_selection_score"] = round(bandit_scores[item.model], 6)
                 row["bandit_exploration_bonus"] = round(bandit_bonus[item.model], 6)
             if provider_order_bonus.get(item.model, 0.0) != 0.0:
-                row["provider_order_bonus"] = round(
-                    provider_order_bonus[item.model], 6
-                )
+                row["provider_order_bonus"] = round(provider_order_bonus[item.model], 6)
             if item.model in reranker_similarity:
                 row["reranker_similarity"] = round(reranker_similarity[item.model], 6)
             if reranker_bonus.get(item.model, 0.0) != 0.0:
@@ -553,10 +564,14 @@ class SmartModelRouter:
         signals: dict[str, Any],
         task: str,
         complexity: str,
-    ) -> tuple[list[str], dict[str, float], dict[str, float], dict[str, float], dict[str, Any]]:
+    ) -> tuple[
+        list[str], dict[str, float], dict[str, float], dict[str, float], dict[str, Any]
+    ]:
         reranker_cfg = self.config.route_reranker
         base_chain = list(candidate_models)
-        base_scores = {model: float(base_selection_scores.get(model, 0.0)) for model in base_chain}
+        base_scores = {
+            model: float(base_selection_scores.get(model, 0.0)) for model in base_chain
+        }
         trace: dict[str, Any] = {
             "enabled": bool(reranker_cfg.enabled),
             "backend": reranker_cfg.backend,
@@ -617,7 +632,9 @@ class SmartModelRouter:
                 continue
             similarity = _vector_cosine(query_vector, model_vector)
             reranker_similarity[model] = similarity
-            reranker_bonus[model] = max(0.0, similarity - min_similarity) * similarity_weight
+            reranker_bonus[model] = (
+                max(0.0, similarity - min_similarity) * similarity_weight
+            )
 
         if not reranker_similarity:
             trace["status"] = "model_embeddings_unavailable"
@@ -645,7 +662,13 @@ class SmartModelRouter:
                 "min_similarity": min_similarity,
             }
         )
-        return reranked_models, adjusted_scores, reranker_bonus, reranker_similarity, trace
+        return (
+            reranked_models,
+            adjusted_scores,
+            reranker_bonus,
+            reranker_similarity,
+            trace,
+        )
 
     @staticmethod
     def _required_capabilities(
@@ -833,9 +856,9 @@ class SmartModelRouter:
                 output_budget = requested_output_tokens or 0
                 estimated_total_tokens = estimated_input_tokens + output_budget
                 if estimated_total_tokens > context_tokens:
-                    overflow_ratio = (
-                        estimated_total_tokens - context_tokens
-                    ) / max(1, context_tokens)
+                    overflow_ratio = (estimated_total_tokens - context_tokens) / max(
+                        1, context_tokens
+                    )
                     if overflow_ratio > _CONTEXT_WINDOW_OVERFLOW_TOLERANCE:
                         reasons.append(
                             (
@@ -885,7 +908,10 @@ class SmartModelRouter:
             accepted_models.append(model)
             accepted_set.add(model)
             supplemented.append(model)
-            if len(accepted_models) >= 2 or len(supplemented) >= _MAX_SUPPLEMENTAL_MODELS:
+            if (
+                len(accepted_models) >= 2
+                or len(supplemented) >= _MAX_SUPPLEMENTAL_MODELS
+            ):
                 break
 
         return supplemented
@@ -1010,7 +1036,9 @@ def _build_reranker_query_text(
     pieces = list(_iter_payload_text(payload))
     request_text = " ".join(piece.strip() for piece in pieces if piece.strip()).strip()
     if not request_text:
-        preview = str(signals.get("text_preview_total") or signals.get("text_preview") or "")
+        preview = str(
+            signals.get("text_preview_total") or signals.get("text_preview") or ""
+        )
         request_text = preview.strip()
     if not request_text:
         return ""
@@ -1038,12 +1066,12 @@ def _build_reranker_model_hint(
         capabilities = metadata.get("capabilities")
         if isinstance(capabilities, list):
             normalized_capabilities = [
-                str(item).strip()
-                for item in capabilities
-                if str(item).strip()
+                str(item).strip() for item in capabilities if str(item).strip()
             ]
             if normalized_capabilities:
-                parts.append("capabilities:" + " ".join(sorted(normalized_capabilities)))
+                parts.append(
+                    "capabilities:" + " ".join(sorted(normalized_capabilities))
+                )
         task_affinity = metadata.get("task_affinity")
         if isinstance(task_affinity, dict):
             affinity_parts: list[str] = []

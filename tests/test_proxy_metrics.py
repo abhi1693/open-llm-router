@@ -21,9 +21,9 @@ def test_proxy_metrics_accumulator_records_core_metrics() -> None:
     assert metrics.proxy_connect_latency_alerts_by_target == {
         ("openai", "acct-a", "m1"): 1
     }
-    assert metrics.proxy_connect_latency_quantiles_by_target[("openai", "acct-a", "m1")][
-        "p95"
-    ] == pytest.approx(160.0)
+    assert metrics.proxy_connect_latency_quantiles_by_target[
+        ("openai", "acct-a", "m1")
+    ]["p95"] == pytest.approx(160.0)
 
     metrics.record_response(200)
     metrics.record_response(429)

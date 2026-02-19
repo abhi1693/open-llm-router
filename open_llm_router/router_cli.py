@@ -41,9 +41,7 @@ GEMINI_APIKEY_DEFAULT_MODELS = "gemini/gemini-2.5-flash,gemini/gemini-2.5-flash-
 GEMINI_APIKEY_DEFAULT_KEY_ENV = "GEMINI_API_KEY"
 NVIDIA_APIKEY_DEFAULT_MODELS = "nvidia/z-ai/glm5,nvidia/moonshotai/kimi-k2.5"
 NVIDIA_APIKEY_DEFAULT_KEY_ENV = "NVIDIA_API_KEY"
-GITHUB_APIKEY_DEFAULT_MODELS = (
-    "github/openai/gpt-4.1,github/openai/gpt-4.1-mini,github/meta/Llama-3.3-70B-Instruct"
-)
+GITHUB_APIKEY_DEFAULT_MODELS = "github/openai/gpt-4.1,github/openai/gpt-4.1-mini,github/meta/Llama-3.3-70B-Instruct"
 GITHUB_APIKEY_DEFAULT_KEY_ENV = "GITHUB_TOKEN"
 DEFAULT_RUNTIME_OVERRIDES_PATH = "logs/router.runtime.overrides.yaml"
 
@@ -246,9 +244,7 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
     observed_success_rate = _coerce_optional_float(
         calibration_runtime.get("secondary_success_rate")
     )
-    secondary_samples = _coerce_optional_int(
-        calibration_runtime.get("secondary_total")
-    )
+    secondary_samples = _coerce_optional_int(calibration_runtime.get("secondary_total"))
     if secondary_samples is None:
         secondary_samples = _coerce_optional_int(
             calibration_runtime.get("secondary_samples")

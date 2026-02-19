@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from open_llm_router.account_fields import AccountCommonFields
 
+
 class ProfileSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

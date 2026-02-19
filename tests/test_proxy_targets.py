@@ -875,7 +875,9 @@ def test_proxy_rate_limited_audit_contains_request_context_fields() -> None:
     )
 
     assert response.status_code == 429
-    events = [event for event in captured_events if event.get("event") == "proxy_rate_limited"]
+    events = [
+        event for event in captured_events if event.get("event") == "proxy_rate_limited"
+    ]
     assert len(events) == 1
     event = events[0]
     assert event["request_id"] == "req-rate-context"
@@ -931,7 +933,9 @@ def test_proxy_exhausted_audit_includes_skip_counters() -> None:
     assert body["error"]["skipped_circuit_open"] == 0
     assert body["error"]["skipped_oauth_token_missing"] == 0
 
-    exhausted_events = [event for event in captured_events if event.get("event") == "proxy_exhausted"]
+    exhausted_events = [
+        event for event in captured_events if event.get("event") == "proxy_exhausted"
+    ]
     assert len(exhausted_events) == 1
     event = exhausted_events[0]
     assert event["candidate_targets_total"] == 1
@@ -1233,7 +1237,9 @@ def test_oauth_account_refreshes_when_expired() -> None:
     asyncio.run(proxy.close())
 
 
-def test_oauth_account_refresh_persists_rotated_tokens_to_config(tmp_path: Path) -> None:
+def test_oauth_account_refresh_persists_rotated_tokens_to_config(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "router.profile.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -1741,7 +1747,9 @@ def test_prepare_upstream_request_sanitizes_gemini_chat_payload() -> None:
     assert "parallel_tool_calls" not in prepared.payload
 
 
-def test_prepare_upstream_request_maps_github_chat_payload_to_inference_endpoint() -> None:
+def test_prepare_upstream_request_maps_github_chat_payload_to_inference_endpoint() -> (
+    None
+):
     payload = {
         "model": "openai/gpt-4.1-mini",
         "messages": [{"role": "user", "content": "Hello"}],

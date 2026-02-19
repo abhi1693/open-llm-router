@@ -1230,9 +1230,7 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
                     stream=is_stream,
                     status=int(cached_response.status_code),
                     outcome=(
-                        "success"
-                        if int(cached_response.status_code) < 400
-                        else "error"
+                        "success" if int(cached_response.status_code) < 400 else "error"
                     ),
                     error_type=_extract_error_type_from_response(cached_response),
                     note="idempotency_wait_replay",

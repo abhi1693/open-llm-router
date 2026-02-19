@@ -43,7 +43,7 @@ def test_sanitize_audit_event_redacts_text_previews() -> None:
         "tool_call_summary": [
             {
                 "name": "search",
-                "arguments_preview": "{\"q\":\"secret term\"}",
+                "arguments_preview": '{"q":"secret term"}',
             }
         ],
     }

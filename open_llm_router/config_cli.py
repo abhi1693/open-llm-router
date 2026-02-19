@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 import yaml
 
+from open_llm_router.model_utils import coerce_models_map as _coerce_models_map
 from open_llm_router.model_utils import (
-    coerce_models_map as _coerce_models_map,
     normalize_model_metadata as _normalize_model_metadata,
 )
 from open_llm_router.persistence import YamlFileStore
@@ -127,7 +127,9 @@ class AccountConfigMutator:
     }
 
     @classmethod
-    def apply_from_args(cls, *, account: dict[str, Any], args: argparse.Namespace) -> None:
+    def apply_from_args(
+        cls, *, account: dict[str, Any], args: argparse.Namespace
+    ) -> None:
         for arg_name, config_key in cls._NORMALIZED_OPTIONAL_FIELDS.items():
             value = getattr(args, arg_name, None)
             if value is not None:
@@ -177,7 +179,9 @@ class AccountEntryManager:
         account_models = _qualify_models(provider, raw_models)
         raw_to_qualified = {
             raw_model: qualified_model
-            for raw_model, qualified_model in zip(raw_models, account_models, strict=False)
+            for raw_model, qualified_model in zip(
+                raw_models, account_models, strict=False
+            )
         }
         if not account_models:
             return account_models, raw_to_qualified
@@ -446,7 +450,9 @@ def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
 def _load_config(path: Path) -> dict[str, Any]:
     data = YamlFileStore(path).load(default={})
     if not isinstance(data, dict):
-        raise ValueError(f"Expected root object in {path}, found: {type(data).__name__}")
+        raise ValueError(
+            f"Expected root object in {path}, found: {type(data).__name__}"
+        )
     _ensure_schema(data)
     return data
 

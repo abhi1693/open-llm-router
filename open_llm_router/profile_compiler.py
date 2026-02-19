@@ -976,4 +976,3 @@ def _merge_dict(base: dict[str, Any], layer: dict[str, Any]) -> None:
             _merge_dict(base[key], value)
             continue
         base[key] = deepcopy(value)
-
