@@ -715,6 +715,12 @@ class ProxyAttemptRunContext:
     request_started: float
 
 
+@dataclass(slots=True)
+class PreparedProxyAttempt:
+    request_spec: UpstreamRequestSpec
+    headers: dict[str, str]
+
+
 class ProxyResponseAdapter:
     @staticmethod
     async def to_fastapi_response(
@@ -1560,6 +1566,51 @@ class ProxyRequestExecutor:
             total_attempts=context.total_attempts,
             stats=stats,
         )
+        prepared_attempt = await self._prepare_attempt_request(
+            target=target,
+            context=context,
+            has_more_targets=has_more_targets,
+            stats=stats,
+        )
+        if isinstance(prepared_attempt, Response):
+            return prepared_attempt
+        if prepared_attempt is None:
+            return None
+
+        upstream, request_error_response = await self._attempt_processor.send_upstream_request(
+            target=target,
+            request_spec=prepared_attempt.request_spec,
+            headers=prepared_attempt.headers,
+            breaker_key=breaker_key,
+            request_id=context.request_id,
+            attempt=attempt_number,
+            total_attempts=context.total_attempts,
+            has_more_targets=has_more_targets,
+            stats=stats,
+        )
+        if request_error_response is not None:
+            return request_error_response
+        if upstream is None:
+            return None
+
+        return await self._finalize_attempt_response(
+            upstream=upstream,
+            target=target,
+            breaker_key=breaker_key,
+            request_spec=prepared_attempt.request_spec,
+            context=context,
+            has_more_targets=has_more_targets,
+            stats=stats,
+        )
+
+    async def _prepare_attempt_request(
+        self,
+        *,
+        target: BackendTarget,
+        context: ProxyAttemptRunContext,
+        has_more_targets: bool,
+        stats: ProxyExecutionStats,
+    ) -> PreparedProxyAttempt | Response | None:
         context.trial_payload["model"] = target.upstream_model
         request_spec = _prepare_upstream_request(
             path=context.path,
@@ -1590,23 +1641,22 @@ class ProxyRequestExecutor:
             stream=request_spec.stream,
             allow_passthrough_auth=target.account.allows_passthrough_auth(),
         )
-
-        upstream, request_error_response = await self._attempt_processor.send_upstream_request(
-            target=target,
+        return PreparedProxyAttempt(
             request_spec=request_spec,
             headers=headers,
-            breaker_key=breaker_key,
-            request_id=context.request_id,
-            attempt=attempt_number,
-            total_attempts=context.total_attempts,
-            has_more_targets=has_more_targets,
-            stats=stats,
         )
-        if request_error_response is not None:
-            return request_error_response
-        if upstream is None:
-            return None
 
+    async def _finalize_attempt_response(
+        self,
+        *,
+        upstream: httpx.Response,
+        target: BackendTarget,
+        breaker_key: str,
+        request_spec: UpstreamRequestSpec,
+        context: ProxyAttemptRunContext,
+        has_more_targets: bool,
+        stats: ProxyExecutionStats,
+    ) -> Response | None:
         if self._attempt_processor.should_retry_upstream_response(
             upstream=upstream,
             target=target,
@@ -1974,43 +2024,16 @@ class BackendTargetPlanner:
     def build_candidate_targets(
         self, route_decision: RouteDecision
     ) -> list[BackendTarget]:
-        if route_decision.source == "request":
-            model_chain = [route_decision.selected_model]
-        else:
-            model_chain = _dedupe_preserving_order(
-                [route_decision.selected_model, *route_decision.fallback_models]
-            )
+        model_chain = self._candidate_model_chain(route_decision)
         provider_preferences = route_decision.provider_preferences or {}
         partition = self._proxy.provider_partition_mode(provider_preferences)
-        grouped_targets: list[list[BackendTarget]] = []
-        for model in model_chain:
-            model_targets: list[BackendTarget] = []
-            for account in self._proxy.accounts:
-                if account.enabled and account.supports_model(model):
-                    metadata = self._proxy.resolve_model_metadata(account, model)
-                    model_targets.append(
-                        BackendTarget(
-                            account=account,
-                            account_name=account.name,
-                            provider=account.provider,
-                            base_url=account.base_url,
-                            model=model,
-                            upstream_model=self._proxy.resolve_upstream_model(
-                                account,
-                                model,
-                                metadata=metadata,
-                            ),
-                            auth_mode=account.auth_mode,
-                            organization=account.organization,
-                            project=account.project,
-                            metadata=metadata,
-                        )
-                    )
-            model_targets = self._proxy.filter_targets_by_provider_preferences(
-                model_targets=model_targets,
+        grouped_targets = [
+            self._build_model_targets(
+                model=model,
                 provider_preferences=provider_preferences,
             )
-            grouped_targets.append(model_targets)
+            for model in model_chain
+        ]
 
         if (
             route_decision.source != "request"
@@ -2020,6 +2043,60 @@ class BackendTargetPlanner:
                 grouped_targets
             )
 
+        return self._collect_targets_by_partition(
+            grouped_targets=grouped_targets,
+            provider_preferences=provider_preferences,
+            partition=partition,
+        )
+
+    @staticmethod
+    def _candidate_model_chain(route_decision: RouteDecision) -> list[str]:
+        if route_decision.source == "request":
+            return [route_decision.selected_model]
+        return _dedupe_preserving_order(
+            [route_decision.selected_model, *route_decision.fallback_models]
+        )
+
+    def _build_model_targets(
+        self,
+        *,
+        model: str,
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        model_targets: list[BackendTarget] = []
+        for account in self._proxy.accounts:
+            if account.enabled and account.supports_model(model):
+                metadata = self._proxy.resolve_model_metadata(account, model)
+                model_targets.append(
+                    BackendTarget(
+                        account=account,
+                        account_name=account.name,
+                        provider=account.provider,
+                        base_url=account.base_url,
+                        model=model,
+                        upstream_model=self._proxy.resolve_upstream_model(
+                            account,
+                            model,
+                            metadata=metadata,
+                        ),
+                        auth_mode=account.auth_mode,
+                        organization=account.organization,
+                        project=account.project,
+                        metadata=metadata,
+                    )
+                )
+        return self._proxy.filter_targets_by_provider_preferences(
+            model_targets=model_targets,
+            provider_preferences=provider_preferences,
+        )
+
+    def _collect_targets_by_partition(
+        self,
+        *,
+        grouped_targets: list[list[BackendTarget]],
+        provider_preferences: dict[str, Any],
+        partition: str,
+    ) -> list[BackendTarget]:
         if partition == "none":
             flattened_targets = [target for group in grouped_targets for target in group]
             sorted_targets = self._proxy.sort_model_targets(
@@ -2987,22 +3064,6 @@ class BackendProxy:
     async def close(self) -> None:
         await self.client.aclose()
 
-    def _resolve_model_metadata(
-        self, account: BackendAccount, model: str
-    ) -> dict[str, Any]:
-        return self._model_registry_resolver.resolve_model_metadata(account, model)
-
-    def _resolve_upstream_model(
-        self,
-        account: BackendAccount,
-        model: str,
-        *,
-        metadata: dict[str, Any] | None = None,
-    ) -> str:
-        return self._model_registry_resolver.resolve_upstream_model(
-            account, model, metadata=metadata
-        )
-
     def _audit(self, event: str, **fields: Any) -> None:
         if self._audit_hook is None:
             return
@@ -3190,70 +3251,9 @@ class BackendProxy:
     ) -> list[BackendTarget]:
         return self._backend_target_planner.build_candidate_targets(route_decision)
 
-    def _prioritize_model_groups_by_rate_limit(
-        self, grouped_targets: list[list[BackendTarget]]
-    ) -> list[list[BackendTarget]]:
-        if len(grouped_targets) <= 1:
-            return grouped_targets
-
-        healthy_groups: list[list[BackendTarget]] = []
-        limited_groups: list[list[BackendTarget]] = []
-        for model_targets in grouped_targets:
-            if any(
-                not self._is_temporarily_rate_limited(target.account_name)
-                for target in model_targets
-            ):
-                healthy_groups.append(model_targets)
-            else:
-                limited_groups.append(model_targets)
-
-        if not healthy_groups or not limited_groups:
-            return grouped_targets
-        return [*healthy_groups, *limited_groups]
-
-    def _prioritize_targets_by_rate_limit(
-        self, model_targets: list[BackendTarget]
-    ) -> list[BackendTarget]:
-        if len(model_targets) <= 1:
-            return model_targets
-
-        healthy_targets: list[BackendTarget] = []
-        limited_targets: list[BackendTarget] = []
-        for target in model_targets:
-            if self._is_temporarily_rate_limited(target.account_name):
-                limited_targets.append(target)
-            else:
-                healthy_targets.append(target)
-
-        if not healthy_targets or not limited_targets:
-            return model_targets
-        return [*healthy_targets, *limited_targets]
-
     @staticmethod
     def allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
         return TargetSelectionPolicy.allows_fallbacks(provider_preferences)
-
-    def _filter_targets_by_provider_preferences(
-        self,
-        *,
-        model_targets: list[BackendTarget],
-        provider_preferences: dict[str, Any],
-    ) -> list[BackendTarget]:
-        return self._target_selection_policy.filter_targets_by_provider_preferences(
-            model_targets=model_targets,
-            provider_preferences=provider_preferences,
-        )
-
-    def _sort_model_targets(
-        self,
-        *,
-        model_targets: list[BackendTarget],
-        provider_preferences: dict[str, Any],
-    ) -> list[BackendTarget]:
-        return self._target_selection_policy.sort_model_targets(
-            model_targets=model_targets,
-            provider_preferences=provider_preferences,
-        )
 
     def _filter_targets_by_parameter_support(
         self,
@@ -3277,65 +3277,8 @@ class BackendProxy:
             payload=payload,
         )
 
-    def _is_temporarily_rate_limited(self, account_name: str) -> bool:
-        return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
-
-    def _mark_rate_limited(
-        self,
-        account_name: str,
-        headers: httpx.Headers,
-        *,
-        request_id: str | None = None,
-        target: str | None = None,
-        model: str | None = None,
-        upstream_model: str | None = None,
-    ) -> None:
-        self._rate_limit_tracker.mark_rate_limited(
-            account_name,
-            headers,
-            request_id=request_id,
-            target=target,
-            model=model,
-            upstream_model=upstream_model,
-        )
-
     async def _resolve_bearer_token(self, account: BackendAccount) -> str | None:
         return await self._oauth_state_manager.resolve_bearer_token(account)
-
-    async def _refresh_oauth_state(
-        self,
-        account: BackendAccount,
-        fallback_state: OAuthRuntimeState | None = None,
-    ) -> OAuthRuntimeState | None:
-        return await self._oauth_state_manager.refresh_oauth_state(
-            account,
-            fallback_state=fallback_state,
-        )
-
-    async def _persist_oauth_state(
-        self, account: BackendAccount, state: OAuthRuntimeState
-    ) -> None:
-        await self._oauth_state_manager.persist_oauth_state(account, state)
-
-    @staticmethod
-    def _persist_oauth_state_sync(
-        config_path: Path,
-        account_name: str,
-        state: OAuthRuntimeState,
-        can_persist_access: bool,
-        can_persist_refresh: bool,
-        can_persist_expires: bool,
-        can_persist_account_id: bool,
-    ) -> None:
-        OAuthStateManager.persist_oauth_state_sync(
-            config_path,
-            account_name,
-            state,
-            can_persist_access,
-            can_persist_refresh,
-            can_persist_expires,
-            can_persist_account_id,
-        )
 
     def _resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
         return self._oauth_state_manager.resolve_oauth_account_id(account)
@@ -3379,7 +3322,7 @@ class BackendProxy:
     def resolve_model_metadata(
         self, account: BackendAccount, model: str
     ) -> dict[str, Any]:
-        return self._resolve_model_metadata(account, model)
+        return self._model_registry_resolver.resolve_model_metadata(account, model)
 
     def resolve_upstream_model(
         self,
@@ -3388,7 +3331,11 @@ class BackendProxy:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        return self._resolve_upstream_model(account, model, metadata=metadata)
+        return self._model_registry_resolver.resolve_upstream_model(
+            account,
+            model,
+            metadata=metadata,
+        )
 
     def filter_targets_by_provider_preferences(
         self,
@@ -3396,7 +3343,7 @@ class BackendProxy:
         model_targets: list[BackendTarget],
         provider_preferences: dict[str, Any],
     ) -> list[BackendTarget]:
-        return self._filter_targets_by_provider_preferences(
+        return self._target_selection_policy.filter_targets_by_provider_preferences(
             model_targets=model_targets,
             provider_preferences=provider_preferences,
         )
@@ -3407,7 +3354,7 @@ class BackendProxy:
         model_targets: list[BackendTarget],
         provider_preferences: dict[str, Any],
     ) -> list[BackendTarget]:
-        return self._sort_model_targets(
+        return self._target_selection_policy.sort_model_targets(
             model_targets=model_targets,
             provider_preferences=provider_preferences,
         )
@@ -3415,15 +3362,46 @@ class BackendProxy:
     def prioritize_model_groups_by_rate_limit(
         self, grouped_targets: list[list[BackendTarget]]
     ) -> list[list[BackendTarget]]:
-        return self._prioritize_model_groups_by_rate_limit(grouped_targets)
+        if len(grouped_targets) <= 1:
+            return grouped_targets
+
+        healthy_groups: list[list[BackendTarget]] = []
+        limited_groups: list[list[BackendTarget]] = []
+        for model_targets in grouped_targets:
+            if any(
+                not self._rate_limit_tracker.is_temporarily_rate_limited(
+                    target.account_name
+                )
+                for target in model_targets
+            ):
+                healthy_groups.append(model_targets)
+            else:
+                limited_groups.append(model_targets)
+
+        if not healthy_groups or not limited_groups:
+            return grouped_targets
+        return [*healthy_groups, *limited_groups]
 
     def prioritize_targets_by_rate_limit(
         self, model_targets: list[BackendTarget]
     ) -> list[BackendTarget]:
-        return self._prioritize_targets_by_rate_limit(model_targets)
+        if len(model_targets) <= 1:
+            return model_targets
+
+        healthy_targets: list[BackendTarget] = []
+        limited_targets: list[BackendTarget] = []
+        for target in model_targets:
+            if self._rate_limit_tracker.is_temporarily_rate_limited(target.account_name):
+                limited_targets.append(target)
+            else:
+                healthy_targets.append(target)
+
+        if not healthy_targets or not limited_targets:
+            return model_targets
+        return [*healthy_targets, *limited_targets]
 
     def is_temporarily_rate_limited(self, account_name: str) -> bool:
-        return self._is_temporarily_rate_limited(account_name)
+        return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
 
     async def resolve_bearer_token(self, account: BackendAccount) -> str | None:
         return await self._resolve_bearer_token(account)
@@ -3441,7 +3419,7 @@ class BackendProxy:
         model: str | None = None,
         upstream_model: str | None = None,
     ) -> None:
-        self._mark_rate_limited(
+        self._rate_limit_tracker.mark_rate_limited(
             account_name,
             headers,
             request_id=request_id,
