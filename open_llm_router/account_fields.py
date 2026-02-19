@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class AccountCommonFields(BaseModel):
     name: str
     provider: str
+    base_url: str | None = None
     auth_mode: Literal["api_key", "oauth", "passthrough"] = "api_key"
     api_key: str | None = None
     api_key_env: str | None = None
