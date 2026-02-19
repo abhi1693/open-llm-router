@@ -83,6 +83,7 @@ class SmartModelRouter:
                 payload=payload,
                 endpoint=endpoint,
                 complexity_cfg=self.config.complexity,
+                calibration_cfg=self.config.classifier_calibration,
             )
             required_capabilities = self._required_capabilities(
                 payload=payload,
@@ -136,7 +137,14 @@ class SmartModelRouter:
                 decision_trace["hard_constraint_supplemented_models"] = list(
                     supplemented_models
                 )
-            if self.config.learned_routing.enabled:
+            use_factual_rule_chain_guardrail = (
+                self._should_pin_factual_general_query_to_rule_chain(
+                    task=task,
+                    complexity=complexity,
+                    signals=signals,
+                )
+            )
+            if self.config.learned_routing.enabled and not use_factual_rule_chain_guardrail:
                 (
                     selected_model,
                     fallbacks,
@@ -168,9 +176,13 @@ class SmartModelRouter:
                 ]
                 ranked_models = [selected_model, *fallbacks]
                 candidate_scores = []
+                selected_reason = "head_of_rule_chain"
+                if use_factual_rule_chain_guardrail:
+                    selected_reason = "factual_query_rule_chain_guardrail"
+                    signals["routing_mode"] = "rule_chain_guardrail"
                 decision_trace.update(
                     {
-                        "selected_reason": "head_of_rule_chain",
+                        "selected_reason": selected_reason,
                     }
                 )
             source = "auto"
@@ -228,6 +240,26 @@ class SmartModelRouter:
             decision_trace=decision_trace,
             provider_preferences=provider_preferences,
         )
+
+    @staticmethod
+    def _should_pin_factual_general_query_to_rule_chain(
+        *, task: str, complexity: str, signals: dict[str, Any]
+    ) -> bool:
+        if task != "general" or complexity != "low":
+            return False
+        if not bool(signals.get("latest_user_factual_query")):
+            return False
+        if bool(signals.get("latest_user_references_context")):
+            return False
+        latest_structural_code_score = float(
+            signals.get("latest_user_structural_code_score", 0.0)
+        )
+        if latest_structural_code_score > 0.0:
+            return False
+        text_length = int(signals.get("latest_user_text_length", signals.get("text_length", 0)))
+        if text_length > 220:
+            return False
+        return True
 
     def _decide_learned(
         self,

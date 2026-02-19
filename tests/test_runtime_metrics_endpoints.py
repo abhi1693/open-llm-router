@@ -41,6 +41,7 @@ def test_router_policy_endpoint_returns_runtime_profile_state(monkeypatch: Any) 
     assert payload["object"] == "router.policy"
     assert "updater" in payload
     assert "model_profiles" in payload
+    assert "classifier_calibration" in payload
     assert isinstance(payload["model_profiles"], dict)
 
 

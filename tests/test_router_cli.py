@@ -99,6 +99,94 @@ def test_router_cli_show_reads_profile_config(tmp_path: Any, capsys: Any) -> Non
     assert "learned_enabled" in output
 
 
+def test_router_cli_calibration_report_without_overrides(
+    tmp_path: Any, capsys: Any
+) -> None:
+    profile_path = tmp_path / "router.profile.yaml"
+    assert main(["init", "--profile", "auto", "--path", str(profile_path)]) == 0
+
+    assert (
+        main(
+            [
+                "calibration-report",
+                "--path",
+                str(profile_path),
+                "--overrides-path",
+                str(tmp_path / "missing.overrides.yaml"),
+            ]
+        )
+        == 0
+    )
+    payload = yaml.safe_load(capsys.readouterr().out)
+    assert payload["overrides_found"] is False
+    assert payload["history"] == []
+    assert payload["observed_secondary_success_rate"] is None
+
+
+def test_router_cli_calibration_report_uses_runtime_history_and_drift(
+    tmp_path: Any, capsys: Any
+) -> None:
+    profile_path = tmp_path / "router.profile.yaml"
+    overrides_path = tmp_path / "router.runtime.overrides.yaml"
+    assert main(["init", "--profile", "auto", "--path", str(profile_path)]) == 0
+    _save(
+        overrides_path,
+        {
+            "classifier_calibration": {
+                "secondary_success_rate": 0.62,
+                "secondary_total": 42,
+                "secondary_low_confidence_min_confidence": 0.27,
+                "secondary_mixed_signal_min_confidence": 0.46,
+                "history": [
+                    {
+                        "ts": 1000.0,
+                        "secondary_success_rate": 0.58,
+                        "secondary_samples": 20,
+                        "threshold_low_before": 0.2,
+                        "threshold_low_after": 0.23,
+                        "threshold_mixed_before": 0.4,
+                        "threshold_mixed_after": 0.43,
+                    },
+                    {
+                        "ts": 1100.0,
+                        "secondary_success_rate": 0.62,
+                        "secondary_samples": 22,
+                        "threshold_low_before": 0.23,
+                        "threshold_low_after": 0.27,
+                        "threshold_mixed_before": 0.43,
+                        "threshold_mixed_after": 0.46,
+                    },
+                ],
+            }
+        },
+    )
+
+    assert (
+        main(
+            [
+                "calibration-report",
+                "--path",
+                str(profile_path),
+                "--overrides-path",
+                str(overrides_path),
+                "--history-limit",
+                "1",
+            ]
+        )
+        == 0
+    )
+    payload = yaml.safe_load(capsys.readouterr().out)
+    assert payload["overrides_found"] is True
+    assert payload["observed_secondary_success_rate"] == 0.62
+    assert payload["secondary_samples"] == 42
+    assert payload["history"][0]["ts"] == 1100.0
+    assert payload["thresholds"]["active"] == {
+        "secondary_low_confidence_min_confidence": 0.27,
+        "secondary_mixed_signal_min_confidence": 0.46,
+    }
+    assert payload["success_rate_drift"] is not None
+
+
 def test_router_provider_login_openai_chatgpt_writes_profile(
     monkeypatch: Any, tmp_path: Any
 ) -> None:

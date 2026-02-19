@@ -216,6 +216,50 @@ def test_live_metrics_collector_tracks_connect_latency_quantiles_and_alerts() ->
     asyncio.run(_run())
 
 
+def test_live_metrics_collector_tracks_secondary_classifier_outcomes() -> None:
+    async def _run() -> None:
+        store = InMemoryLiveMetricsStore(alpha=0.5)
+        collector = LiveMetricsCollector(store=store, enabled=True)
+        await collector.start()
+
+        for request_id, outcome in (
+            ("req-1", "success"),
+            ("req-2", "error"),
+            ("req-3", "exhausted"),
+        ):
+            collector.ingest(
+                {
+                    "event": "route_decision",
+                    "request_id": request_id,
+                    "selected_model": "m1",
+                    "task": "coding",
+                    "complexity": "medium",
+                    "signals": {
+                        "secondary_classifier_used": True,
+                    },
+                }
+            )
+            collector.ingest(
+                {
+                    "event": "proxy_terminal",
+                    "request_id": request_id,
+                    "outcome": outcome,
+                    "status": 200 if outcome == "success" else 500,
+                }
+            )
+
+        await asyncio.sleep(0)
+        await collector.close()
+
+        snapshot = collector.classifier_calibration_snapshot
+        assert snapshot.secondary_total == 3
+        assert snapshot.secondary_success == 1
+        assert snapshot.secondary_non_success == 2
+        assert snapshot.secondary_success_rate == pytest.approx(1.0 / 3.0)
+
+    asyncio.run(_run())
+
+
 def test_runtime_policy_updater_ignores_target_dimension_keys() -> None:
     async def _run() -> None:
         config = RoutingConfig.model_validate(
@@ -256,6 +300,128 @@ def test_runtime_policy_updater_ignores_target_dimension_keys() -> None:
         assert not any(key.startswith("target::") for key in config.model_profiles)
 
     asyncio.run(_run())
+
+
+def test_runtime_policy_updater_adjusts_classifier_thresholds_from_feedback() -> None:
+    async def _run() -> None:
+        config = RoutingConfig.model_validate(
+            {
+                "default_model": "m1",
+                "task_routes": {"general": {"default": "m1"}},
+                "classifier_calibration": {
+                    "enabled": True,
+                    "min_samples": 4,
+                    "target_secondary_success_rate": 0.75,
+                    "secondary_low_confidence_min_confidence": 0.2,
+                    "secondary_mixed_signal_min_confidence": 0.4,
+                    "adjustment_step": 0.05,
+                    "deadband": 0.0,
+                    "min_threshold": 0.05,
+                    "max_threshold": 0.95,
+                },
+            }
+        )
+        store = InMemoryLiveMetricsStore(alpha=0.5)
+        collector = LiveMetricsCollector(store=store, enabled=True)
+        await collector.start()
+
+        # 1/5 success -> below target -> thresholds should become more conservative.
+        outcomes = ["success", "error", "error", "error", "error"]
+        for idx, outcome in enumerate(outcomes):
+            request_id = f"req-{idx}"
+            collector.ingest(
+                {
+                    "event": "route_decision",
+                    "request_id": request_id,
+                    "selected_model": "m1",
+                    "task": "general",
+                    "complexity": "low",
+                    "signals": {"secondary_classifier_used": True},
+                }
+            )
+            collector.ingest(
+                {
+                    "event": "proxy_terminal",
+                    "request_id": request_id,
+                    "status": 200 if outcome == "success" else 500,
+                    "outcome": outcome,
+                }
+            )
+
+        await asyncio.sleep(0)
+        await collector.close()
+
+        updater = RuntimePolicyUpdater(
+            routing_config=config,
+            metrics_store=store,
+            enabled=True,
+            interval_seconds=60.0,
+            min_samples=1,
+            max_adjustment_ratio=0.1,
+            overrides_path=None,
+            classifier_metrics_provider=collector,
+        )
+
+        await updater.run_once()
+        assert (
+            config.classifier_calibration.secondary_low_confidence_min_confidence == 0.25
+        )
+        assert (
+            config.classifier_calibration.secondary_mixed_signal_min_confidence == 0.45
+        )
+        assert updater.status.last_classifier_adjusted is True
+        assert updater.status.last_classifier_samples == 5
+        assert updater.status.last_classifier_success_rate == pytest.approx(0.2)
+        assert len(updater.status.classifier_adjustment_history) == 1
+        assert (
+            updater.status.classifier_adjustment_history[0]["threshold_low_after"]
+            == pytest.approx(0.25)
+        )
+
+    asyncio.run(_run())
+
+
+def test_apply_runtime_overrides_updates_classifier_calibration_thresholds(
+    tmp_path: Path,
+) -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "m1",
+            "task_routes": {"general": {"default": "m1"}},
+            "classifier_calibration": {
+                "enabled": True,
+                "secondary_low_confidence_min_confidence": 0.2,
+                "secondary_mixed_signal_min_confidence": 0.4,
+                "min_threshold": 0.05,
+                "max_threshold": 0.9,
+            },
+        }
+    )
+
+    overrides_path = tmp_path / "router.runtime.overrides.yaml"
+    payload = {
+        "classifier_calibration": {
+            "secondary_low_confidence_min_confidence": 0.31,
+            "secondary_mixed_signal_min_confidence": 0.52,
+        }
+    }
+    with overrides_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(payload, handle, sort_keys=False)
+
+    applied = apply_runtime_overrides(
+        path=str(overrides_path),
+        routing_config=config,
+    )
+
+    assert applied == 0
+    assert (
+        config.classifier_calibration.secondary_low_confidence_min_confidence
+        == pytest.approx(0.31)
+    )
+    assert (
+        config.classifier_calibration.secondary_mixed_signal_min_confidence
+        == pytest.approx(0.52)
+    )
 
 
 def test_apply_runtime_overrides_updates_model_profiles(tmp_path: Path) -> None:

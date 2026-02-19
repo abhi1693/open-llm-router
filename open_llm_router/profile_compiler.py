@@ -39,6 +39,17 @@ BASE_EFFECTIVE_CONFIG: dict[str, Any] = {
     "accounts": [],
     "retry_statuses": list(DEFAULT_RETRY_STATUSES),
     "complexity": dict(DEFAULT_COMPLEXITY),
+    "classifier_calibration": {
+        "enabled": False,
+        "min_samples": 30,
+        "target_secondary_success_rate": 0.8,
+        "secondary_low_confidence_min_confidence": 0.18,
+        "secondary_mixed_signal_min_confidence": 0.35,
+        "adjustment_step": 0.03,
+        "deadband": 0.05,
+        "min_threshold": 0.05,
+        "max_threshold": 0.9,
+    },
     "learned_routing": {
         "enabled": False,
         "bias": -4.0,

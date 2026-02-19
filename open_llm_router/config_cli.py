@@ -22,6 +22,17 @@ DEFAULT_COMPLEXITY = {
     "medium_max_chars": 6000,
     "high_max_chars": 16000,
 }
+DEFAULT_CLASSIFIER_CALIBRATION = {
+    "enabled": False,
+    "min_samples": 30,
+    "target_secondary_success_rate": 0.8,
+    "secondary_low_confidence_min_confidence": 0.18,
+    "secondary_mixed_signal_min_confidence": 0.35,
+    "adjustment_step": 0.03,
+    "deadband": 0.05,
+    "min_threshold": 0.05,
+    "max_threshold": 0.9,
+}
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -418,6 +429,10 @@ def _ensure_schema(data: dict[str, Any]) -> None:
     data.setdefault("fallback_models", [])
     data.setdefault("retry_statuses", list(DEFAULT_RETRY_STATUSES))
     data.setdefault("complexity", dict(DEFAULT_COMPLEXITY))
+    data.setdefault("classifier_calibration", {})
+    classifier_calibration = data["classifier_calibration"]
+    for key, value in DEFAULT_CLASSIFIER_CALIBRATION.items():
+        classifier_calibration.setdefault(key, value)
     data.setdefault("learned_routing", {})
     learned = data["learned_routing"]
     learned.setdefault("enabled", False)

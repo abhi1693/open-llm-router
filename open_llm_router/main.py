@@ -897,6 +897,7 @@ async def startup() -> None:
         min_samples=settings.live_metrics_min_samples,
         max_adjustment_ratio=settings.runtime_policy_max_adjustment_ratio,
         overrides_path=settings.router_runtime_overrides_path,
+        classifier_metrics_provider=live_metrics_collector,
     )
     await policy_updater.start()
     app.state.policy_updater = policy_updater
@@ -1021,11 +1022,33 @@ async def router_policy() -> dict[str, Any]:
             "last_run_epoch": status_obj.last_run_epoch,
             "last_applied_models": status_obj.last_applied_models,
             "last_error": status_obj.last_error,
+            "last_classifier_samples": status_obj.last_classifier_samples,
+            "last_classifier_success_rate": status_obj.last_classifier_success_rate,
+            "last_classifier_adjusted": status_obj.last_classifier_adjusted,
+            "classifier_adjustment_history": status_obj.classifier_adjustment_history,
         }
+    classifier_calibration = config.classifier_calibration
     return {
         "object": "router.policy",
         "updater": status_payload,
         "model_profiles": _runtime_policy_snapshot(config),
+        "classifier_calibration": {
+            "enabled": classifier_calibration.enabled,
+            "min_samples": classifier_calibration.min_samples,
+            "target_secondary_success_rate": (
+                classifier_calibration.target_secondary_success_rate
+            ),
+            "secondary_low_confidence_min_confidence": (
+                classifier_calibration.secondary_low_confidence_min_confidence
+            ),
+            "secondary_mixed_signal_min_confidence": (
+                classifier_calibration.secondary_mixed_signal_min_confidence
+            ),
+            "adjustment_step": classifier_calibration.adjustment_step,
+            "deadband": classifier_calibration.deadband,
+            "min_threshold": classifier_calibration.min_threshold,
+            "max_threshold": classifier_calibration.max_threshold,
+        },
     }
 
 
@@ -1168,7 +1191,9 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
     logger.info(
         (
             "route_decision request_id=%s path=%s source=%s task=%s complexity=%s "
-            "requested_model=%s selected_model=%s fallback_count=%d"
+            "requested_model=%s selected_model=%s fallback_count=%d task_reason=%s "
+            "latest_override=%s latest_factual=%s latest_text_len=%s "
+            "routing_mode=%s selected_reason=%s"
         ),
         request_id,
         path,
@@ -1178,6 +1203,12 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
         route_decision.requested_model,
         route_decision.selected_model,
         len(route_decision.fallback_models),
+        route_decision.signals.get("task_reason"),
+        route_decision.signals.get("latest_turn_override_applied"),
+        route_decision.signals.get("latest_user_factual_query"),
+        route_decision.signals.get("latest_user_text_length"),
+        route_decision.signals.get("routing_mode"),
+        route_decision.decision_trace.get("selected_reason"),
     )
     if route_decision.candidate_scores:
         top = route_decision.candidate_scores[0]

@@ -14,6 +14,18 @@ class ComplexityConfig(BaseModel):
     high_max_chars: int = 16000
 
 
+class ClassifierCalibrationConfig(BaseModel):
+    enabled: bool = False
+    min_samples: int = 30
+    target_secondary_success_rate: float = 0.8
+    secondary_low_confidence_min_confidence: float = 0.18
+    secondary_mixed_signal_min_confidence: float = 0.35
+    adjustment_step: float = 0.03
+    deadband: float = 0.05
+    min_threshold: float = 0.05
+    max_threshold: float = 0.9
+
+
 class UtilityWeights(BaseModel):
     cost: float = 12.0
     latency: float = 0.2
@@ -253,6 +265,9 @@ class RoutingConfig(BaseModel):
     accounts: list[BackendAccount] = Field(default_factory=list)
     retry_statuses: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
+    classifier_calibration: ClassifierCalibrationConfig = Field(
+        default_factory=ClassifierCalibrationConfig
+    )
     learned_routing: LearnedRoutingConfig = Field(default_factory=LearnedRoutingConfig)
 
     @staticmethod

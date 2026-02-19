@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
+from functools import lru_cache
 from typing import Any
 
-from open_llm_router.config import ComplexityConfig
+from open_llm_router.config import ClassifierCalibrationConfig, ComplexityConfig
 
 CODE_HINTS = (
     "code",
@@ -11,13 +13,15 @@ CODE_HINTS = (
     "debug",
     "stack trace",
     "refactor",
-    "python",
-    "javascript",
-    "typescript",
-    "sql",
+    "compile",
+    "syntax error",
+    "exception",
+    "traceback",
+    "test case",
     "algorithm",
     "class ",
-    "compile",
+    "repository",
+    "codebase",
 )
 
 THINKING_HINTS = (
@@ -34,6 +38,8 @@ THINKING_HINTS = (
 
 INSTRUCTION_HINTS = (
     "rewrite",
+    "reword",
+    "rephrase",
     "summarize",
     "translate",
     "classify",
@@ -61,9 +67,11 @@ CODING_OBJECT_HINTS = (
     "api",
     "endpoint",
     "query",
-    "sql",
     "test",
     "algorithm",
+    "module",
+    "library",
+    "code",
 )
 
 THINKING_INTENT_HINTS = (
@@ -76,6 +84,167 @@ THINKING_INTENT_HINTS = (
     "compare",
     "analyze",
     "reason",
+)
+
+SECONDARY_INSTRUCTION_HINTS = (
+    "rewrite",
+    "reword",
+    "paraphrase",
+    "summarize",
+    "translate",
+    "polish",
+    "clean up",
+    "fix grammar",
+    "improve wording",
+    "rephrase",
+)
+
+SECONDARY_TASK_CUES: dict[str, tuple[tuple[str, float], ...]] = {
+    "coding": (
+        ("write code", 1.0),
+        ("fix bug", 1.0),
+        ("debug", 0.9),
+        ("stack trace", 1.0),
+        ("traceback", 0.9),
+        ("syntax error", 0.8),
+        ("compile error", 0.8),
+        ("unit test", 0.6),
+        ("test case", 0.55),
+        ("```", 0.7),
+        ("function", 0.35),
+        ("api", 0.3),
+    ),
+    "thinking": (
+        ("tradeoff", 1.0),
+        ("pros and cons", 1.0),
+        ("compare", 0.8),
+        ("evaluate", 0.8),
+        ("which is better", 0.8),
+        ("should i", 0.7),
+        ("architecture", 0.7),
+        ("analyze", 0.7),
+        ("reason", 0.7),
+    ),
+    "instruction_following": (
+        ("rewrite", 0.95),
+        ("reword", 0.95),
+        ("paraphrase", 0.95),
+        ("summarize", 0.95),
+        ("translate", 0.95),
+        ("polish", 0.8),
+        ("clean up", 0.8),
+        ("fix grammar", 0.85),
+        ("improve wording", 0.85),
+        ("rephrase", 0.9),
+        ("format", 0.7),
+        ("convert", 0.65),
+        ("extract", 0.65),
+    ),
+    "general": (
+        ("hello", 0.4),
+        ("hi", 0.3),
+        ("thanks", 0.3),
+        ("what is", 0.3),
+        ("tell me about", 0.3),
+    ),
+}
+
+SECONDARY_TASK_TOKEN_HINTS: dict[str, frozenset[str]] = {
+    "coding": frozenset(
+        {
+            "code",
+            "function",
+            "debug",
+            "bug",
+            "traceback",
+            "exception",
+            "compile",
+            "syntax",
+            "query",
+            "endpoint",
+            "script",
+            "api",
+            "algorithm",
+            "test",
+            "module",
+            "library",
+            "class",
+        }
+    ),
+    "thinking": frozenset(
+        {
+            "tradeoff",
+            "compare",
+            "evaluate",
+            "architecture",
+            "strategy",
+            "analyze",
+            "reason",
+            "decide",
+            "choose",
+            "better",
+        }
+    ),
+    "instruction_following": frozenset(
+        {
+            "rewrite",
+            "reword",
+            "paraphrase",
+            "summarize",
+            "translate",
+            "polish",
+            "format",
+            "convert",
+            "extract",
+            "rephrase",
+            "grammar",
+        }
+    ),
+    "general": frozenset({"hello", "hi", "thanks", "explain", "what", "tell"}),
+}
+
+_SECONDARY_TOKEN_PATTERN = re.compile(r"[a-z0-9_+#.-]+")
+_CODE_SYMBOL_PATTERN = re.compile(r"[{}();<>]")
+_CODE_LINE_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"if|for|while|return|class|def|fn|func|let|const|var|"
+    r"import|from|public|private|protected|switch|case|try|catch|"
+    r"select|insert|update|delete|create|alter|with|begin|end|"
+    r"#include|package|module|namespace"
+    r")\b",
+    re.IGNORECASE,
+)
+_STACK_TRACE_PATTERN = re.compile(
+    r"\b(?:traceback|stack trace|exception|segmentation fault|segfault|"
+    r"syntaxerror|typeerror|referenceerror|nullpointerexception|compile error|compiler error)\b",
+    re.IGNORECASE,
+)
+_SOURCE_LOCATION_PATTERN = re.compile(
+    r"\b[a-z0-9_./\\-]+\.[a-z][a-z0-9]{0,7}:\d+\b",
+    re.IGNORECASE,
+)
+_BUILD_OR_TEST_COMMAND_PATTERN = re.compile(
+    r"(?:^|\n)\s*(?:[$>]\s*)?(?:"
+    r"npm|yarn|pnpm|pip|poetry|cargo|go|mvn|gradle|dotnet|make|cmake|"
+    r"pytest|jest|vitest|ruff|eslint|tsc|gcc|clang"
+    r")\b",
+    re.IGNORECASE,
+)
+_LATEST_FACTUAL_QUERY_PATTERN = re.compile(
+    r"(?:^|[\s.,:;!?])(?:question\s*:\s*)?(?:who|what|when|where|which|whom)\s+"
+    r"(?:is|are|was|were|did|do|does|has|have|can|will)\b",
+    re.IGNORECASE,
+)
+_LATEST_CONTEXT_REFERENCE_HINTS = (
+    "above",
+    "earlier",
+    "previous",
+    "prior message",
+    "from before",
+    "same as before",
+    "continue",
+    "that code",
+    "this code",
 )
 
 SKIP_TEXT_KEYS = {
@@ -149,13 +318,15 @@ def _collect_text_and_signals(
 
 def _collect_message_texts(
     payload: dict[str, Any], signals: dict[str, Any]
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], str, str]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
-        return [], []
+        return [], [], "", ""
 
     user_texts: list[str] = []
     all_message_texts: list[str] = []
+    latest_user_text = ""
+    latest_conversation_text = ""
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -163,9 +334,14 @@ def _collect_message_texts(
         message_texts: list[str] = []
         _collect_text_and_signals(message.get("content"), "content", message_texts, signals)
         all_message_texts.extend(message_texts)
+        message_blob = " ".join(message_texts).strip()
         if role == "user":
             user_texts.extend(message_texts)
-    return user_texts, all_message_texts
+            if message_blob:
+                latest_user_text = message_blob
+        if message_blob and role not in {"system"}:
+            latest_conversation_text = message_blob
+    return user_texts, all_message_texts, latest_user_text, latest_conversation_text
 
 
 def _scoped_user_text_blob(user_texts: list[str]) -> tuple[str, bool]:
@@ -184,6 +360,99 @@ def _contains_any(text_lower: str, hints: tuple[str, ...]) -> bool:
     return any(hint in text_lower for hint in hints)
 
 
+@lru_cache(maxsize=2048)
+def _secondary_tokens(text_lower: str) -> tuple[str, ...]:
+    return tuple(_SECONDARY_TOKEN_PATTERN.findall(text_lower))
+
+
+def _secondary_task_prediction(text_lower: str) -> tuple[str, float, dict[str, float]]:
+    scores: dict[str, float] = {
+        "general": 0.1,
+        "coding": 0.0,
+        "thinking": 0.0,
+        "instruction_following": 0.0,
+    }
+
+    for task, cues in SECONDARY_TASK_CUES.items():
+        for cue, weight in cues:
+            if cue in text_lower:
+                scores[task] += weight
+
+    token_set = set(_secondary_tokens(text_lower))
+    for task, hints in SECONDARY_TASK_TOKEN_HINTS.items():
+        overlap = len(token_set.intersection(hints))
+        if overlap > 0:
+            scores[task] += min(0.9, overlap * 0.22)
+
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_task, top_score = ordered[0]
+    second_score = ordered[1][1] if len(ordered) > 1 else 0.0
+    confidence = (top_score - second_score) / max(1.0, top_score)
+    return top_task, max(0.0, confidence), scores
+
+
+def _collect_structural_code_signals(
+    text_blob: str, text_lower: str
+) -> tuple[list[str], float]:
+    matches: list[str] = []
+    score = 0.0
+
+    if _STACK_TRACE_PATTERN.search(text_lower):
+        matches.append("stack_trace")
+        score += 0.9
+    if _SOURCE_LOCATION_PATTERN.search(text_blob):
+        matches.append("source_location")
+        score += 0.6
+    if _BUILD_OR_TEST_COMMAND_PATTERN.search(text_blob):
+        matches.append("build_or_test_command")
+        score += 0.6
+
+    symbol_hits = len(_CODE_SYMBOL_PATTERN.findall(text_blob))
+    if symbol_hits >= 6:
+        matches.append("code_symbols")
+        score += min(1.0, symbol_hits / 16.0)
+
+    lines = [line for line in text_blob.splitlines() if line.strip()]
+    if lines:
+        code_like_lines = sum(1 for line in lines if _CODE_LINE_PATTERN.search(line))
+        if code_like_lines >= 2:
+            matches.append("code_like_lines")
+            score += min(1.2, code_like_lines * 0.35)
+
+    return matches, score
+
+
+def _maybe_override_task_with_latest_user_turn(
+    *,
+    task: str,
+    reason: str,
+    confidence: float,
+    latest_user_text: str,
+    latest_user_text_lower: str,
+    latest_user_structural_code_score: float,
+) -> tuple[str, str, float, bool]:
+    if task not in {"coding", "thinking"}:
+        return task, reason, confidence, False
+    if not latest_user_text:
+        return task, reason, confidence, False
+
+    latest_code_like = (
+        "```" in latest_user_text
+        or latest_user_structural_code_score > 0.0
+        or _contains_any(latest_user_text_lower, CODE_HINTS)
+        or _contains_any(latest_user_text_lower, CODING_OBJECT_HINTS)
+    )
+    latest_references_context = any(
+        hint in latest_user_text_lower for hint in _LATEST_CONTEXT_REFERENCE_HINTS
+    )
+    latest_factual_query = bool(_LATEST_FACTUAL_QUERY_PATTERN.search(latest_user_text))
+
+    if latest_factual_query and not latest_code_like and not latest_references_context:
+        return "general", "latest_turn_factual_override", min(confidence, 0.35), True
+
+    return task, reason, confidence, False
+
+
 def _task_scores(
     *,
     text_blob: str,
@@ -192,6 +461,7 @@ def _task_scores(
     code_score: int,
     think_score: int,
     instruction_score: int,
+    structural_code_score: float,
     reasoning_effort: str | None,
     payload: dict[str, Any],
 ) -> dict[str, float]:
@@ -207,7 +477,7 @@ def _task_scores(
 
     scores: dict[str, float] = {
         "general": 0.4,
-        "coding": (float(code_score) * 1.2),
+        "coding": (float(code_score) * 1.2) + float(structural_code_score),
         "thinking": (float(think_score) * 1.25),
         "instruction_following": (float(instruction_score) * 1.25),
     }
@@ -251,15 +521,20 @@ def _select_task_from_scores(
     text_lower: str,
     text_length: int,
     code_score: int,
+    structural_code_score: float,
     instruction_score: int,
     reasoning_effort: str | None,
     medium_max_chars: int,
-) -> tuple[str, str, float]:
+    calibration_cfg: ClassifierCalibrationConfig,
+) -> tuple[str, str, float, bool, dict[str, float], float | None]:
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     top_task, top_score = ordered[0]
     second_score = ordered[1][1] if len(ordered) > 1 else 0.0
     confidence = max(0.0, top_score - second_score)
     reason = "score_top1"
+    secondary_used = False
+    secondary_scores: dict[str, float] = {}
+    secondary_confidence: float | None = None
 
     if top_task == "instruction_following" and text_length > medium_max_chars:
         for candidate_task, _ in ordered[1:]:
@@ -281,16 +556,73 @@ def _select_task_from_scores(
             top_task = "instruction_following"
             reason = "low_confidence_instruction_override"
 
-    return top_task, reason, confidence
+    secondary_trigger = confidence < 0.45 or _contains_any(
+        text_lower, SECONDARY_INSTRUCTION_HINTS
+    )
+    if secondary_trigger:
+        (
+            secondary_task,
+            secondary_confidence_value,
+            secondary_scores,
+        ) = _secondary_task_prediction(text_lower)
+        if structural_code_score > 0.0:
+            secondary_scores["coding"] = secondary_scores.get("coding", 0.0) + min(
+                1.2, structural_code_score
+            )
+            ordered_secondary = sorted(
+                secondary_scores.items(), key=lambda item: item[1], reverse=True
+            )
+            secondary_task = ordered_secondary[0][0]
+            secondary_top = ordered_secondary[0][1]
+            secondary_second = (
+                ordered_secondary[1][1] if len(ordered_secondary) > 1 else 0.0
+            )
+            secondary_confidence_value = (secondary_top - secondary_second) / max(
+                1.0, secondary_top
+            )
+        secondary_confidence = secondary_confidence_value
+        min_secondary_confidence = (
+            float(calibration_cfg.secondary_low_confidence_min_confidence)
+            if confidence < 0.45
+            else float(calibration_cfg.secondary_mixed_signal_min_confidence)
+        )
+        if (
+            secondary_task != "general"
+            and secondary_confidence_value >= min_secondary_confidence
+            and not (
+                secondary_task == "instruction_following"
+                and text_length > medium_max_chars
+            )
+        ):
+            top_task = secondary_task
+            reason = "secondary_classifier_override"
+            confidence = max(confidence, secondary_confidence_value)
+            secondary_used = True
+
+    return (
+        top_task,
+        reason,
+        confidence,
+        secondary_used,
+        secondary_scores,
+        secondary_confidence,
+    )
 
 
 def classify_request(
     payload: dict[str, Any],
     endpoint: str,
     complexity_cfg: ComplexityConfig,
+    calibration_cfg: ClassifierCalibrationConfig | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
+    effective_calibration_cfg = calibration_cfg or ClassifierCalibrationConfig()
     signals: dict[str, Any] = {"has_image": False}
-    user_texts, message_texts = _collect_message_texts(payload, signals)
+    (
+        user_texts,
+        message_texts,
+        latest_user_text_from_messages,
+        latest_conversation_text,
+    ) = _collect_message_texts(payload, signals)
     if message_texts:
         full_text_blob = " ".join(message_texts).strip()
     else:
@@ -315,8 +647,17 @@ def classify_request(
     matched_instruction_hints = [
         hint for hint in INSTRUCTION_HINTS if hint in text_lower
     ]
+    matched_structural_code_hints, structural_code_score = (
+        _collect_structural_code_signals(text_blob, text_lower)
+    )
+    latest_user_text = latest_user_text_from_messages or latest_conversation_text
+    latest_user_text_lower = latest_user_text.lower()
+    (
+        latest_user_structural_code_hints,
+        latest_user_structural_code_score,
+    ) = _collect_structural_code_signals(latest_user_text, latest_user_text_lower)
 
-    code_score = len(matched_code_hints)
+    code_score = len(matched_code_hints) + int(round(structural_code_score))
     think_score = len(matched_thinking_hints)
     instruction_score = len(matched_instruction_hints)
     if "```" in text_blob:
@@ -339,26 +680,53 @@ def classify_request(
         text_lower=text_lower,
         text_length=text_length,
         code_score=code_score,
+        structural_code_score=structural_code_score,
         think_score=think_score,
         instruction_score=instruction_score,
         reasoning_effort=reasoning_effort,
         payload=payload,
     )
     task_confidence = 1.0
+    secondary_classifier_used = False
+    secondary_task_scores: dict[str, float] = {}
+    secondary_task_confidence: float | None = None
+    latest_turn_override_applied = False
 
     if endpoint.startswith("/v1/images") or signals["has_image"]:
         task = "image"
         task_reason = "image_endpoint_or_image_signal"
         task_scores["image"] = 1.0
     else:
-        task, task_reason, task_confidence = _select_task_from_scores(
+        (
+            task,
+            task_reason,
+            task_confidence,
+            secondary_classifier_used,
+            secondary_task_scores,
+            secondary_task_confidence,
+        ) = _select_task_from_scores(
             scores=task_scores,
             text_lower=text_lower,
             text_length=text_length,
             code_score=code_score,
+            structural_code_score=structural_code_score,
             instruction_score=instruction_score,
             reasoning_effort=reasoning_effort,
             medium_max_chars=complexity_cfg.medium_max_chars,
+            calibration_cfg=effective_calibration_cfg,
+        )
+        (
+            task,
+            task_reason,
+            task_confidence,
+            latest_turn_override_applied,
+        ) = _maybe_override_task_with_latest_user_turn(
+            task=task,
+            reason=task_reason,
+            confidence=task_confidence,
+            latest_user_text=latest_user_text,
+            latest_user_text_lower=latest_user_text_lower,
+            latest_user_structural_code_score=latest_user_structural_code_score,
         )
 
     if think_score >= 2:
@@ -404,12 +772,42 @@ def classify_request(
             "task_scores": {
                 name: round(score, 6) for name, score in sorted(task_scores.items())
             },
+            "secondary_classifier_used": secondary_classifier_used,
+            "secondary_min_confidence_low": float(
+                effective_calibration_cfg.secondary_low_confidence_min_confidence
+            ),
+            "secondary_min_confidence_mixed": float(
+                effective_calibration_cfg.secondary_mixed_signal_min_confidence
+            ),
+            "secondary_task_confidence": (
+                None
+                if secondary_task_confidence is None
+                else round(secondary_task_confidence, 6)
+            ),
+            "secondary_task_scores": {
+                name: round(score, 6)
+                for name, score in sorted(secondary_task_scores.items())
+            },
+            "latest_turn_override_applied": latest_turn_override_applied,
+            "latest_user_text_length": len(latest_user_text),
+            "latest_user_factual_query": bool(
+                _LATEST_FACTUAL_QUERY_PATTERN.search(latest_user_text)
+            ),
+            "latest_user_references_context": any(
+                hint in latest_user_text_lower for hint in _LATEST_CONTEXT_REFERENCE_HINTS
+            ),
+            "latest_user_structural_code_hints": latest_user_structural_code_hints,
+            "latest_user_structural_code_score": round(
+                latest_user_structural_code_score, 6
+            ),
             "complexity_base": complexity_base,
             "complexity_adjustments": complexity_adjustments,
             "complexity_final": complexity,
             "matched_code_hints": matched_code_hints,
             "matched_thinking_hints": matched_thinking_hints,
             "matched_instruction_hints": matched_instruction_hints,
+            "matched_structural_code_hints": matched_structural_code_hints,
+            "structural_code_score": round(structural_code_score, 6),
             "text_preview": text_blob[:500],
             "text_preview_total": full_text_blob[:500],
             "endpoint": endpoint,

@@ -26,6 +26,14 @@ class ModelMetricsSnapshot:
     last_updated_epoch: float | None
 
 
+@dataclass(slots=True)
+class ClassifierCalibrationSnapshot:
+    secondary_total: int
+    secondary_success: int
+    secondary_non_success: int
+    secondary_success_rate: float | None
+
+
 class LiveMetricsStore(Protocol):
     async def record_route_decision(
         self,
@@ -592,6 +600,12 @@ class LiveMetricsCollector:
         ] = {}
         self._proxy_errors_by_type: dict[str, int] = defaultdict(int)
         self._proxy_responses_by_status_class: dict[str, int] = defaultdict(int)
+        self._classifier_secondary_total = 0
+        self._classifier_secondary_success = 0
+        self._classifier_secondary_non_success = 0
+        self._pending_classifier_context: dict[str, bool] = {}
+        self._pending_classifier_order: deque[str] = deque()
+        self._pending_classifier_capacity = 20000
 
     @property
     def dropped_events(self) -> int:
@@ -674,6 +688,19 @@ class LiveMetricsCollector:
     def proxy_responses_by_status_class(self) -> dict[str, int]:
         return dict(self._proxy_responses_by_status_class)
 
+    @property
+    def classifier_calibration_snapshot(self) -> ClassifierCalibrationSnapshot:
+        total = int(self._classifier_secondary_total)
+        success = int(self._classifier_secondary_success)
+        non_success = int(self._classifier_secondary_non_success)
+        success_rate = (float(success) / float(total)) if total > 0 else None
+        return ClassifierCalibrationSnapshot(
+            secondary_total=total,
+            secondary_success=success,
+            secondary_non_success=non_success,
+            secondary_success_rate=success_rate,
+        )
+
     async def start(self) -> None:
         if not self._enabled or self._worker_task is not None:
             return
@@ -731,6 +758,32 @@ class LiveMetricsCollector:
                     task=str(event.get("task") or ""),
                     complexity=str(event.get("complexity") or ""),
                 )
+            request_id = str(event.get("request_id") or "").strip()
+            signals = event.get("signals")
+            if request_id and isinstance(signals, dict):
+                secondary_used = bool(signals.get("secondary_classifier_used"))
+                self._pending_classifier_context[request_id] = secondary_used
+                self._pending_classifier_order.append(request_id)
+                while len(self._pending_classifier_order) > self._pending_classifier_capacity:
+                    stale_request_id = self._pending_classifier_order.popleft()
+                    self._pending_classifier_context.pop(stale_request_id, None)
+            return
+
+        if event_name == "proxy_terminal":
+            request_id = str(event.get("request_id") or "").strip()
+            if not request_id:
+                return
+            secondary_used = self._pending_classifier_context.pop(request_id, None)
+            if secondary_used is None:
+                return
+            if not secondary_used:
+                return
+            outcome = str(event.get("outcome") or "").strip().lower()
+            self._classifier_secondary_total += 1
+            if outcome == "success":
+                self._classifier_secondary_success += 1
+            else:
+                self._classifier_secondary_non_success += 1
             return
 
         if not model:

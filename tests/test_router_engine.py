@@ -552,3 +552,188 @@ def test_routes_single_hint_coding_intent_prompt() -> None:
     assert decision.task == "coding"
     assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
     assert decision.signals["task_confidence"] >= 0.0
+
+
+def test_secondary_classifier_disambiguates_instruction_vs_coding() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Reword this paragraph about Python so it sounds professional.",
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "instruction_following"
+    assert decision.selected_model == "general-7b"
+    assert decision.signals["secondary_classifier_used"] is True
+
+
+def test_routes_coding_without_language_name_using_structural_signals() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Fix this crash from app/core/main.foo:42\n"
+                        "Traceback: Exception while processing request\n"
+                        "$ make test\n"
+                        "for (i = 0; i < n; i++) { total += values[i]; }"
+                    ),
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "coding"
+    assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
+    assert decision.signals["structural_code_score"] > 0.0
+
+
+def test_latest_factual_question_overrides_stale_coding_context() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Debug this crash and fix the failing module test.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I can help with that debug flow.",
+                },
+                {
+                    "role": "user",
+                    "content": "Question: who is the president of india",
+                },
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "general"
+    assert decision.selected_model == "general-7b"
+    assert decision.signals["task_reason"] == "latest_turn_factual_override"
+    assert decision.signals["latest_turn_override_applied"] is True
+
+
+def test_latest_coding_question_is_not_downgraded_to_general() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Debug this crash and fix the failing module test.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Share the latest error and trace.",
+                },
+                {
+                    "role": "user",
+                    "content": "What is this stack trace telling me?",
+                },
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "coding"
+    assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
+    assert decision.signals["latest_turn_override_applied"] is False
+
+
+def test_factual_general_query_pins_rule_chain_head_over_learned_reorder() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai-codex/gpt-5.2-codex",
+            "task_routes": {
+                "general": {
+                    "low": ["gemini/gemini-2.5-flash", "openai-codex/gpt-5.2-codex"],
+                },
+            },
+            "fallback_models": [],
+            "learned_routing": {
+                "enabled": True,
+                "task_candidates": {
+                    "general": [
+                        "gemini/gemini-2.5-flash",
+                        "openai-codex/gpt-5.2-codex",
+                    ],
+                },
+            },
+            "model_profiles": {
+                "gemini/gemini-2.5-flash": {
+                    "quality_bias": -2.0,
+                    "quality_sensitivity": 0.2,
+                    "cost_input_per_1k": 0.0003,
+                    "cost_output_per_1k": 0.0012,
+                    "latency_ms": 650,
+                    "failure_rate": 0.02,
+                },
+                "openai-codex/gpt-5.2-codex": {
+                    "quality_bias": 2.5,
+                    "quality_sensitivity": 1.4,
+                    "cost_input_per_1k": 0.0015,
+                    "cost_output_per_1k": 0.006,
+                    "latency_ms": 1300,
+                    "failure_rate": 0.03,
+                },
+            },
+            "models": {
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+                "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "messages": [
+            {"role": "user", "content": "Question: who is the president of india"}
+        ],
+    }
+
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.task == "general"
+    assert decision.complexity == "low"
+    assert decision.selected_model == "gemini/gemini-2.5-flash"
+    assert decision.decision_trace["selected_reason"] == "factual_query_rule_chain_guardrail"
+
+
+def test_factual_question_with_non_user_role_still_routes_general() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Debug this crash and inspect traceback in main.foo:42",
+                },
+                {
+                    "role": "human",
+                    "content": "Question:Who is the president of india?",
+                },
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "general"
+    assert decision.complexity == "low"
+    assert decision.selected_model == "general-7b"
+    assert decision.signals["latest_user_factual_query"] is True

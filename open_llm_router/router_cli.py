@@ -44,6 +44,7 @@ GITHUB_APIKEY_DEFAULT_MODELS = (
     "github/openai/gpt-4.1,github/openai/gpt-4.1-mini,github/meta/Llama-3.3-70B-Instruct"
 )
 GITHUB_APIKEY_DEFAULT_KEY_ENV = "GITHUB_TOKEN"
+DEFAULT_RUNTIME_OVERRIDES_PATH = "logs/router.runtime.overrides.yaml"
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -213,6 +214,110 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
 
     print(yaml.safe_dump(result, sort_keys=False).rstrip())
     return 0
+
+
+def cmd_calibration_report(args: argparse.Namespace) -> int:
+    config, _ = load_routing_config_with_metadata(args.path)
+    cfg = config.classifier_calibration
+
+    overrides_path = Path(args.overrides_path)
+    overrides_found = overrides_path.exists()
+    calibration_runtime: dict[str, Any] = {}
+    if overrides_found:
+        raw_overrides = _read_yaml(overrides_path)
+        runtime_section = raw_overrides.get("classifier_calibration")
+        if isinstance(runtime_section, dict):
+            calibration_runtime = runtime_section
+
+    config_low = float(cfg.secondary_low_confidence_min_confidence)
+    config_mixed = float(cfg.secondary_mixed_signal_min_confidence)
+    active_low = _coerce_float(
+        calibration_runtime.get("secondary_low_confidence_min_confidence"),
+        config_low,
+    )
+    active_mixed = _coerce_float(
+        calibration_runtime.get("secondary_mixed_signal_min_confidence"),
+        config_mixed,
+    )
+    active_mixed = max(active_mixed, active_low)
+
+    target = float(cfg.target_secondary_success_rate)
+    observed_success_rate = _coerce_optional_float(
+        calibration_runtime.get("secondary_success_rate")
+    )
+    secondary_samples = _coerce_optional_int(
+        calibration_runtime.get("secondary_total")
+    )
+    if secondary_samples is None:
+        secondary_samples = _coerce_optional_int(
+            calibration_runtime.get("secondary_samples")
+        )
+
+    drift = (
+        None
+        if observed_success_rate is None
+        else float(observed_success_rate) - float(target)
+    )
+
+    history = calibration_runtime.get("history")
+    normalized_history: list[dict[str, Any]] = []
+    if isinstance(history, list):
+        for entry in history:
+            if isinstance(entry, dict):
+                normalized_history.append(entry)
+    history_limit = max(0, int(args.history_limit))
+    if history_limit > 0:
+        normalized_history = normalized_history[-history_limit:]
+    else:
+        normalized_history = []
+
+    payload = {
+        "config_path": str(args.path),
+        "overrides_path": str(overrides_path),
+        "overrides_found": overrides_found,
+        "enabled": bool(cfg.enabled),
+        "target_secondary_success_rate": target,
+        "observed_secondary_success_rate": observed_success_rate,
+        "success_rate_drift": drift,
+        "secondary_samples": secondary_samples,
+        "thresholds": {
+            "config": {
+                "secondary_low_confidence_min_confidence": config_low,
+                "secondary_mixed_signal_min_confidence": config_mixed,
+            },
+            "active": {
+                "secondary_low_confidence_min_confidence": active_low,
+                "secondary_mixed_signal_min_confidence": active_mixed,
+            },
+        },
+        "history": normalized_history,
+    }
+    print(yaml.safe_dump(payload, sort_keys=False).rstrip())
+    return 0
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return float(default)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return float(default)
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
 
 
 def _synthetic_signals(task: str, input_chars: int) -> dict[str, Any]:
@@ -552,6 +657,24 @@ def build_parser() -> argparse.ArgumentParser:
     explain_cmd.add_argument("--max-output-tokens", type=int, default=512)
     explain_cmd.add_argument("--debug", action="store_true")
     explain_cmd.set_defaults(handler=cmd_explain_route)
+
+    calibration_cmd = subparsers.add_parser(
+        "calibration-report",
+        help="Show classifier calibration drift and recent adjustment history.",
+    )
+    calibration_cmd.add_argument("--path", default="router.profile.yaml")
+    calibration_cmd.add_argument(
+        "--overrides-path",
+        default=DEFAULT_RUNTIME_OVERRIDES_PATH,
+        help="Path to runtime overrides file written by policy updater.",
+    )
+    calibration_cmd.add_argument(
+        "--history-limit",
+        type=int,
+        default=10,
+        help="Number of recent history entries to print.",
+    )
+    calibration_cmd.set_defaults(handler=cmd_calibration_report)
 
     profile_cmd = subparsers.add_parser(
         "profile", help="Inspect built-in profile templates."
