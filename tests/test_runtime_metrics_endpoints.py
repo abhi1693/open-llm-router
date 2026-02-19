@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -8,9 +9,13 @@ from fastapi.testclient import TestClient
 from open_llm_router.main import app
 from open_llm_router.settings import get_settings
 
+TEST_ROUTING_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "router.profile.yaml"
+)
+
 
 def _build_client(monkeypatch: Any, **env: Any) -> Any:
-    monkeypatch.setenv("ROUTING_CONFIG_PATH", "router.profile.yaml")
+    monkeypatch.setenv("ROUTING_CONFIG_PATH", str(TEST_ROUTING_CONFIG_PATH))
     monkeypatch.setenv("INGRESS_AUTH_REQUIRED", "false")
     for key, value in env.items():
         monkeypatch.setenv(key, str(value))

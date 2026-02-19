@@ -4,6 +4,7 @@ __pycache__/
 .idea/
 logs/
 router*.yaml
+!tests/fixtures/router*.yaml
 *.pyc
 *.pyo
 *.pyd

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,9 +17,13 @@ from open_llm_router.main import app
 from open_llm_router.proxy import BackendProxy
 from open_llm_router.settings import get_settings
 
+TEST_ROUTING_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "router.profile.yaml"
+)
+
 
 def _set_default_test_env(monkeypatch: Any) -> None:
-    monkeypatch.setenv("ROUTING_CONFIG_PATH", "router.profile.yaml")
+    monkeypatch.setenv("ROUTING_CONFIG_PATH", str(TEST_ROUTING_CONFIG_PATH))
 
 
 def _build_client(monkeypatch: Any, **env: Any) -> Any:
