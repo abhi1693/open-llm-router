@@ -1154,179 +1154,11 @@ class ProxyAttemptProcessor:
         return True
 
 
-class ProxyRequestExecutor:
+class ProxyPreflightPlanner:
     def __init__(self, *, proxy: BackendProxy) -> None:
         self._proxy = proxy
-        self._attempt_processor = ProxyAttemptProcessor(proxy=proxy)
 
-    async def execute(
-        self,
-        *,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Headers,
-        route_decision: RouteDecision,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Response:
-        rid = request_id or "-"
-        (
-            candidate_targets,
-            parameter_rejections,
-            requested_parameters,
-        ) = self._prepare_candidate_targets(route_decision=route_decision, payload=payload)
-        candidate_targets = self._apply_fallback_policy(
-            candidate_targets=candidate_targets,
-            route_decision=route_decision,
-            request_id=rid,
-        )
-        effective_selected_model, effective_fallback_models = (
-            self._effective_model_selection(
-                candidate_targets=candidate_targets,
-                route_decision=route_decision,
-            )
-        )
-        request_started = time.perf_counter()
-        self._emit_proxy_start(
-            path=path,
-            route_decision=route_decision,
-            stream=stream,
-            request_id=rid,
-            selected_model=effective_selected_model,
-            fallback_models=effective_fallback_models,
-            candidate_targets=len(candidate_targets),
-        )
-        if parameter_rejections:
-            self._emit_parameter_filter_audit(
-                request_id=rid,
-                requested_parameters=requested_parameters,
-                parameter_rejections=parameter_rejections,
-            )
-        preflight_response = self._preflight_constraint_response(
-            route_decision=route_decision,
-            candidate_targets=candidate_targets,
-            requested_parameters=requested_parameters,
-            parameter_rejections=parameter_rejections,
-            request_id=rid,
-        )
-        if preflight_response is not None:
-            return preflight_response
-
-        stats = ProxyExecutionStats(
-            attempted_targets=[],
-            attempted_upstream_models=[],
-        )
-        candidate_targets_total = len(candidate_targets)
-        trial_payload = dict(payload)
-
-        for index, target in enumerate(candidate_targets):
-            has_more_targets = index < len(candidate_targets) - 1
-            breaker_key = f"{target.account_name}:{target.provider}"
-            if self._attempt_processor.skip_target_for_circuit_breaker(
-                target=target,
-                breaker_key=breaker_key,
-                request_id=rid,
-                stats=stats,
-            ):
-                continue
-            if self._attempt_processor.skip_target_for_rate_limit(
-                target=target,
-                request_id=rid,
-                stats=stats,
-            ):
-                continue
-
-            self._attempt_processor.record_attempt(
-                target=target,
-                request_id=rid,
-                attempt=index + 1,
-                total_attempts=len(candidate_targets),
-                stats=stats,
-            )
-            trial_payload["model"] = target.upstream_model
-            request_spec = _prepare_upstream_request(
-                path=path,
-                payload=trial_payload,
-                provider=target.provider,
-                stream=stream,
-            )
-            bearer_token = await self._proxy.resolve_bearer_token(target.account)
-            skip_for_oauth, oauth_response = (
-                self._attempt_processor.handle_missing_oauth_token(
-                    target=target,
-                    bearer_token=bearer_token,
-                    request_id=rid,
-                    has_more_targets=has_more_targets,
-                    stats=stats,
-                )
-            )
-            if oauth_response is not None:
-                return oauth_response
-            if skip_for_oauth:
-                continue
-
-            headers = _build_upstream_headers(
-                incoming_headers=incoming_headers,
-                bearer_token=bearer_token,
-                provider=target.provider,
-                oauth_account_id=self._proxy.resolve_oauth_account_id(target.account),
-                organization=target.organization,
-                project=target.project,
-                stream=request_spec.stream,
-                allow_passthrough_auth=target.account.allows_passthrough_auth(),
-            )
-
-            upstream, request_error_response = (
-                await self._attempt_processor.send_upstream_request(
-                    target=target,
-                    request_spec=request_spec,
-                    headers=headers,
-                    breaker_key=breaker_key,
-                    request_id=rid,
-                    attempt=index + 1,
-                    total_attempts=len(candidate_targets),
-                    has_more_targets=has_more_targets,
-                    stats=stats,
-                )
-            )
-            if request_error_response is not None:
-                return request_error_response
-            if upstream is None:
-                continue
-
-            if self._attempt_processor.should_retry_upstream_response(
-                upstream=upstream,
-                target=target,
-                breaker_key=breaker_key,
-                request_id=rid,
-                has_more_targets=has_more_targets,
-            ):
-                await upstream.aclose()
-                continue
-
-            return await BackendProxy._to_fastapi_response(
-                upstream=upstream,
-                stream=stream,
-                upstream_stream=request_spec.stream,
-                target=target,
-                attempted_targets=stats.attempted_targets,
-                attempted_upstream_models=stats.attempted_upstream_models,
-                request_latency_ms=round(
-                    (time.perf_counter() - request_started) * 1000.0, 3
-                ),
-                route_decision=route_decision,
-                request_id=rid,
-                adapter=request_spec.adapter,
-                audit_hook=self._proxy.audit_hook,
-            )
-
-        return self._attempt_processor.routing_exhausted_response(
-            request_id=rid,
-            candidate_targets_total=candidate_targets_total,
-            stats=stats,
-        )
-
-    def _prepare_candidate_targets(
+    def prepare_candidate_targets(
         self,
         *,
         route_decision: RouteDecision,
@@ -1348,7 +1180,7 @@ class ProxyRequestExecutor:
             )
         return candidate_targets, parameter_rejections, requested_parameters
 
-    def _apply_fallback_policy(
+    def apply_fallback_policy(
         self,
         *,
         candidate_targets: list[BackendTarget],
@@ -1371,7 +1203,7 @@ class ProxyRequestExecutor:
         return [primary_target]
 
     @staticmethod
-    def _effective_model_selection(
+    def effective_model_selection(
         *,
         candidate_targets: list[BackendTarget],
         route_decision: RouteDecision,
@@ -1389,7 +1221,7 @@ class ProxyRequestExecutor:
         )
         return effective_selected_model, effective_fallback_models
 
-    def _emit_proxy_start(
+    def emit_proxy_start(
         self,
         *,
         path: str,
@@ -1426,7 +1258,7 @@ class ProxyRequestExecutor:
             candidate_targets=candidate_targets,
         )
 
-    def _emit_parameter_filter_audit(
+    def emit_parameter_filter_audit(
         self,
         *,
         request_id: str,
@@ -1440,7 +1272,7 @@ class ProxyRequestExecutor:
             rejections=parameter_rejections,
         )
 
-    def _preflight_constraint_response(
+    def preflight_constraint_response(
         self,
         *,
         route_decision: RouteDecision,
@@ -1544,8 +1376,207 @@ class ProxyRequestExecutor:
                     }
                 },
             )
-
         return None
+
+
+class ProxyRequestExecutor:
+    def __init__(self, *, proxy: BackendProxy) -> None:
+        self._proxy = proxy
+        self._attempt_processor = ProxyAttemptProcessor(proxy=proxy)
+        self._preflight_planner = ProxyPreflightPlanner(proxy=proxy)
+
+    async def execute(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Headers,
+        route_decision: RouteDecision,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Response:
+        rid = request_id or "-"
+        (
+            candidate_targets,
+            parameter_rejections,
+            requested_parameters,
+        ) = self._preflight_planner.prepare_candidate_targets(
+            route_decision=route_decision,
+            payload=payload,
+        )
+        candidate_targets = self._preflight_planner.apply_fallback_policy(
+            candidate_targets=candidate_targets,
+            route_decision=route_decision,
+            request_id=rid,
+        )
+        effective_selected_model, effective_fallback_models = (
+            self._preflight_planner.effective_model_selection(
+                candidate_targets=candidate_targets,
+                route_decision=route_decision,
+            )
+        )
+        request_started = time.perf_counter()
+        self._preflight_planner.emit_proxy_start(
+            path=path,
+            route_decision=route_decision,
+            stream=stream,
+            request_id=rid,
+            selected_model=effective_selected_model,
+            fallback_models=effective_fallback_models,
+            candidate_targets=len(candidate_targets),
+        )
+        if parameter_rejections:
+            self._preflight_planner.emit_parameter_filter_audit(
+                request_id=rid,
+                requested_parameters=requested_parameters,
+                parameter_rejections=parameter_rejections,
+            )
+        preflight_response = self._preflight_planner.preflight_constraint_response(
+            route_decision=route_decision,
+            candidate_targets=candidate_targets,
+            requested_parameters=requested_parameters,
+            parameter_rejections=parameter_rejections,
+            request_id=rid,
+        )
+        if preflight_response is not None:
+            return preflight_response
+
+        return await self._execute_target_attempts(
+            path=path,
+            payload=payload,
+            incoming_headers=incoming_headers,
+            route_decision=route_decision,
+            stream=stream,
+            request_id=rid,
+            candidate_targets=candidate_targets,
+            request_started=request_started,
+        )
+
+    async def _execute_target_attempts(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Headers,
+        route_decision: RouteDecision,
+        stream: bool,
+        request_id: str,
+        candidate_targets: list[BackendTarget],
+        request_started: float,
+    ) -> Response:
+        stats = ProxyExecutionStats(
+            attempted_targets=[],
+            attempted_upstream_models=[],
+        )
+        total_attempts = len(candidate_targets)
+        trial_payload = dict(payload)
+
+        for index, target in enumerate(candidate_targets):
+            has_more_targets = index < len(candidate_targets) - 1
+            breaker_key = f"{target.account_name}:{target.provider}"
+            if self._attempt_processor.skip_target_for_circuit_breaker(
+                target=target,
+                breaker_key=breaker_key,
+                request_id=request_id,
+                stats=stats,
+            ):
+                continue
+            if self._attempt_processor.skip_target_for_rate_limit(
+                target=target,
+                request_id=request_id,
+                stats=stats,
+            ):
+                continue
+
+            self._attempt_processor.record_attempt(
+                target=target,
+                request_id=request_id,
+                attempt=index + 1,
+                total_attempts=total_attempts,
+                stats=stats,
+            )
+            trial_payload["model"] = target.upstream_model
+            request_spec = _prepare_upstream_request(
+                path=path,
+                payload=trial_payload,
+                provider=target.provider,
+                stream=stream,
+            )
+            bearer_token = await self._proxy.resolve_bearer_token(target.account)
+            skip_for_oauth, oauth_response = (
+                self._attempt_processor.handle_missing_oauth_token(
+                    target=target,
+                    bearer_token=bearer_token,
+                    request_id=request_id,
+                    has_more_targets=has_more_targets,
+                    stats=stats,
+                )
+            )
+            if oauth_response is not None:
+                return oauth_response
+            if skip_for_oauth:
+                continue
+
+            headers = _build_upstream_headers(
+                incoming_headers=incoming_headers,
+                bearer_token=bearer_token,
+                provider=target.provider,
+                oauth_account_id=self._proxy.resolve_oauth_account_id(target.account),
+                organization=target.organization,
+                project=target.project,
+                stream=request_spec.stream,
+                allow_passthrough_auth=target.account.allows_passthrough_auth(),
+            )
+
+            upstream, request_error_response = (
+                await self._attempt_processor.send_upstream_request(
+                    target=target,
+                    request_spec=request_spec,
+                    headers=headers,
+                    breaker_key=breaker_key,
+                    request_id=request_id,
+                    attempt=index + 1,
+                    total_attempts=total_attempts,
+                    has_more_targets=has_more_targets,
+                    stats=stats,
+                )
+            )
+            if request_error_response is not None:
+                return request_error_response
+            if upstream is None:
+                continue
+
+            if self._attempt_processor.should_retry_upstream_response(
+                upstream=upstream,
+                target=target,
+                breaker_key=breaker_key,
+                request_id=request_id,
+                has_more_targets=has_more_targets,
+            ):
+                await upstream.aclose()
+                continue
+
+            return await BackendProxy._to_fastapi_response(
+                upstream=upstream,
+                stream=stream,
+                upstream_stream=request_spec.stream,
+                target=target,
+                attempted_targets=stats.attempted_targets,
+                attempted_upstream_models=stats.attempted_upstream_models,
+                request_latency_ms=round(
+                    (time.perf_counter() - request_started) * 1000.0, 3
+                ),
+                route_decision=route_decision,
+                request_id=request_id,
+                adapter=request_spec.adapter,
+                audit_hook=self._proxy.audit_hook,
+            )
+
+        return self._attempt_processor.routing_exhausted_response(
+            request_id=request_id,
+            candidate_targets_total=total_attempts,
+            stats=stats,
+        )
 
 
 class ModelRegistryResolver:
