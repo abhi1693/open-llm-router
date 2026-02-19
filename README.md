@@ -512,7 +512,7 @@ make format
 make test
 ```
 
-`make lint` runs compile checks, `ruff`, `flake8`, `isort --check`, and `mypy` when available.
+`make lint` runs compile checks, `ruff`, `flake8`, `isort --check`, `mypy`, and `pyright` when available.
 
 ### Run tests directly
 

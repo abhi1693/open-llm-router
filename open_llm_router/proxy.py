@@ -997,8 +997,8 @@ class ProxyRequestExecutor:
                 allow_passthrough_auth=target.account.allows_passthrough_auth(),
             )
 
+            attempt_started = time.perf_counter()
             try:
-                attempt_started = time.perf_counter()
                 request = self._proxy.client.build_request(
                     method="POST",
                     url=f"{target.base_url.rstrip('/')}{request_spec.path}",
