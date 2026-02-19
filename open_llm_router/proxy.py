@@ -703,6 +703,18 @@ class ProxyExecutionStats:
     skipped_oauth_token_missing: int = 0
 
 
+@dataclass(slots=True)
+class ProxyAttemptRunContext:
+    path: str
+    trial_payload: dict[str, Any]
+    incoming_headers: Headers
+    route_decision: RouteDecision
+    stream: bool
+    request_id: str
+    total_attempts: int
+    request_started: float
+
+
 class ProxyResponseAdapter:
     @staticmethod
     async def to_fastapi_response(
@@ -1281,102 +1293,136 @@ class ProxyPreflightPlanner:
         parameter_rejections: dict[str, list[str]],
         request_id: str,
     ) -> JSONResponse | None:
-        if not candidate_targets and self._proxy.requires_parameter_compatibility(
+        if candidate_targets:
+            return None
+
+        if self._proxy.requires_parameter_compatibility(
             route_decision.provider_preferences
         ):
-            logger.warning(
-                "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
-                request_id,
-                ",".join(requested_parameters),
-            )
-            self._proxy.audit(
-                "proxy_require_parameters_no_target",
+            return self._require_parameters_unsatisfied_response(
                 request_id=request_id,
                 requested_parameters=requested_parameters,
-                rejections=parameter_rejections,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": {
-                        "type": "routing_constraints_unsatisfied",
-                        "message": (
-                            "No provider/account targets satisfy require_parameters constraints."
-                        ),
-                        "constraint": "require_parameters",
-                        "details": {
-                            "requested_parameters": requested_parameters,
-                            "rejections": parameter_rejections,
-                        },
-                    }
-                },
+                parameter_rejections=parameter_rejections,
             )
 
-        if not candidate_targets and self._proxy.has_provider_filters(
-            route_decision.provider_preferences
-        ):
-            only = self._proxy.normalized_provider_filter_values(
-                route_decision.provider_preferences.get("only")
-            )
-            ignore = self._proxy.normalized_provider_filter_values(
-                route_decision.provider_preferences.get("ignore")
-            )
-            logger.warning(
-                "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
-                request_id,
-                ",".join(only),
-                ",".join(ignore),
-            )
-            self._proxy.audit(
-                "proxy_provider_filters_no_target",
+        if self._proxy.has_provider_filters(route_decision.provider_preferences):
+            return self._provider_filters_unsatisfied_response(
+                route_decision=route_decision,
                 request_id=request_id,
-                selected_model=route_decision.selected_model,
-                fallback_models=route_decision.fallback_models,
-                only=only,
-                ignore=ignore,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": {
-                        "type": "routing_constraints_unsatisfied",
-                        "message": (
-                            "No provider/account targets satisfy provider only/ignore constraints."
-                        ),
-                        "constraint": "provider",
-                        "details": {
-                            "only": only,
-                            "ignore": ignore,
-                        },
-                    }
-                },
             )
 
-        if not candidate_targets:
-            logger.warning(
-                "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
-                request_id,
-                route_decision.selected_model,
-                ",".join(route_decision.fallback_models),
-            )
-            self._proxy.audit(
-                "proxy_no_target",
-                request_id=request_id,
-                selected_model=route_decision.selected_model,
-                fallback_models=route_decision.fallback_models,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={
-                    "error": {
-                        "type": "no_backend_target",
-                        "message": "No backend account supports the selected model set.",
-                        "selected_model": route_decision.selected_model,
-                        "fallback_models": route_decision.fallback_models,
-                    }
-                },
-            )
-        return None
+        return self._no_backend_target_response(
+            route_decision=route_decision,
+            request_id=request_id,
+        )
+
+    def _require_parameters_unsatisfied_response(
+        self,
+        *,
+        request_id: str,
+        requested_parameters: list[str],
+        parameter_rejections: dict[str, list[str]],
+    ) -> JSONResponse:
+        logger.warning(
+            "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
+            request_id,
+            ",".join(requested_parameters),
+        )
+        self._proxy.audit(
+            "proxy_require_parameters_no_target",
+            request_id=request_id,
+            requested_parameters=requested_parameters,
+            rejections=parameter_rejections,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "error": {
+                    "type": "routing_constraints_unsatisfied",
+                    "message": (
+                        "No provider/account targets satisfy require_parameters constraints."
+                    ),
+                    "constraint": "require_parameters",
+                    "details": {
+                        "requested_parameters": requested_parameters,
+                        "rejections": parameter_rejections,
+                    },
+                }
+            },
+        )
+
+    def _provider_filters_unsatisfied_response(
+        self,
+        *,
+        route_decision: RouteDecision,
+        request_id: str,
+    ) -> JSONResponse:
+        only = self._proxy.normalized_provider_filter_values(
+            route_decision.provider_preferences.get("only")
+        )
+        ignore = self._proxy.normalized_provider_filter_values(
+            route_decision.provider_preferences.get("ignore")
+        )
+        logger.warning(
+            "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
+            request_id,
+            ",".join(only),
+            ",".join(ignore),
+        )
+        self._proxy.audit(
+            "proxy_provider_filters_no_target",
+            request_id=request_id,
+            selected_model=route_decision.selected_model,
+            fallback_models=route_decision.fallback_models,
+            only=only,
+            ignore=ignore,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "error": {
+                    "type": "routing_constraints_unsatisfied",
+                    "message": (
+                        "No provider/account targets satisfy provider only/ignore constraints."
+                    ),
+                    "constraint": "provider",
+                    "details": {
+                        "only": only,
+                        "ignore": ignore,
+                    },
+                }
+            },
+        )
+
+    def _no_backend_target_response(
+        self,
+        *,
+        route_decision: RouteDecision,
+        request_id: str,
+    ) -> JSONResponse:
+        logger.warning(
+            "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
+            request_id,
+            route_decision.selected_model,
+            ",".join(route_decision.fallback_models),
+        )
+        self._proxy.audit(
+            "proxy_no_target",
+            request_id=request_id,
+            selected_model=route_decision.selected_model,
+            fallback_models=route_decision.fallback_models,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": {
+                    "type": "no_backend_target",
+                    "message": "No backend account supports the selected model set.",
+                    "selected_model": route_decision.selected_model,
+                    "fallback_models": route_decision.fallback_models,
+                }
+            },
+        )
 
 
 class ProxyRequestExecutor:
@@ -1441,141 +1487,150 @@ class ProxyRequestExecutor:
         if preflight_response is not None:
             return preflight_response
 
-        return await self._execute_target_attempts(
+        attempt_context = ProxyAttemptRunContext(
             path=path,
-            payload=payload,
+            trial_payload=dict(payload),
             incoming_headers=incoming_headers,
             route_decision=route_decision,
             stream=stream,
             request_id=rid,
-            candidate_targets=candidate_targets,
+            total_attempts=len(candidate_targets),
             request_started=request_started,
+        )
+        return await self._execute_target_attempts(
+            candidate_targets=candidate_targets,
+            context=attempt_context,
         )
 
     async def _execute_target_attempts(
         self,
         *,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Headers,
-        route_decision: RouteDecision,
-        stream: bool,
-        request_id: str,
         candidate_targets: list[BackendTarget],
-        request_started: float,
+        context: ProxyAttemptRunContext,
     ) -> Response:
         stats = ProxyExecutionStats(
             attempted_targets=[],
             attempted_upstream_models=[],
         )
-        total_attempts = len(candidate_targets)
-        trial_payload = dict(payload)
-
         for index, target in enumerate(candidate_targets):
-            has_more_targets = index < len(candidate_targets) - 1
-            breaker_key = f"{target.account_name}:{target.provider}"
-            if self._attempt_processor.skip_target_for_circuit_breaker(
+            response = await self._attempt_single_target(
                 target=target,
-                breaker_key=breaker_key,
-                request_id=request_id,
-                stats=stats,
-            ):
-                continue
-            if self._attempt_processor.skip_target_for_rate_limit(
-                target=target,
-                request_id=request_id,
-                stats=stats,
-            ):
-                continue
-
-            self._attempt_processor.record_attempt(
-                target=target,
-                request_id=request_id,
-                attempt=index + 1,
-                total_attempts=total_attempts,
+                context=context,
+                attempt_number=index + 1,
+                has_more_targets=index < context.total_attempts - 1,
                 stats=stats,
             )
-            trial_payload["model"] = target.upstream_model
-            request_spec = _prepare_upstream_request(
-                path=path,
-                payload=trial_payload,
-                provider=target.provider,
-                stream=stream,
-            )
-            bearer_token = await self._proxy.resolve_bearer_token(target.account)
-            skip_for_oauth, oauth_response = (
-                self._attempt_processor.handle_missing_oauth_token(
-                    target=target,
-                    bearer_token=bearer_token,
-                    request_id=request_id,
-                    has_more_targets=has_more_targets,
-                    stats=stats,
-                )
-            )
-            if oauth_response is not None:
-                return oauth_response
-            if skip_for_oauth:
-                continue
-
-            headers = _build_upstream_headers(
-                incoming_headers=incoming_headers,
-                bearer_token=bearer_token,
-                provider=target.provider,
-                oauth_account_id=self._proxy.resolve_oauth_account_id(target.account),
-                organization=target.organization,
-                project=target.project,
-                stream=request_spec.stream,
-                allow_passthrough_auth=target.account.allows_passthrough_auth(),
-            )
-
-            upstream, request_error_response = (
-                await self._attempt_processor.send_upstream_request(
-                    target=target,
-                    request_spec=request_spec,
-                    headers=headers,
-                    breaker_key=breaker_key,
-                    request_id=request_id,
-                    attempt=index + 1,
-                    total_attempts=total_attempts,
-                    has_more_targets=has_more_targets,
-                    stats=stats,
-                )
-            )
-            if request_error_response is not None:
-                return request_error_response
-            if upstream is None:
-                continue
-
-            if self._attempt_processor.should_retry_upstream_response(
-                upstream=upstream,
-                target=target,
-                breaker_key=breaker_key,
-                request_id=request_id,
-                has_more_targets=has_more_targets,
-            ):
-                await upstream.aclose()
-                continue
-
-            return await BackendProxy._to_fastapi_response(
-                upstream=upstream,
-                stream=stream,
-                upstream_stream=request_spec.stream,
-                target=target,
-                attempted_targets=stats.attempted_targets,
-                attempted_upstream_models=stats.attempted_upstream_models,
-                request_latency_ms=round(
-                    (time.perf_counter() - request_started) * 1000.0, 3
-                ),
-                route_decision=route_decision,
-                request_id=request_id,
-                adapter=request_spec.adapter,
-                audit_hook=self._proxy.audit_hook,
-            )
+            if response is not None:
+                return response
 
         return self._attempt_processor.routing_exhausted_response(
-            request_id=request_id,
-            candidate_targets_total=total_attempts,
+            request_id=context.request_id,
+            candidate_targets_total=context.total_attempts,
             stats=stats,
+        )
+
+    async def _attempt_single_target(
+        self,
+        *,
+        target: BackendTarget,
+        context: ProxyAttemptRunContext,
+        attempt_number: int,
+        has_more_targets: bool,
+        stats: ProxyExecutionStats,
+    ) -> Response | None:
+        breaker_key = f"{target.account_name}:{target.provider}"
+        if self._attempt_processor.skip_target_for_circuit_breaker(
+            target=target,
+            breaker_key=breaker_key,
+            request_id=context.request_id,
+            stats=stats,
+        ):
+            return None
+        if self._attempt_processor.skip_target_for_rate_limit(
+            target=target,
+            request_id=context.request_id,
+            stats=stats,
+        ):
+            return None
+
+        self._attempt_processor.record_attempt(
+            target=target,
+            request_id=context.request_id,
+            attempt=attempt_number,
+            total_attempts=context.total_attempts,
+            stats=stats,
+        )
+        context.trial_payload["model"] = target.upstream_model
+        request_spec = _prepare_upstream_request(
+            path=context.path,
+            payload=context.trial_payload,
+            provider=target.provider,
+            stream=context.stream,
+        )
+        bearer_token = await self._proxy.resolve_bearer_token(target.account)
+        skip_for_oauth, oauth_response = self._attempt_processor.handle_missing_oauth_token(
+            target=target,
+            bearer_token=bearer_token,
+            request_id=context.request_id,
+            has_more_targets=has_more_targets,
+            stats=stats,
+        )
+        if oauth_response is not None:
+            return oauth_response
+        if skip_for_oauth:
+            return None
+
+        headers = _build_upstream_headers(
+            incoming_headers=context.incoming_headers,
+            bearer_token=bearer_token,
+            provider=target.provider,
+            oauth_account_id=self._proxy.resolve_oauth_account_id(target.account),
+            organization=target.organization,
+            project=target.project,
+            stream=request_spec.stream,
+            allow_passthrough_auth=target.account.allows_passthrough_auth(),
+        )
+
+        upstream, request_error_response = await self._attempt_processor.send_upstream_request(
+            target=target,
+            request_spec=request_spec,
+            headers=headers,
+            breaker_key=breaker_key,
+            request_id=context.request_id,
+            attempt=attempt_number,
+            total_attempts=context.total_attempts,
+            has_more_targets=has_more_targets,
+            stats=stats,
+        )
+        if request_error_response is not None:
+            return request_error_response
+        if upstream is None:
+            return None
+
+        if self._attempt_processor.should_retry_upstream_response(
+            upstream=upstream,
+            target=target,
+            breaker_key=breaker_key,
+            request_id=context.request_id,
+            has_more_targets=has_more_targets,
+        ):
+            await upstream.aclose()
+            return None
+
+        return await BackendProxy._to_fastapi_response(
+            upstream=upstream,
+            stream=context.stream,
+            upstream_stream=request_spec.stream,
+            target=target,
+            attempted_targets=stats.attempted_targets,
+            attempted_upstream_models=stats.attempted_upstream_models,
+            request_latency_ms=round(
+                (time.perf_counter() - context.request_started) * 1000.0, 3
+            ),
+            route_decision=context.route_decision,
+            request_id=context.request_id,
+            adapter=request_spec.adapter,
+            audit_hook=self._proxy.audit_hook,
         )
 
 
@@ -2906,6 +2961,8 @@ class BackendProxy:
         self._target_selection_policy = TargetSelectionPolicy(
             target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata
         )
+        self._backend_target_planner = BackendTargetPlanner(proxy=self)
+        self._request_executor = ProxyRequestExecutor(proxy=self)
         self._audit_hook = audit_hook
         self._circuit_breakers = circuit_breakers
         self._rate_limited_until: dict[str, float] = {}
@@ -2963,7 +3020,7 @@ class BackendProxy:
         stream: bool,
         request_id: str | None = None,
     ) -> Response:
-        return await ProxyRequestExecutor(proxy=self).execute(
+        return await self._request_executor.execute(
             path=path,
             payload=payload,
             incoming_headers=incoming_headers,
@@ -3131,7 +3188,7 @@ class BackendProxy:
     def _build_candidate_targets(
         self, route_decision: RouteDecision
     ) -> list[BackendTarget]:
-        return BackendTargetPlanner(proxy=self).build_candidate_targets(route_decision)
+        return self._backend_target_planner.build_candidate_targets(route_decision)
 
     def _prioritize_model_groups_by_rate_limit(
         self, grouped_targets: list[list[BackendTarget]]
@@ -3173,30 +3230,8 @@ class BackendProxy:
         return [*healthy_targets, *limited_targets]
 
     @staticmethod
-    def _provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
-        return TargetSelectionPolicy.provider_partition_mode(provider_preferences)
-
-    @staticmethod
-    def _requires_parameter_compatibility(provider_preferences: dict[str, Any]) -> bool:
-        return TargetSelectionPolicy.requires_parameter_compatibility(
-            provider_preferences
-        )
-
-    @staticmethod
-    def _allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
-        return TargetSelectionPolicy.allows_fallbacks(provider_preferences)
-
-    @staticmethod
     def allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
-        return BackendProxy._allows_fallbacks(provider_preferences)
-
-    @staticmethod
-    def _normalized_provider_filter_values(raw: Any) -> list[str]:
-        return TargetSelectionPolicy.normalized_provider_filter_values(raw)
-
-    @staticmethod
-    def _has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
-        return TargetSelectionPolicy.has_provider_filters(provider_preferences)
+        return TargetSelectionPolicy.allows_fallbacks(provider_preferences)
 
     def _filter_targets_by_provider_preferences(
         self,
@@ -3220,21 +3255,6 @@ class BackendProxy:
             provider_preferences=provider_preferences,
         )
 
-    @staticmethod
-    def _provider_order_index_map(raw_order: Any) -> dict[str, int]:
-        return TargetSelectionPolicy.provider_order_index_map(raw_order)
-
-    def _target_metadata(self, target: BackendTarget) -> dict[str, Any]:
-        return self._target_selection_policy.target_metadata(target)
-
-    @staticmethod
-    def _extract_request_parameter_names(payload: dict[str, Any]) -> set[str]:
-        return TargetSelectionPolicy.extract_request_parameter_names(payload)
-
-    @staticmethod
-    def _normalize_parameter_set(raw: Any) -> set[str]:
-        return TargetSelectionPolicy.normalize_parameter_set(raw)
-
     def _filter_targets_by_parameter_support(
         self,
         *,
@@ -3256,19 +3276,6 @@ class BackendProxy:
             candidate_targets=candidate_targets,
             payload=payload,
         )
-
-    @staticmethod
-    def _as_non_negative_float(value: Any, default: float = 0.0) -> float:
-        return TargetSelectionPolicy.as_non_negative_float(value, default)
-
-    def _target_effective_price(self, target: BackendTarget) -> float:
-        return self._target_selection_policy.target_effective_price(target)
-
-    def _target_latency_ms(self, target: BackendTarget) -> float:
-        return self._target_selection_policy.target_latency_ms(target)
-
-    def _target_throughput(self, target: BackendTarget) -> float:
-        return self._target_selection_policy.target_throughput(target)
 
     def _is_temporarily_rate_limited(self, account_name: str) -> bool:
         return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
@@ -3351,21 +3358,23 @@ class BackendProxy:
 
     @staticmethod
     def provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
-        return BackendProxy._provider_partition_mode(provider_preferences)
+        return TargetSelectionPolicy.provider_partition_mode(provider_preferences)
 
     @staticmethod
     def requires_parameter_compatibility(
         provider_preferences: dict[str, Any],
     ) -> bool:
-        return BackendProxy._requires_parameter_compatibility(provider_preferences)
+        return TargetSelectionPolicy.requires_parameter_compatibility(
+            provider_preferences
+        )
 
     @staticmethod
     def normalized_provider_filter_values(raw: Any) -> list[str]:
-        return BackendProxy._normalized_provider_filter_values(raw)
+        return TargetSelectionPolicy.normalized_provider_filter_values(raw)
 
     @staticmethod
     def has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
-        return BackendProxy._has_provider_filters(provider_preferences)
+        return TargetSelectionPolicy.has_provider_filters(provider_preferences)
 
     def resolve_model_metadata(
         self, account: BackendAccount, model: str
