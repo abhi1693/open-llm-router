@@ -721,6 +721,13 @@ class PreparedProxyAttempt:
     headers: dict[str, str]
 
 
+@dataclass(slots=True)
+class ProxyExecutionPlan:
+    candidate_targets: list[BackendTarget]
+    context: ProxyAttemptRunContext | None
+    preflight_response: Response | None = None
+
+
 class ProxyResponseAdapter:
     @staticmethod
     async def to_fastapi_response(
@@ -1447,6 +1454,37 @@ class ProxyRequestExecutor:
         stream: bool,
         request_id: str | None = None,
     ) -> Response:
+        plan = self._build_execution_plan(
+            path=path,
+            payload=payload,
+            incoming_headers=incoming_headers,
+            route_decision=route_decision,
+            stream=stream,
+            request_id=request_id,
+        )
+        if plan.preflight_response is not None:
+            return plan.preflight_response
+        if plan.context is None:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": {"type": "internal_error", "message": "Missing execution context."}},
+            )
+
+        return await self._execute_target_attempts(
+            candidate_targets=plan.candidate_targets,
+            context=plan.context,
+        )
+
+    def _build_execution_plan(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Headers,
+        route_decision: RouteDecision,
+        stream: bool,
+        request_id: str | None,
+    ) -> ProxyExecutionPlan:
         rid = request_id or "-"
         (
             candidate_targets,
@@ -1483,6 +1521,7 @@ class ProxyRequestExecutor:
                 requested_parameters=requested_parameters,
                 parameter_rejections=parameter_rejections,
             )
+
         preflight_response = self._preflight_planner.preflight_constraint_response(
             route_decision=route_decision,
             candidate_targets=candidate_targets,
@@ -1491,7 +1530,11 @@ class ProxyRequestExecutor:
             request_id=rid,
         )
         if preflight_response is not None:
-            return preflight_response
+            return ProxyExecutionPlan(
+                candidate_targets=candidate_targets,
+                context=None,
+                preflight_response=preflight_response,
+            )
 
         attempt_context = ProxyAttemptRunContext(
             path=path,
@@ -1503,7 +1546,7 @@ class ProxyRequestExecutor:
             total_attempts=len(candidate_targets),
             request_started=request_started,
         )
-        return await self._execute_target_attempts(
+        return ProxyExecutionPlan(
             candidate_targets=candidate_targets,
             context=attempt_context,
         )
@@ -3047,22 +3090,46 @@ class BackendProxy:
             rate_limited_until=self._rate_limited_until,
             audit_emitter=lambda event, fields: self._audit(event, **fields),
         )
-        if accounts:
-            self.accounts = [account for account in accounts if account.enabled]
-        else:
-            self.accounts = [
-                BackendAccount(
-                    name="default",
-                    provider="default",
-                    base_url=base_url,
-                    api_key=backend_api_key,
-                    models=[],
-                    enabled=True,
-                )
-            ]
+        self.accounts = self._initialize_accounts(
+            accounts=accounts,
+            base_url=base_url,
+            backend_api_key=backend_api_key,
+        )
 
     async def close(self) -> None:
         await self.client.aclose()
+
+    @staticmethod
+    def _default_account(
+        *,
+        base_url: str,
+        backend_api_key: str | None,
+    ) -> BackendAccount:
+        return BackendAccount(
+            name="default",
+            provider="default",
+            base_url=base_url,
+            api_key=backend_api_key,
+            models=[],
+            enabled=True,
+        )
+
+    @classmethod
+    def _initialize_accounts(
+        cls,
+        *,
+        accounts: list[BackendAccount] | None,
+        base_url: str,
+        backend_api_key: str | None,
+    ) -> list[BackendAccount]:
+        if accounts:
+            return [account for account in accounts if account.enabled]
+        return [
+            cls._default_account(
+                base_url=base_url,
+                backend_api_key=backend_api_key,
+            )
+        ]
 
     def _audit(self, event: str, **fields: Any) -> None:
         if self._audit_hook is None:
@@ -3368,12 +3435,7 @@ class BackendProxy:
         healthy_groups: list[list[BackendTarget]] = []
         limited_groups: list[list[BackendTarget]] = []
         for model_targets in grouped_targets:
-            if any(
-                not self._rate_limit_tracker.is_temporarily_rate_limited(
-                    target.account_name
-                )
-                for target in model_targets
-            ):
+            if self._group_has_available_targets(model_targets):
                 healthy_groups.append(model_targets)
             else:
                 limited_groups.append(model_targets)
@@ -3388,6 +3450,22 @@ class BackendProxy:
         if len(model_targets) <= 1:
             return model_targets
 
+        healthy_targets, limited_targets = self._partition_targets_by_rate_limit(
+            model_targets
+        )
+        if not healthy_targets or not limited_targets:
+            return model_targets
+        return [*healthy_targets, *limited_targets]
+
+    def _group_has_available_targets(self, model_targets: list[BackendTarget]) -> bool:
+        return any(
+            not self._rate_limit_tracker.is_temporarily_rate_limited(target.account_name)
+            for target in model_targets
+        )
+
+    def _partition_targets_by_rate_limit(
+        self, model_targets: list[BackendTarget]
+    ) -> tuple[list[BackendTarget], list[BackendTarget]]:
         healthy_targets: list[BackendTarget] = []
         limited_targets: list[BackendTarget] = []
         for target in model_targets:
@@ -3395,10 +3473,7 @@ class BackendProxy:
                 limited_targets.append(target)
             else:
                 healthy_targets.append(target)
-
-        if not healthy_targets or not limited_targets:
-            return model_targets
-        return [*healthy_targets, *limited_targets]
+        return healthy_targets, limited_targets
 
     def is_temporarily_rate_limited(self, account_name: str) -> bool:
         return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
