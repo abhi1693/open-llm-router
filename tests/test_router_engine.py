@@ -189,8 +189,6 @@ def test_provider_preferences_are_carried_in_route_decision() -> None:
         "model": "auto",
         "provider": {
             "order": ["gemini", "openai"],
-            "only": ["gemini"],
-            "ignore": ["openai-backup"],
             "sort": "price",
             "partition": "none",
             "require_parameters": True,
@@ -201,13 +199,166 @@ def test_provider_preferences_are_carried_in_route_decision() -> None:
     decision = router.decide(payload, "/v1/chat/completions")
     assert decision.provider_preferences == {
         "order": ["gemini", "openai"],
-        "only": ["gemini"],
-        "ignore": ["openai-backup"],
         "sort": "price",
         "partition": "none",
         "require_parameters": True,
         "allow_fallbacks": False,
     }
+
+
+def test_provider_preferences_only_filters_route_candidates() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/gpt-5.2",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/gpt-5.2", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "models": {
+                "openai/gpt-5.2": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "provider": {"only": ["gemini"]},
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "gemini/gemini-2.5-flash"
+
+
+def test_provider_preferences_ignore_filters_route_candidates() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/gpt-5.2",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/gpt-5.2", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "models": {
+                "openai/gpt-5.2": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "provider": {"ignore": ["openai"]},
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "gemini/gemini-2.5-flash"
+
+
+def test_provider_preferences_order_reorders_rule_chain_head() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/gpt-5.2",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/gpt-5.2", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "models": {
+                "openai/gpt-5.2": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "provider": {"order": ["gemini", "openai"]},
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "gemini/gemini-2.5-flash"
+    assert decision.decision_trace["provider_preference_filtered_chain"][0] == (
+        "gemini/gemini-2.5-flash"
+    )
+
+
+def test_provider_preferences_raise_when_filters_exclude_all_candidates() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/gpt-5.2",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/gpt-5.2", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "models": {
+                "openai/gpt-5.2": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "provider": {"only": ["anthropic"]},
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    with pytest.raises(RoutingConstraintError) as exc:
+        router.decide(payload, "/v1/chat/completions")
+    assert exc.value.constraint == "provider_preferences"
+
+
+def test_provider_order_bias_applies_in_learned_routing() -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "openai/gpt-5.2",
+            "task_routes": {
+                "general": {
+                    "low": ["openai/gpt-5.2", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "learned_routing": {
+                "enabled": True,
+                "task_candidates": {
+                    "general": ["openai/gpt-5.2", "gemini/gemini-2.5-flash"],
+                },
+            },
+            "model_profiles": {
+                "openai/gpt-5.2": {
+                    "quality_bias": 0.2,
+                    "quality_sensitivity": 1.0,
+                    "cost_input_per_1k": 0.0002,
+                    "cost_output_per_1k": 0.0006,
+                    "latency_ms": 300,
+                    "failure_rate": 0.01,
+                },
+                "gemini/gemini-2.5-flash": {
+                    "quality_bias": 0.2,
+                    "quality_sensitivity": 1.0,
+                    "cost_input_per_1k": 0.0002,
+                    "cost_output_per_1k": 0.0006,
+                    "latency_ms": 300,
+                    "failure_rate": 0.01,
+                },
+            },
+            "models": {
+                "openai/gpt-5.2": {"capabilities": ["chat"]},
+                "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    payload = {
+        "model": "auto",
+        "provider": {"order": ["gemini", "openai"]},
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    decision = router.decide(payload, "/v1/chat/completions")
+    assert decision.selected_model == "gemini/gemini-2.5-flash"
+    assert decision.decision_trace["learned_trace"]["provider_order_applied"] is True
+    assert "provider_order_bonus" in decision.candidate_scores[0]
 
 
 def test_routes_auto_coding_request() -> None:
@@ -585,6 +736,182 @@ def test_secondary_classifier_disambiguates_instruction_vs_coding() -> None:
     assert decision.task == "instruction_following"
     assert decision.selected_model == "general-7b"
     assert decision.signals["secondary_classifier_used"] is True
+
+
+def test_semantic_classifier_routes_coding_intent_without_code_keywords() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Can you craft a helper that iterates through rows in a "
+                        "comma-separated file and flags malformed records?"
+                    ),
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "coding"
+    assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
+    assert decision.signals["semantic_classifier_used"] is True
+    assert decision.signals["task_reason"] == "semantic_classifier_override"
+
+
+def test_semantic_classifier_routes_thinking_intent_from_tradeoff_language() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Walk through competing approaches and justify which "
+                        "direction we should take."
+                    ),
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "thinking"
+    assert decision.selected_model in {"think-14b", "think-32b", "think-70b", "think-codex"}
+    assert decision.signals["semantic_classifier_used"] is True
+    assert decision.signals["task_reason"] == "semantic_classifier_override"
+
+
+def test_semantic_classifier_routes_rewrite_style_instruction_intent() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Tighten this paragraph so it reads professionally without "
+                        "changing the meaning."
+                    ),
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "instruction_following"
+    assert decision.selected_model == "general-7b"
+    assert decision.signals["semantic_classifier_used"] is True
+    assert decision.signals["task_reason"] == "semantic_classifier_override"
+
+
+def test_local_embedding_semantic_classifier_can_be_used_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "open_llm_router.classifier._semantic_task_prediction_local",
+        lambda **_: (
+            "thinking",
+            0.9,
+            {
+                "general": 0.1,
+                "coding": 0.2,
+                "thinking": 0.95,
+                "instruction_following": 0.15,
+            },
+        ),
+    )
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "think-14b",
+            "task_routes": {
+                "general": {
+                    "low": "general-7b",
+                    "medium": "general-14b",
+                    "high": "general-32b",
+                    "xhigh": "general-70b",
+                },
+                "thinking": {"default": "think-14b"},
+                "instruction_following": {"default": "general-7b"},
+            },
+            "semantic_classifier": {
+                "enabled": True,
+                "backend": "local_embedding",
+                "local_model_name": "/models/local-embed",
+                "local_files_only": True,
+                "min_confidence": 0.1,
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "help me decide a direction"}],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "thinking"
+    assert decision.selected_model == "think-14b"
+    assert decision.signals["semantic_classifier_source"] == "local_embedding"
+    assert decision.signals["semantic_classifier_status"] is None
+
+
+def test_local_embedding_semantic_classifier_falls_back_to_prototype_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "open_llm_router.classifier._semantic_task_prediction_local",
+        lambda **_: None,
+    )
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "general-14b",
+            "task_routes": {
+                "general": {
+                    "low": "general-7b",
+                    "medium": "general-14b",
+                    "high": "general-32b",
+                    "xhigh": "general-70b",
+                },
+                "instruction_following": {"default": "general-7b"},
+            },
+            "semantic_classifier": {
+                "enabled": True,
+                "backend": "local_embedding",
+                "local_model_name": "/models/local-embed",
+                "local_files_only": True,
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Tighten this paragraph so it reads professionally without "
+                        "changing the meaning."
+                    ),
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "instruction_following"
+    assert decision.signals["semantic_classifier_source"] == "prototype"
+    assert decision.signals["semantic_classifier_status"] == (
+        "local_embedding_unavailable"
+    )
 
 
 def test_routes_coding_without_language_name_using_structural_signals() -> None:

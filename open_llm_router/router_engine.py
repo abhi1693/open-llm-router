@@ -92,6 +92,7 @@ class SmartModelRouter:
                 endpoint=endpoint,
                 complexity_cfg=self.config.complexity,
                 calibration_cfg=self.config.classifier_calibration,
+                semantic_cfg=self.config.semantic_classifier,
             )
             required_capabilities = self._required_capabilities(
                 payload=payload,
@@ -116,13 +117,33 @@ class SmartModelRouter:
                     },
                 )
             (
+                provider_filtered_chain,
+                provider_filter_trace,
+            ) = self._apply_provider_preferences_to_models(
+                candidate_models=allowed_filtered_chain,
+                provider_preferences=provider_preferences,
+            )
+            if (
+                _provider_filters_enabled(provider_preferences)
+                and not provider_filtered_chain
+            ):
+                raise RoutingConstraintError(
+                    constraint="provider_preferences",
+                    message="No route candidates satisfy provider preference constraints.",
+                    details={
+                        "provider_preferences": dict(provider_preferences),
+                        "candidate_chain": candidate_chain,
+                        "allowed_model_filtered_chain": allowed_filtered_chain,
+                    },
+                )
+            (
                 default_chain,
                 hard_constraint_trace,
                 supplemented_models,
                 estimated_input_tokens,
                 token_estimation_method,
             ) = self._apply_hard_constraints(
-                candidate_models=allowed_filtered_chain,
+                candidate_models=provider_filtered_chain,
                 required_capabilities=required_capabilities,
                 payload=payload,
                 signals=signals,
@@ -138,6 +159,8 @@ class SmartModelRouter:
                 "default_chain": list(candidate_chain),
                 "allowed_models": list(allowed_model_patterns),
                 "allowed_model_filtered_chain": list(allowed_filtered_chain),
+                "provider_preference_filtered_chain": list(provider_filtered_chain),
+                "provider_preference_trace": provider_filter_trace,
                 "hard_constraint_required_capabilities": sorted(required_capabilities),
                 "hard_constraint_filtered_chain": list(default_chain),
                 "hard_constraint_rejections": hard_constraint_trace,
@@ -169,6 +192,7 @@ class SmartModelRouter:
                     complexity=complexity,
                     signals=signals,
                     default_chain=default_chain,
+                    provider_preferences=provider_preferences,
                 )
                 signals["routing_mode"] = "learned_utility"
                 decision_trace.update(
@@ -201,6 +225,27 @@ class SmartModelRouter:
         else:
             assert requested_model is not None
             self._require_known_model(requested_model=requested_model)
+            (
+                provider_filtered_requested,
+                _,
+            ) = self._apply_provider_preferences_to_models(
+                candidate_models=[requested_model],
+                provider_preferences=provider_preferences,
+            )
+            if (
+                _provider_filters_enabled(provider_preferences)
+                and not provider_filtered_requested
+            ):
+                raise RoutingConstraintError(
+                    constraint="provider_preferences",
+                    message=(
+                        "Requested explicit model does not satisfy provider preference constraints."
+                    ),
+                    details={
+                        "requested_model": requested_model,
+                        "provider_preferences": dict(provider_preferences),
+                    },
+                )
             if allowed_model_patterns and not _model_matches_any_pattern(
                 model=requested_model,
                 patterns=allowed_model_patterns,
@@ -280,6 +325,7 @@ class SmartModelRouter:
         complexity: str,
         signals: dict[str, Any],
         default_chain: list[str],
+        provider_preferences: dict[str, Any],
     ) -> tuple[str, list[str], list[str], list[dict[str, Any]], dict[str, Any]]:
         configured_candidates = self.config.learned_routing.task_candidates.get(
             task, []
@@ -326,7 +372,28 @@ class SmartModelRouter:
                 )
             )
 
-        scored.sort(key=lambda item: item.utility, reverse=True)
+        provider_order_index = _provider_order_index_map(
+            provider_preferences.get("order")
+        )
+        provider_order_bonus = {
+            item.model: _provider_order_bonus_for_model(
+                model=item.model,
+                routing_config=self.config,
+                provider_order_index=provider_order_index,
+            )
+            for item in scored
+        }
+        base_selection_scores = {
+            item.model: item.utility + provider_order_bonus.get(item.model, 0.0)
+            for item in scored
+        }
+        scored.sort(
+            key=lambda item: (
+                base_selection_scores[item.model],
+                item.utility,
+            ),
+            reverse=True,
+        )
         bandit_scores: dict[str, float] = {}
         bandit_bonus: dict[str, float] = {}
         bandit_counts: dict[str, int] = {}
@@ -338,7 +405,10 @@ class SmartModelRouter:
                 bandit_bonus,
                 bandit_counts,
                 bandit_total_decisions,
-            ) = self._rank_with_ucb(scored)
+            ) = self._rank_with_ucb(
+                scored,
+                base_selection_scores=base_selection_scores,
+            )
 
         ranked_models = [item.model for item in scored]
         selected_model = ranked_models[0]
@@ -350,6 +420,10 @@ class SmartModelRouter:
             if item.model in bandit_scores:
                 row["bandit_selection_score"] = round(bandit_scores[item.model], 6)
                 row["bandit_exploration_bonus"] = round(bandit_bonus[item.model], 6)
+            if provider_order_bonus.get(item.model, 0.0) != 0.0:
+                row["provider_order_bonus"] = round(
+                    provider_order_bonus[item.model], 6
+                )
             candidate_scores.append(row)
         return (
             selected_model,
@@ -360,6 +434,7 @@ class SmartModelRouter:
                 "candidate_source": candidate_source,
                 "configured_candidates": configured_candidates,
                 "default_chain": default_chain,
+                "provider_order_applied": bool(provider_order_index),
                 "bandit": {
                     "strategy": "ucb1",
                     "enabled": len(scored) >= 2,
@@ -371,7 +446,10 @@ class SmartModelRouter:
         )
 
     def _rank_with_ucb(
-        self, scored: list[ModelScore]
+        self,
+        scored: list[ModelScore],
+        *,
+        base_selection_scores: dict[str, float] | None = None,
     ) -> tuple[
         list[ModelScore],
         dict[str, float],
@@ -393,7 +471,12 @@ class SmartModelRouter:
             pulls = counts[item.model]
             bonus = _UCB_EXPLORATION_WEIGHT * sqrt(log_term / float(pulls + 1))
             exploration_bonus[item.model] = bonus
-            selection_scores[item.model] = item.utility + bonus
+            base_score = (
+                float(base_selection_scores.get(item.model, item.utility))
+                if base_selection_scores is not None
+                else item.utility
+            )
+            selection_scores[item.model] = base_score + bonus
 
         ranked = sorted(
             scored,
@@ -504,6 +587,61 @@ class SmartModelRouter:
             if model.strip():
                 return model.strip()
         return None
+
+    def _apply_provider_preferences_to_models(
+        self,
+        *,
+        candidate_models: list[str],
+        provider_preferences: dict[str, Any],
+    ) -> tuple[list[str], dict[str, Any]]:
+        normalized_only = _normalized_provider_values(provider_preferences.get("only"))
+        normalized_ignore = _normalized_provider_values(
+            provider_preferences.get("ignore")
+        )
+        provider_order_index = _provider_order_index_map(
+            provider_preferences.get("order")
+        )
+
+        filtered: list[str] = []
+        rejections: dict[str, str] = {}
+        for model in candidate_models:
+            if not _model_satisfies_provider_filters(
+                model=model,
+                routing_config=self.config,
+                only=normalized_only,
+                ignore=normalized_ignore,
+            ):
+                if normalized_only and not _model_matches_provider_values(
+                    model=model,
+                    routing_config=self.config,
+                    values=normalized_only,
+                ):
+                    rejections[model] = "provider_only_mismatch"
+                elif normalized_ignore and _model_matches_provider_values(
+                    model=model,
+                    routing_config=self.config,
+                    values=normalized_ignore,
+                ):
+                    rejections[model] = "provider_ignore_match"
+                else:
+                    rejections[model] = "provider_filter_mismatch"
+                continue
+            filtered.append(model)
+
+        if provider_order_index and len(filtered) > 1:
+            filtered = _sort_models_by_provider_order(
+                models=filtered,
+                routing_config=self.config,
+                provider_order_index=provider_order_index,
+            )
+
+        trace = {
+            "only": sorted(normalized_only),
+            "ignore": sorted(normalized_ignore),
+            "order_applied": bool(provider_order_index),
+            "rejections": rejections,
+        }
+        return filtered, trace
 
     def _constraint_reasons_for_model(
         self,
@@ -827,6 +965,158 @@ def _extract_provider_preferences(payload: dict[str, Any]) -> dict[str, Any]:
                 output["partition"] = normalized_partition
 
     return output
+
+
+def _provider_filters_enabled(provider_preferences: dict[str, Any]) -> bool:
+    return bool(provider_preferences.get("only")) or bool(
+        provider_preferences.get("ignore")
+    )
+
+
+def _normalized_provider_values(raw_values: Any) -> set[str]:
+    if not isinstance(raw_values, list):
+        return set()
+    values: set[str] = set()
+    for value in raw_values:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower()
+        if normalized:
+            values.add(normalized)
+    return values
+
+
+def _model_provider_identity(
+    *,
+    model: str,
+    routing_config: RoutingConfig,
+) -> tuple[str | None, str]:
+    provider, sep, model_id = model.partition("/")
+    if sep and provider.strip() and model_id.strip():
+        return provider.strip().lower(), model_id.strip().lower()
+    metadata = routing_config.models.get(model)
+    if isinstance(metadata, dict):
+        raw_provider = metadata.get("provider")
+        if isinstance(raw_provider, str) and raw_provider.strip():
+            return raw_provider.strip().lower(), model.strip().lower()
+    return None, model.strip().lower()
+
+
+def _model_matches_provider_values(
+    *,
+    model: str,
+    routing_config: RoutingConfig,
+    values: set[str],
+) -> bool:
+    if not values:
+        return False
+    provider, model_id = _model_provider_identity(
+        model=model,
+        routing_config=routing_config,
+    )
+    normalized_model = model.strip().lower()
+    if provider and provider in values:
+        return True
+    if model_id in values:
+        return True
+    return normalized_model in values
+
+
+def _model_satisfies_provider_filters(
+    *,
+    model: str,
+    routing_config: RoutingConfig,
+    only: set[str],
+    ignore: set[str],
+) -> bool:
+    if only and not _model_matches_provider_values(
+        model=model,
+        routing_config=routing_config,
+        values=only,
+    ):
+        return False
+    if ignore and _model_matches_provider_values(
+        model=model,
+        routing_config=routing_config,
+        values=ignore,
+    ):
+        return False
+    return True
+
+
+def _provider_order_index_map(raw_order: Any) -> dict[str, int]:
+    if not isinstance(raw_order, list):
+        return {}
+    index_map: dict[str, int] = {}
+    for index, item in enumerate(raw_order):
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip().lower()
+        if not normalized or normalized in index_map:
+            continue
+        index_map[normalized] = index
+    return index_map
+
+
+def _provider_order_rank_for_model(
+    *,
+    model: str,
+    routing_config: RoutingConfig,
+    provider_order_index: dict[str, int],
+) -> int:
+    if not provider_order_index:
+        return 10_000
+    provider, model_id = _model_provider_identity(
+        model=model,
+        routing_config=routing_config,
+    )
+    normalized_model = model.strip().lower()
+    ranks = [
+        provider_order_index.get(normalized_model, 10_000),
+        provider_order_index.get(model_id, 10_000),
+    ]
+    if provider:
+        ranks.append(provider_order_index.get(provider, 10_000))
+    return min(ranks)
+
+
+def _provider_order_bonus_for_model(
+    *,
+    model: str,
+    routing_config: RoutingConfig,
+    provider_order_index: dict[str, int],
+) -> float:
+    if not provider_order_index:
+        return 0.0
+    rank = _provider_order_rank_for_model(
+        model=model,
+        routing_config=routing_config,
+        provider_order_index=provider_order_index,
+    )
+    if rank >= 10_000:
+        return 0.0
+    span = float(max(1, len(provider_order_index)))
+    return 0.05 * ((span - float(rank)) / span)
+
+
+def _sort_models_by_provider_order(
+    *,
+    models: list[str],
+    routing_config: RoutingConfig,
+    provider_order_index: dict[str, int],
+) -> list[str]:
+    indexed_models = list(enumerate(models))
+    indexed_models.sort(
+        key=lambda item: (
+            _provider_order_rank_for_model(
+                model=item[1],
+                routing_config=routing_config,
+                provider_order_index=provider_order_index,
+            ),
+            item[0],
+        )
+    )
+    return [model for _, model in indexed_models]
 
 
 def _filter_models_by_patterns(

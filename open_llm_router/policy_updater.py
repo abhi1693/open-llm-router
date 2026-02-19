@@ -30,6 +30,8 @@ class RuntimePolicyUpdaterStatus:
     last_classifier_samples: int = 0
     last_classifier_success_rate: float | None = None
     last_classifier_adjusted: bool = False
+    last_feature_weight_adjusted_count: int = 0
+    last_feature_weight_scale: float | None = None
     classifier_adjustment_history: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -63,6 +65,15 @@ class RuntimePolicyUpdater:
         }
         self._classifier_adjustment_history: list[dict[str, Any]] = []
         self._classifier_adjustment_history_limit = 50
+        self._baseline_model_profiles = {
+            model: profile.model_copy(deep=True)
+            for model, profile in routing_config.model_profiles.items()
+        }
+        self._baseline_feature_weights = {
+            name: float(value)
+            for name, value in routing_config.learned_routing.feature_weights.items()
+            if isinstance(value, (int, float))
+        }
 
         self._task: asyncio.Task[None] | None = None
         self._status = RuntimePolicyUpdaterStatus(
@@ -94,6 +105,10 @@ class RuntimePolicyUpdater:
     async def run_once(self) -> int:
         snapshot = await self._metrics_store.snapshot_all()
         applied = self._apply_snapshot(snapshot)
+        (
+            feature_weight_adjusted_count,
+            feature_weight_scale,
+        ) = self._apply_learned_feature_weight_adaptation(snapshot)
         classifier_adjusted = self._apply_classifier_calibration()
         if self._overrides_path:
             _write_runtime_overrides(
@@ -104,12 +119,14 @@ class RuntimePolicyUpdater:
             )
         self._status.last_run_epoch = time.time()
         self._status.last_applied_models = applied
+        self._status.last_feature_weight_adjusted_count = feature_weight_adjusted_count
+        self._status.last_feature_weight_scale = feature_weight_scale
         self._status.last_classifier_adjusted = classifier_adjusted
         self._status.classifier_adjustment_history = list(
             self._classifier_adjustment_history
         )
         self._status.last_error = None
-        return applied
+        return applied + feature_weight_adjusted_count
 
     async def _run(self) -> None:
         while True:
@@ -178,6 +195,97 @@ class RuntimePolicyUpdater:
         if applied and self._logger is not None:
             self._logger.info("runtime_policy_update_applied models=%d", applied)
         return applied
+
+    def _apply_learned_feature_weight_adaptation(
+        self,
+        snapshot: dict[str, ModelMetricsSnapshot],
+    ) -> tuple[int, float | None]:
+        learned_cfg = self._routing_config.learned_routing
+        if not bool(learned_cfg.enabled):
+            return 0, None
+        if not isinstance(learned_cfg.feature_weights, dict):
+            return 0, None
+
+        weighted_failures = 0.0
+        weighted_latency_ratios = 0.0
+        total_weight = 0.0
+
+        for model, metrics in snapshot.items():
+            if is_target_metrics_key(model):
+                continue
+            if metrics.samples < self._min_samples:
+                continue
+
+            weight = float(max(metrics.samples, metrics.route_decisions, 1))
+            observed_failure = (
+                float(metrics.ewma_failure_rate)
+                if metrics.ewma_failure_rate is not None
+                else float(
+                    self._routing_config.model_profiles.get(model, ModelProfile()).failure_rate
+                )
+            )
+            observed_failure = min(max(observed_failure, 0.0), 1.0)
+
+            observed_latency = metrics.ewma_request_latency_ms or metrics.ewma_connect_ms
+            baseline_profile = self._baseline_model_profiles.get(model)
+            baseline_latency = (
+                float(baseline_profile.latency_ms)
+                if baseline_profile is not None and baseline_profile.latency_ms > 0
+                else float(
+                    self._routing_config.model_profiles.get(model, ModelProfile()).latency_ms
+                )
+            )
+            latency_ratio = 1.0
+            if observed_latency is not None and observed_latency > 0 and baseline_latency > 0:
+                latency_ratio = float(observed_latency) / baseline_latency
+                latency_ratio = min(max(latency_ratio, 0.1), 5.0)
+
+            weighted_failures += observed_failure * weight
+            weighted_latency_ratios += latency_ratio * weight
+            total_weight += weight
+
+        if total_weight <= 0:
+            return 0, None
+
+        avg_failure = weighted_failures / total_weight
+        avg_latency_ratio = weighted_latency_ratios / total_weight
+        feature_scale = _feature_weight_scale_for_stability(
+            avg_failure=avg_failure,
+            avg_latency_ratio=avg_latency_ratio,
+        )
+
+        adjusted = 0
+        for name, raw_current in list(learned_cfg.feature_weights.items()):
+            if not isinstance(raw_current, (int, float)):
+                continue
+            if name.startswith("task_"):
+                continue
+
+            current = float(raw_current)
+            baseline = self._baseline_feature_weights.get(name, current)
+            target = baseline * feature_scale
+            updated = _bounded_adjust(
+                current=current,
+                target=target,
+                max_ratio=self._max_adjustment_ratio,
+            )
+            if abs(updated - current) < 1e-9:
+                continue
+            learned_cfg.feature_weights[name] = updated
+            adjusted += 1
+
+        if adjusted and self._logger is not None:
+            self._logger.info(
+                (
+                    "runtime_feature_weight_update_applied adjusted=%d "
+                    "scale=%.4f avg_failure=%.4f avg_latency_ratio=%.4f"
+                ),
+                adjusted,
+                feature_scale,
+                avg_failure,
+                avg_latency_ratio,
+            )
+        return adjusted, feature_scale
 
     def _apply_classifier_calibration(self) -> bool:
         cfg = self._routing_config.classifier_calibration
@@ -350,6 +458,18 @@ def _bounded_adjust(current: float, target: float, max_ratio: float) -> float:
     return min(max(target, lower), upper)
 
 
+def _feature_weight_scale_for_stability(
+    *,
+    avg_failure: float,
+    avg_latency_ratio: float,
+) -> float:
+    failure_pressure = max(0.0, (avg_failure - 0.03) / 0.25)
+    latency_pressure = max(0.0, (avg_latency_ratio - 1.1) / 0.9)
+    stability_pressure = min(1.5, (0.7 * failure_pressure) + (0.3 * latency_pressure))
+    scale = 1.0 - (0.35 * stability_pressure)
+    return min(max(scale, 0.55), 1.0)
+
+
 def apply_runtime_overrides(
     *,
     path: str | None,
@@ -398,6 +518,10 @@ def apply_runtime_overrides(
         raw=raw,
         routing_config=routing_config,
     )
+    _apply_learned_feature_weight_overrides(
+        raw=raw,
+        routing_config=routing_config,
+    )
 
     if applied and logger is not None:
         logger.info("runtime_overrides_applied path=%s models=%d", file_path, applied)
@@ -425,6 +549,13 @@ def _write_runtime_overrides(
 
     if isinstance(classifier_calibration, dict):
         payload["classifier_calibration"] = classifier_calibration
+    payload["learned_routing"] = {
+        "feature_weights": {
+            name: float(value)
+            for name, value in sorted(routing_config.learned_routing.feature_weights.items())
+            if isinstance(value, (int, float))
+        }
+    }
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -461,3 +592,23 @@ def _apply_classifier_calibration_overrides(
 
     cfg.secondary_low_confidence_min_confidence = low
     cfg.secondary_mixed_signal_min_confidence = mixed
+
+
+def _apply_learned_feature_weight_overrides(
+    *,
+    raw: dict[str, Any],
+    routing_config: RoutingConfig,
+) -> None:
+    learned_raw = raw.get("learned_routing")
+    if not isinstance(learned_raw, dict):
+        return
+    feature_weights_raw = learned_raw.get("feature_weights")
+    if not isinstance(feature_weights_raw, dict):
+        return
+
+    for name, value in feature_weights_raw.items():
+        if not isinstance(name, str):
+            continue
+        if not isinstance(value, (int, float)):
+            continue
+        routing_config.learned_routing.feature_weights[name] = float(value)

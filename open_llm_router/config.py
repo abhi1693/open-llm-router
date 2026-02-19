@@ -26,6 +26,15 @@ class ClassifierCalibrationConfig(BaseModel):
     max_threshold: float = 0.9
 
 
+class SemanticClassifierConfig(BaseModel):
+    enabled: bool = False
+    backend: Literal["prototype", "local_embedding"] = "prototype"
+    local_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    local_files_only: bool = True
+    local_max_length: int = 256
+    min_confidence: float = 0.2
+
+
 class UtilityWeights(BaseModel):
     cost: float = 12.0
     latency: float = 0.2
@@ -267,6 +276,9 @@ class RoutingConfig(BaseModel):
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
     classifier_calibration: ClassifierCalibrationConfig = Field(
         default_factory=ClassifierCalibrationConfig
+    )
+    semantic_classifier: SemanticClassifierConfig = Field(
+        default_factory=SemanticClassifierConfig
     )
     learned_routing: LearnedRoutingConfig = Field(default_factory=LearnedRoutingConfig)
 

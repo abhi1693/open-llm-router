@@ -17,6 +17,7 @@ from fastapi.responses import (
 from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
 from open_llm_router.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
+from open_llm_router.classifier import _load_local_embedding_runtime
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
@@ -808,6 +809,41 @@ def _setup_optional_tracing(
         logger.warning("observability_httpx_instrumentation_failed reason=%s", str(exc))
 
 
+def _prefetch_local_semantic_classifier_model(routing_config: RoutingConfig) -> None:
+    semantic_cfg = routing_config.semantic_classifier
+    if not bool(semantic_cfg.enabled):
+        return
+    if semantic_cfg.backend != "local_embedding":
+        return
+
+    model_name = str(semantic_cfg.local_model_name or "").strip()
+    if not model_name:
+        return
+
+    local_files_only = bool(semantic_cfg.local_files_only)
+    logger.info(
+        "semantic_classifier_prefetch_start model=%s local_files_only=%s",
+        model_name,
+        local_files_only,
+    )
+    runtime = _load_local_embedding_runtime(
+        model_name=model_name,
+        local_files_only=local_files_only,
+    )
+    if runtime is None:
+        logger.warning(
+            "semantic_classifier_prefetch_failed model=%s local_files_only=%s",
+            model_name,
+            local_files_only,
+        )
+        return
+    logger.info(
+        "semantic_classifier_prefetch_complete model=%s local_files_only=%s",
+        model_name,
+        local_files_only,
+    )
+
+
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
@@ -819,6 +855,7 @@ async def startup() -> None:
         routing_config=routing_config,
         logger=logger,
     )
+    await asyncio.to_thread(_prefetch_local_semantic_classifier_model, routing_config)
     authenticator = Authenticator(settings)
     app.state.settings = settings
     app.state.authenticator = authenticator

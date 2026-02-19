@@ -4,7 +4,11 @@ import re
 from functools import lru_cache
 from typing import Any
 
-from open_llm_router.config import ClassifierCalibrationConfig, ComplexityConfig
+from open_llm_router.config import (
+    ClassifierCalibrationConfig,
+    ComplexityConfig,
+    SemanticClassifierConfig,
+)
 
 CODE_HINTS = (
     "code",
@@ -203,6 +207,68 @@ SECONDARY_TASK_TOKEN_HINTS: dict[str, frozenset[str]] = {
     "general": frozenset({"hello", "hi", "thanks", "explain", "what", "tell"}),
 }
 
+SEMANTIC_TASK_PROTOTYPES: dict[str, tuple[str, ...]] = {
+    "coding": (
+        "build a utility to parse records and validate data",
+        "write program logic and implement function behavior",
+        "diagnose runtime failure and repair broken code",
+        "improve query performance and optimize implementation",
+        "create script for data processing automation",
+        "iterate rows in a comma separated file and flag malformed records",
+    ),
+    "thinking": (
+        "compare competing approaches and justify recommendation",
+        "evaluate alternatives and reason through tradeoffs",
+        "analyze strategy options and pick a direction",
+        "assess strengths weaknesses and decision criteria",
+        "walk through architecture choices and implications",
+    ),
+    "instruction_following": (
+        "tighten wording while preserving original meaning",
+        "revise paragraph to sound professional and clear",
+        "clean up writing style and improve readability",
+        "rephrase content without changing intent",
+        "transform text into concise polished language",
+    ),
+    "general": (
+        "ask for factual information",
+        "general conversation and lightweight help",
+        "simple greeting or broad explanation request",
+    ),
+}
+
+_SEMANTIC_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "how",
+        "i",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "we",
+        "what",
+        "with",
+        "you",
+        "your",
+    }
+)
+
 _SECONDARY_TOKEN_PATTERN = re.compile(r"[a-z0-9_+#.-]+")
 _CODE_SYMBOL_PATTERN = re.compile(r"[{}();<>]")
 _CODE_LINE_PATTERN = re.compile(
@@ -391,6 +457,265 @@ def _secondary_task_prediction(text_lower: str) -> tuple[str, float, dict[str, f
     return top_task, max(0.0, confidence), scores
 
 
+def _normalize_semantic_token(token: str) -> str:
+    normalized = token.lower().strip()
+    if not normalized or normalized in _SEMANTIC_STOPWORDS:
+        return ""
+    if len(normalized) <= 2:
+        return ""
+    if normalized.endswith("ies") and len(normalized) > 4:
+        normalized = normalized[:-3] + "y"
+    elif normalized.endswith("ing") and len(normalized) > 5:
+        normalized = normalized[:-3]
+    elif normalized.endswith("ed") and len(normalized) > 4:
+        normalized = normalized[:-2]
+    elif normalized.endswith("es") and len(normalized) > 4:
+        normalized = normalized[:-2]
+    elif normalized.endswith("s") and len(normalized) > 3:
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _semantic_token_set(text_lower: str) -> set[str]:
+    tokens = set()
+    for raw in _SECONDARY_TOKEN_PATTERN.findall(text_lower):
+        normalized = _normalize_semantic_token(raw)
+        if normalized:
+            tokens.add(normalized)
+    return tokens
+
+
+@lru_cache(maxsize=1)
+def _semantic_prototype_tokens() -> dict[str, set[str]]:
+    prototype_tokens: dict[str, set[str]] = {}
+    for task, phrases in SEMANTIC_TASK_PROTOTYPES.items():
+        task_tokens: set[str] = set()
+        for phrase in phrases:
+            task_tokens.update(_semantic_token_set(phrase.lower()))
+        prototype_tokens[task] = task_tokens
+    return prototype_tokens
+
+
+def _semantic_task_prediction_prototype(
+    text_lower: str,
+) -> tuple[str, float, dict[str, float]]:
+    query_tokens = _semantic_token_set(text_lower)
+    if not query_tokens:
+        return "general", 0.0, {"general": 0.05}
+
+    prototype_tokens = _semantic_prototype_tokens()
+    scores: dict[str, float] = {
+        "general": 0.05,
+        "coding": 0.0,
+        "thinking": 0.0,
+        "instruction_following": 0.0,
+    }
+    for task, task_tokens in prototype_tokens.items():
+        if not task_tokens:
+            continue
+        overlap = len(query_tokens.intersection(task_tokens))
+        if overlap <= 0:
+            continue
+        coverage = overlap / max(1.0, float(len(query_tokens)))
+        relevance = overlap / max(1.0, float(len(task_tokens)))
+        scores[task] += (coverage * 1.4) + (relevance * 0.9)
+
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_task, top_score = ordered[0]
+    second_score = ordered[1][1] if len(ordered) > 1 else 0.0
+    confidence = (top_score - second_score) / max(1.0, top_score)
+    return top_task, max(0.0, confidence), scores
+
+
+@lru_cache(maxsize=4)
+def _load_local_embedding_runtime(
+    model_name: str,
+    local_files_only: bool,
+) -> tuple[Any, Any, Any] | None:
+    try:
+        import torch  # type: ignore
+        from transformers import AutoModel, AutoTokenizer  # type: ignore
+    except ImportError:
+        return None
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+        )
+        model = AutoModel.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+        )
+        model.eval()
+    except Exception:
+        return None
+    return tokenizer, model, torch
+
+
+@lru_cache(maxsize=4096)
+def _local_embedding_for_text(
+    *,
+    model_name: str,
+    local_files_only: bool,
+    max_length: int,
+    text: str,
+) -> tuple[float, ...] | None:
+    runtime = _load_local_embedding_runtime(
+        model_name=model_name,
+        local_files_only=local_files_only,
+    )
+    if runtime is None:
+        return None
+    tokenizer, model, torch = runtime
+
+    encoded = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=max_length,
+    )
+    with torch.no_grad():
+        outputs = model(**encoded)
+        hidden = outputs.last_hidden_state
+        attention_mask = encoded["attention_mask"].unsqueeze(-1)
+        masked = hidden * attention_mask
+        summed = masked.sum(dim=1)
+        counts = attention_mask.sum(dim=1).clamp(min=1)
+        pooled = summed / counts
+        normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
+    values = normalized[0].detach().cpu().tolist()
+    return tuple(float(value) for value in values)
+
+
+def _mean_normalized_vector(vectors: list[tuple[float, ...]]) -> tuple[float, ...] | None:
+    if not vectors:
+        return None
+    dimensions = len(vectors[0])
+    if dimensions <= 0:
+        return None
+    if any(len(vector) != dimensions for vector in vectors):
+        return None
+
+    sums = [0.0] * dimensions
+    for vector in vectors:
+        for idx, value in enumerate(vector):
+            sums[idx] += value
+    count = float(len(vectors))
+    mean = [value / count for value in sums]
+    norm = sum(value * value for value in mean) ** 0.5
+    if norm <= 1e-12:
+        return None
+    return tuple(value / norm for value in mean)
+
+
+def _cosine_similarity(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    if len(a) != len(b) or not a:
+        return 0.0
+    return sum(left * right for left, right in zip(a, b))
+
+
+@lru_cache(maxsize=16)
+def _local_semantic_task_vectors(
+    *,
+    model_name: str,
+    local_files_only: bool,
+    max_length: int,
+) -> dict[str, tuple[float, ...]] | None:
+    vectors: dict[str, tuple[float, ...]] = {}
+    for task, phrases in SEMANTIC_TASK_PROTOTYPES.items():
+        phrase_vectors: list[tuple[float, ...]] = []
+        for phrase in phrases:
+            embedded = _local_embedding_for_text(
+                model_name=model_name,
+                local_files_only=local_files_only,
+                max_length=max_length,
+                text=phrase.lower(),
+            )
+            if embedded is not None:
+                phrase_vectors.append(embedded)
+        task_vector = _mean_normalized_vector(phrase_vectors)
+        if task_vector is None:
+            return None
+        vectors[task] = task_vector
+    return vectors
+
+
+def _semantic_task_prediction_local(
+    *,
+    text_lower: str,
+    semantic_cfg: SemanticClassifierConfig,
+) -> tuple[str, float, dict[str, float]] | None:
+    if not bool(semantic_cfg.enabled):
+        return None
+    if semantic_cfg.backend != "local_embedding":
+        return None
+
+    model_name = str(semantic_cfg.local_model_name or "").strip()
+    if not model_name:
+        return None
+
+    query_vector = _local_embedding_for_text(
+        model_name=model_name,
+        local_files_only=bool(semantic_cfg.local_files_only),
+        max_length=max(16, int(semantic_cfg.local_max_length)),
+        text=text_lower,
+    )
+    if query_vector is None:
+        return None
+
+    task_vectors = _local_semantic_task_vectors(
+        model_name=model_name,
+        local_files_only=bool(semantic_cfg.local_files_only),
+        max_length=max(16, int(semantic_cfg.local_max_length)),
+    )
+    if task_vectors is None:
+        return None
+
+    scores: dict[str, float] = {
+        "general": 0.05,
+        "coding": 0.0,
+        "thinking": 0.0,
+        "instruction_following": 0.0,
+    }
+    for task, task_vector in task_vectors.items():
+        cosine = _cosine_similarity(query_vector, task_vector)
+        score = (cosine + 1.0) / 2.0
+        scores[task] = max(scores.get(task, 0.0), float(score))
+
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_task, top_score = ordered[0]
+    second_score = ordered[1][1] if len(ordered) > 1 else 0.0
+    confidence = (top_score - second_score) / max(0.1, top_score)
+    return top_task, max(0.0, confidence), scores
+
+
+def _semantic_task_prediction(
+    *,
+    text_lower: str,
+    semantic_cfg: SemanticClassifierConfig | None,
+) -> tuple[str, float, dict[str, float], str, str | None]:
+    if semantic_cfg is not None and semantic_cfg.enabled:
+        local_prediction = _semantic_task_prediction_local(
+            text_lower=text_lower,
+            semantic_cfg=semantic_cfg,
+        )
+        if local_prediction is not None:
+            task, confidence, scores = local_prediction
+            return task, confidence, scores, "local_embedding", None
+        task, confidence, scores = _semantic_task_prediction_prototype(text_lower)
+        return (
+            task,
+            confidence,
+            scores,
+            "prototype",
+            "local_embedding_unavailable",
+        )
+
+    task, confidence, scores = _semantic_task_prediction_prototype(text_lower)
+    return task, confidence, scores, "prototype", None
+
+
 def _collect_structural_code_signals(
     text_blob: str, text_lower: str
 ) -> tuple[list[str], float]:
@@ -525,8 +850,20 @@ def _select_task_from_scores(
     instruction_score: int,
     reasoning_effort: str | None,
     medium_max_chars: int,
+    semantic_task: str,
+    semantic_confidence: float,
+    semantic_scores: dict[str, float],
+    semantic_min_confidence: float,
     calibration_cfg: ClassifierCalibrationConfig,
-) -> tuple[str, str, float, bool, dict[str, float], float | None]:
+) -> tuple[
+    str,
+    str,
+    float,
+    bool,
+    dict[str, float],
+    float | None,
+    bool,
+]:
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     top_task, top_score = ordered[0]
     second_score = ordered[1][1] if len(ordered) > 1 else 0.0
@@ -535,6 +872,7 @@ def _select_task_from_scores(
     secondary_used = False
     secondary_scores: dict[str, float] = {}
     secondary_confidence: float | None = None
+    semantic_used = False
 
     if top_task == "instruction_following" and text_length > medium_max_chars:
         for candidate_task, _ in ordered[1:]:
@@ -555,6 +893,28 @@ def _select_task_from_scores(
         elif instruction_score >= 1 and text_length <= medium_max_chars:
             top_task = "instruction_following"
             reason = "low_confidence_instruction_override"
+
+    semantic_override_allowed = (
+        semantic_task != "general"
+        and semantic_confidence >= semantic_min_confidence
+        and not (semantic_task == "instruction_following" and text_length > medium_max_chars)
+    )
+    if semantic_override_allowed and (
+        confidence < 0.45
+        or top_task == "general"
+        or (
+            top_task == "instruction_following"
+            and semantic_task in {"coding", "thinking"}
+            and text_length > medium_max_chars
+        )
+    ):
+        semantic_top = semantic_scores.get(semantic_task, 0.0)
+        current_top = semantic_scores.get(top_task, 0.0)
+        if semantic_top >= current_top:
+            top_task = semantic_task
+            reason = "semantic_classifier_override"
+            confidence = max(confidence, semantic_confidence)
+            semantic_used = True
 
     secondary_trigger = confidence < 0.45 or _contains_any(
         text_lower, SECONDARY_INSTRUCTION_HINTS
@@ -606,6 +966,7 @@ def _select_task_from_scores(
         secondary_used,
         secondary_scores,
         secondary_confidence,
+        semantic_used,
     )
 
 
@@ -614,6 +975,7 @@ def classify_request(
     endpoint: str,
     complexity_cfg: ComplexityConfig,
     calibration_cfg: ClassifierCalibrationConfig | None = None,
+    semantic_cfg: SemanticClassifierConfig | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     effective_calibration_cfg = calibration_cfg or ClassifierCalibrationConfig()
     signals: dict[str, Any] = {"has_image": False}
@@ -687,6 +1049,18 @@ def classify_request(
         payload=payload,
     )
     task_confidence = 1.0
+    effective_semantic_cfg = semantic_cfg or SemanticClassifierConfig()
+    (
+        semantic_task,
+        semantic_task_confidence,
+        semantic_task_scores,
+        semantic_classifier_source,
+        semantic_classifier_status,
+    ) = _semantic_task_prediction(
+        text_lower=text_lower,
+        semantic_cfg=effective_semantic_cfg,
+    )
+    semantic_classifier_used = False
     secondary_classifier_used = False
     secondary_task_scores: dict[str, float] = {}
     secondary_task_confidence: float | None = None
@@ -704,6 +1078,7 @@ def classify_request(
             secondary_classifier_used,
             secondary_task_scores,
             secondary_task_confidence,
+            semantic_classifier_used,
         ) = _select_task_from_scores(
             scores=task_scores,
             text_lower=text_lower,
@@ -713,6 +1088,12 @@ def classify_request(
             instruction_score=instruction_score,
             reasoning_effort=reasoning_effort,
             medium_max_chars=complexity_cfg.medium_max_chars,
+            semantic_task=semantic_task,
+            semantic_confidence=semantic_task_confidence,
+            semantic_scores=semantic_task_scores,
+            semantic_min_confidence=max(
+                0.0, float(effective_semantic_cfg.min_confidence)
+            ),
             calibration_cfg=effective_calibration_cfg,
         )
         (
@@ -771,6 +1152,15 @@ def classify_request(
             "task_confidence": round(task_confidence, 6),
             "task_scores": {
                 name: round(score, 6) for name, score in sorted(task_scores.items())
+            },
+            "semantic_task_prediction": semantic_task,
+            "semantic_classifier_used": semantic_classifier_used,
+            "semantic_classifier_source": semantic_classifier_source,
+            "semantic_classifier_status": semantic_classifier_status,
+            "semantic_task_confidence": round(semantic_task_confidence, 6),
+            "semantic_task_scores": {
+                name: round(score, 6)
+                for name, score in sorted(semantic_task_scores.items())
             },
             "secondary_classifier_used": secondary_classifier_used,
             "secondary_min_confidence_low": float(

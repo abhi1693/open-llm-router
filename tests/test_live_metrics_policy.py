@@ -127,6 +127,108 @@ def test_runtime_policy_updater_applies_bounded_adjustments() -> None:
     asyncio.run(_run())
 
 
+def test_runtime_policy_updater_adapts_feature_weights_for_unstable_runtime() -> None:
+    async def _run() -> None:
+        config = RoutingConfig.model_validate(
+            {
+                "default_model": "m1",
+                "task_routes": {"general": {"default": "m1"}},
+                "learned_routing": {
+                    "enabled": True,
+                    "feature_weights": {
+                        "complexity_score": 1.2,
+                        "reasoning_effort_high": 1.0,
+                        "task_coding": 0.8,
+                    },
+                },
+                "model_profiles": {
+                    "m1": {
+                        "latency_ms": 1000.0,
+                        "failure_rate": 0.02,
+                    }
+                },
+            }
+        )
+        store = InMemoryLiveMetricsStore(alpha=1.0)
+
+        for _ in range(12):
+            await store.record_response("m1", status=500, request_latency_ms=2500.0)
+
+        updater = RuntimePolicyUpdater(
+            routing_config=config,
+            metrics_store=store,
+            enabled=True,
+            interval_seconds=60.0,
+            min_samples=10,
+            max_adjustment_ratio=0.2,
+            overrides_path=None,
+        )
+
+        adjusted = await updater.run_once()
+        assert adjusted >= 1
+        weights = config.learned_routing.feature_weights
+        assert weights["complexity_score"] < 1.2
+        assert weights["reasoning_effort_high"] < 1.0
+        # Task indicators remain stable; adaptation targets cross-cutting features.
+        assert weights["task_coding"] == pytest.approx(0.8)
+        assert updater.status.last_feature_weight_adjusted_count >= 1
+        assert updater.status.last_feature_weight_scale is not None
+        assert updater.status.last_feature_weight_scale < 1.0
+
+    asyncio.run(_run())
+
+
+def test_runtime_policy_updater_restores_feature_weights_toward_baseline() -> None:
+    async def _run() -> None:
+        config = RoutingConfig.model_validate(
+            {
+                "default_model": "m1",
+                "task_routes": {"general": {"default": "m1"}},
+                "learned_routing": {
+                    "enabled": True,
+                    "feature_weights": {
+                        "complexity_score": 1.2,
+                    },
+                },
+                "model_profiles": {
+                    "m1": {
+                        "latency_ms": 1000.0,
+                        "failure_rate": 0.02,
+                    }
+                },
+            }
+        )
+        store = InMemoryLiveMetricsStore(alpha=1.0)
+
+        for _ in range(12):
+            await store.record_response("m1", status=500, request_latency_ms=2500.0)
+
+        updater = RuntimePolicyUpdater(
+            routing_config=config,
+            metrics_store=store,
+            enabled=True,
+            interval_seconds=60.0,
+            min_samples=10,
+            max_adjustment_ratio=0.2,
+            overrides_path=None,
+        )
+
+        await updater.run_once()
+        after_unstable = config.learned_routing.feature_weights["complexity_score"]
+        assert after_unstable < 1.2
+
+        for _ in range(12):
+            await store.record_response("m1", status=200, request_latency_ms=700.0)
+
+        await updater.run_once()
+        after_recovery = config.learned_routing.feature_weights["complexity_score"]
+        assert after_recovery > after_unstable
+        assert after_recovery <= 1.2
+        assert updater.status.last_feature_weight_scale == pytest.approx(1.0)
+
+    asyncio.run(_run())
+
+
 def test_live_metrics_collector_tracks_target_dimension_metrics() -> None:
     async def _run() -> None:
         store = InMemoryLiveMetricsStore(alpha=0.5)
@@ -458,3 +560,44 @@ def test_apply_runtime_overrides_updates_model_profiles(tmp_path: Path) -> None:
     assert config.model_profiles["m1"].failure_rate == 0.03
     assert config.model_profiles["m2"].latency_ms == 400.0
     assert config.model_profiles["m2"].failure_rate == 0.02
+
+
+def test_apply_runtime_overrides_updates_learned_feature_weights(tmp_path: Path) -> None:
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "m1",
+            "task_routes": {"general": {"default": "m1"}},
+            "learned_routing": {
+                "enabled": True,
+                "feature_weights": {
+                    "complexity_score": 1.2,
+                    "reasoning_effort_high": 1.0,
+                },
+            },
+        }
+    )
+
+    overrides_path = tmp_path / "router.runtime.overrides.yaml"
+    payload = {
+        "learned_routing": {
+            "feature_weights": {
+                "complexity_score": 0.95,
+                "reasoning_effort_high": 0.72,
+            }
+        }
+    }
+    with overrides_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(payload, handle, sort_keys=False)
+
+    applied = apply_runtime_overrides(
+        path=str(overrides_path),
+        routing_config=config,
+    )
+
+    assert applied == 0
+    assert config.learned_routing.feature_weights["complexity_score"] == pytest.approx(
+        0.95
+    )
+    assert config.learned_routing.feature_weights[
+        "reasoning_effort_high"
+    ] == pytest.approx(0.72)
