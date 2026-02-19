@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from functools import lru_cache
-import json
 from math import log, sqrt
 from threading import Lock
 from typing import Any, Iterator

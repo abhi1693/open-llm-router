@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi.testclient import TestClient
 import yaml
+from fastapi.testclient import TestClient
 
 from open_llm_router.main import app
 from open_llm_router.settings import get_settings
