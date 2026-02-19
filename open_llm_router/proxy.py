@@ -2204,282 +2204,10 @@ class OAuthStateManager:
         return None
 
 
-class BackendProxy:
-    def __init__(
-        self,
-        base_url: str,
-        timeout_seconds: float,
-        backend_api_key: str | None,
-        retry_statuses: list[int],
-        accounts: list[BackendAccount] | None = None,
-        model_registry: dict[str, dict[str, Any]] | None = None,
-        audit_hook: Callable[[dict[str, Any]], None] | None = None,
-        circuit_breakers: CircuitBreakerRegistry | None = None,
-        oauth_state_persistence_path: str | Path | None = None,
-        connect_timeout_seconds: float | None = None,
-        read_timeout_seconds: float | None = None,
-        write_timeout_seconds: float | None = None,
-        pool_timeout_seconds: float | None = None,
-    ) -> None:
-        self.retry_statuses = set(retry_statuses)
-        connect_timeout = (
-            max(0.1, float(connect_timeout_seconds))
-            if connect_timeout_seconds is not None
-            else max(0.1, min(5.0, timeout_seconds))
-        )
-        read_timeout = (
-            max(0.1, float(read_timeout_seconds))
-            if read_timeout_seconds is not None
-            else max(0.1, float(timeout_seconds))
-        )
-        write_timeout = (
-            max(0.1, float(write_timeout_seconds))
-            if write_timeout_seconds is not None
-            else max(0.1, float(timeout_seconds))
-        )
-        pool_timeout = (
-            max(0.1, float(pool_timeout_seconds))
-            if pool_timeout_seconds is not None
-            else connect_timeout
-        )
-        http2_enabled = _can_enable_http2()
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                timeout=None,
-                connect=connect_timeout,
-                read=read_timeout,
-                write=write_timeout,
-                pool=pool_timeout,
-            ),
-            limits=httpx.Limits(max_connections=512, max_keepalive_connections=128),
-            http2=http2_enabled,
-        )
-        self._oauth_runtime: dict[str, OAuthRuntimeState] = {}
-        self._oauth_refresh_locks: dict[str, asyncio.Lock] = {}
-        self._oauth_persistence_lock = asyncio.Lock()
-        self._oauth_state_persistence_path = (
-            Path(oauth_state_persistence_path)
-            if oauth_state_persistence_path is not None
-            else None
-        )
-        self._oauth_state_manager = OAuthStateManager(
-            oauth_runtime=self._oauth_runtime,
-            oauth_refresh_locks=self._oauth_refresh_locks,
-            oauth_persistence_lock=self._oauth_persistence_lock,
-            oauth_state_persistence_path=self._oauth_state_persistence_path,
-            client_getter=lambda: self.client,
-        )
-        self._model_registry = model_registry or {}
-        self._model_registry_resolver = ModelRegistryResolver(
-            model_registry=self._model_registry
-        )
-        self._target_selection_policy = TargetSelectionPolicy(
-            target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata
-        )
-        self._audit_hook = audit_hook
-        self._circuit_breakers = circuit_breakers
-        self._rate_limited_until: dict[str, float] = {}
-        self._rate_limit_tracker = RateLimitTracker(
-            rate_limited_until=self._rate_limited_until,
-            audit_emitter=lambda event, fields: self._audit(event, **fields),
-        )
-        if accounts:
-            self.accounts = [account for account in accounts if account.enabled]
-        else:
-            self.accounts = [
-                BackendAccount(
-                    name="default",
-                    provider="default",
-                    base_url=base_url,
-                    api_key=backend_api_key,
-                    models=[],
-                    enabled=True,
-                )
-            ]
-
-    async def close(self) -> None:
-        await self.client.aclose()
-
-    def _resolve_model_metadata(
-        self, account: BackendAccount, model: str
-    ) -> dict[str, Any]:
-        return self._model_registry_resolver.resolve_model_metadata(account, model)
-
-    def _resolve_upstream_model(
-        self,
-        account: BackendAccount,
-        model: str,
+class ChatCompletionsResponseAdapter:
+    @staticmethod
+    async def to_chat_completions_response(
         *,
-        metadata: dict[str, Any] | None = None,
-    ) -> str:
-        return self._model_registry_resolver.resolve_upstream_model(
-            account, model, metadata=metadata
-        )
-
-    def _audit(self, event: str, **fields: Any) -> None:
-        if self._audit_hook is None:
-            return
-        try:
-            self._audit_hook({"event": event, **fields})
-        except Exception as exc:
-            logger.debug("audit_write_failed event=%s error=%s", event, exc)
-
-    async def forward_with_fallback(
-        self,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Headers,
-        route_decision: RouteDecision,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Response:
-        return await ProxyRequestExecutor(proxy=self).execute(
-            path=path,
-            payload=payload,
-            incoming_headers=incoming_headers,
-            route_decision=route_decision,
-            stream=stream,
-            request_id=request_id,
-        )
-
-    @staticmethod
-    async def _to_fastapi_response(
-        upstream: httpx.Response,
-        stream: bool,
-        upstream_stream: bool,
-        target: BackendTarget,
-        attempted_targets: list[str],
-        attempted_upstream_models: list[str],
-        request_latency_ms: float,
-        route_decision: RouteDecision,
-        request_id: str,
-        adapter: Literal["passthrough", "chat_completions"],
-        audit_hook: Callable[[dict[str, Any]], None] | None,
-    ) -> Response:
-        return await ProxyResponseAdapter.to_fastapi_response(
-            upstream=upstream,
-            stream=stream,
-            upstream_stream=upstream_stream,
-            target=target,
-            attempted_targets=attempted_targets,
-            attempted_upstream_models=attempted_upstream_models,
-            request_latency_ms=request_latency_ms,
-            route_decision=route_decision,
-            request_id=request_id,
-            adapter=adapter,
-            audit_hook=audit_hook,
-        )
-
-    @staticmethod
-    async def _iter_sse_data_json(
-        upstream: httpx.Response,
-    ) -> AsyncIterator[dict[str, Any]]:
-        try:
-            async for line in upstream.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                payload = line[5:].strip()
-                if not payload or payload == "[DONE]":
-                    continue
-                try:
-                    parsed = json.loads(payload)
-                except ValueError:
-                    continue
-                if isinstance(parsed, dict):
-                    yield parsed
-        except httpx.RequestError as exc:
-            upstream_url = "<unknown>"
-            try:
-                upstream_url = str(upstream.request.url)
-            except Exception:
-                pass
-            logger.warning(
-                "proxy_upstream_stream_error url=%s error=%s",
-                upstream_url,
-                exc,
-            )
-
-    @staticmethod
-    def _chat_completion_chunk(
-        completion_id: str,
-        created: int,
-        model: str,
-        delta: dict[str, Any],
-        finish_reason: str | None = None,
-    ) -> bytes:
-        chunk = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": delta,
-                    "finish_reason": finish_reason,
-                }
-            ],
-        }
-        return f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n".encode("utf-8")
-
-    @staticmethod
-    def _chat_completion_tool_call_chunk(
-        completion_id: str,
-        created: int,
-        model: str,
-        *,
-        index: int,
-        call_id: str | None = None,
-        name: str | None = None,
-        arguments: str | None = None,
-    ) -> bytes:
-        function_delta: dict[str, Any] = {}
-        if name is not None:
-            function_delta["name"] = name
-        if arguments is not None:
-            function_delta["arguments"] = arguments
-
-        tool_call_delta: dict[str, Any] = {
-            "index": index,
-            "function": function_delta,
-        }
-        if call_id is not None:
-            tool_call_delta["id"] = call_id
-            tool_call_delta["type"] = "function"
-
-        return BackendProxy._chat_completion_chunk(
-            completion_id=completion_id,
-            created=created,
-            model=model,
-            delta={"tool_calls": [tool_call_delta]},
-            finish_reason=None,
-        )
-
-    @staticmethod
-    def _tool_call_debug_summary(
-        tool_calls: list[dict[str, Any]],
-        max_items: int = 3,
-        max_args_chars: int = 240,
-    ) -> list[dict[str, Any]]:
-        summary: list[dict[str, Any]] = []
-        for call in tool_calls[:max_items]:
-            function = call.get("function") if isinstance(call, dict) else None
-            if not isinstance(function, dict):
-                function = {}
-            arguments = function.get("arguments")
-            if not isinstance(arguments, str):
-                arguments = ""
-            summary.append(
-                {
-                    "id": call.get("id") if isinstance(call, dict) else None,
-                    "name": function.get("name"),
-                    "arguments_preview": arguments[:max_args_chars],
-                }
-            )
-        return summary
-
-    @staticmethod
-    async def _to_chat_completions_response(
         upstream: httpx.Response,
         stream: bool,
         response_headers: dict[str, str],
@@ -2954,6 +2682,301 @@ class BackendProxy:
             status_code=upstream.status_code,
             content=response_body,
             headers=response_headers,
+        )
+
+
+class BackendProxy:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: float,
+        backend_api_key: str | None,
+        retry_statuses: list[int],
+        accounts: list[BackendAccount] | None = None,
+        model_registry: dict[str, dict[str, Any]] | None = None,
+        audit_hook: Callable[[dict[str, Any]], None] | None = None,
+        circuit_breakers: CircuitBreakerRegistry | None = None,
+        oauth_state_persistence_path: str | Path | None = None,
+        connect_timeout_seconds: float | None = None,
+        read_timeout_seconds: float | None = None,
+        write_timeout_seconds: float | None = None,
+        pool_timeout_seconds: float | None = None,
+    ) -> None:
+        self.retry_statuses = set(retry_statuses)
+        connect_timeout = (
+            max(0.1, float(connect_timeout_seconds))
+            if connect_timeout_seconds is not None
+            else max(0.1, min(5.0, timeout_seconds))
+        )
+        read_timeout = (
+            max(0.1, float(read_timeout_seconds))
+            if read_timeout_seconds is not None
+            else max(0.1, float(timeout_seconds))
+        )
+        write_timeout = (
+            max(0.1, float(write_timeout_seconds))
+            if write_timeout_seconds is not None
+            else max(0.1, float(timeout_seconds))
+        )
+        pool_timeout = (
+            max(0.1, float(pool_timeout_seconds))
+            if pool_timeout_seconds is not None
+            else connect_timeout
+        )
+        http2_enabled = _can_enable_http2()
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                timeout=None,
+                connect=connect_timeout,
+                read=read_timeout,
+                write=write_timeout,
+                pool=pool_timeout,
+            ),
+            limits=httpx.Limits(max_connections=512, max_keepalive_connections=128),
+            http2=http2_enabled,
+        )
+        self._oauth_runtime: dict[str, OAuthRuntimeState] = {}
+        self._oauth_refresh_locks: dict[str, asyncio.Lock] = {}
+        self._oauth_persistence_lock = asyncio.Lock()
+        self._oauth_state_persistence_path = (
+            Path(oauth_state_persistence_path)
+            if oauth_state_persistence_path is not None
+            else None
+        )
+        self._oauth_state_manager = OAuthStateManager(
+            oauth_runtime=self._oauth_runtime,
+            oauth_refresh_locks=self._oauth_refresh_locks,
+            oauth_persistence_lock=self._oauth_persistence_lock,
+            oauth_state_persistence_path=self._oauth_state_persistence_path,
+            client_getter=lambda: self.client,
+        )
+        self._model_registry = model_registry or {}
+        self._model_registry_resolver = ModelRegistryResolver(
+            model_registry=self._model_registry
+        )
+        self._target_selection_policy = TargetSelectionPolicy(
+            target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata
+        )
+        self._audit_hook = audit_hook
+        self._circuit_breakers = circuit_breakers
+        self._rate_limited_until: dict[str, float] = {}
+        self._rate_limit_tracker = RateLimitTracker(
+            rate_limited_until=self._rate_limited_until,
+            audit_emitter=lambda event, fields: self._audit(event, **fields),
+        )
+        if accounts:
+            self.accounts = [account for account in accounts if account.enabled]
+        else:
+            self.accounts = [
+                BackendAccount(
+                    name="default",
+                    provider="default",
+                    base_url=base_url,
+                    api_key=backend_api_key,
+                    models=[],
+                    enabled=True,
+                )
+            ]
+
+    async def close(self) -> None:
+        await self.client.aclose()
+
+    def _resolve_model_metadata(
+        self, account: BackendAccount, model: str
+    ) -> dict[str, Any]:
+        return self._model_registry_resolver.resolve_model_metadata(account, model)
+
+    def _resolve_upstream_model(
+        self,
+        account: BackendAccount,
+        model: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        return self._model_registry_resolver.resolve_upstream_model(
+            account, model, metadata=metadata
+        )
+
+    def _audit(self, event: str, **fields: Any) -> None:
+        if self._audit_hook is None:
+            return
+        try:
+            self._audit_hook({"event": event, **fields})
+        except Exception as exc:
+            logger.debug("audit_write_failed event=%s error=%s", event, exc)
+
+    async def forward_with_fallback(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Headers,
+        route_decision: RouteDecision,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Response:
+        return await ProxyRequestExecutor(proxy=self).execute(
+            path=path,
+            payload=payload,
+            incoming_headers=incoming_headers,
+            route_decision=route_decision,
+            stream=stream,
+            request_id=request_id,
+        )
+
+    @staticmethod
+    async def _to_fastapi_response(
+        upstream: httpx.Response,
+        stream: bool,
+        upstream_stream: bool,
+        target: BackendTarget,
+        attempted_targets: list[str],
+        attempted_upstream_models: list[str],
+        request_latency_ms: float,
+        route_decision: RouteDecision,
+        request_id: str,
+        adapter: Literal["passthrough", "chat_completions"],
+        audit_hook: Callable[[dict[str, Any]], None] | None,
+    ) -> Response:
+        return await ProxyResponseAdapter.to_fastapi_response(
+            upstream=upstream,
+            stream=stream,
+            upstream_stream=upstream_stream,
+            target=target,
+            attempted_targets=attempted_targets,
+            attempted_upstream_models=attempted_upstream_models,
+            request_latency_ms=request_latency_ms,
+            route_decision=route_decision,
+            request_id=request_id,
+            adapter=adapter,
+            audit_hook=audit_hook,
+        )
+
+    @staticmethod
+    async def _iter_sse_data_json(
+        upstream: httpx.Response,
+    ) -> AsyncIterator[dict[str, Any]]:
+        try:
+            async for line in upstream.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                try:
+                    parsed = json.loads(payload)
+                except ValueError:
+                    continue
+                if isinstance(parsed, dict):
+                    yield parsed
+        except httpx.RequestError as exc:
+            upstream_url = "<unknown>"
+            try:
+                upstream_url = str(upstream.request.url)
+            except Exception:
+                pass
+            logger.warning(
+                "proxy_upstream_stream_error url=%s error=%s",
+                upstream_url,
+                exc,
+            )
+
+    @staticmethod
+    def _chat_completion_chunk(
+        completion_id: str,
+        created: int,
+        model: str,
+        delta: dict[str, Any],
+        finish_reason: str | None = None,
+    ) -> bytes:
+        chunk = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                }
+            ],
+        }
+        return f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n".encode("utf-8")
+
+    @staticmethod
+    def _chat_completion_tool_call_chunk(
+        completion_id: str,
+        created: int,
+        model: str,
+        *,
+        index: int,
+        call_id: str | None = None,
+        name: str | None = None,
+        arguments: str | None = None,
+    ) -> bytes:
+        function_delta: dict[str, Any] = {}
+        if name is not None:
+            function_delta["name"] = name
+        if arguments is not None:
+            function_delta["arguments"] = arguments
+
+        tool_call_delta: dict[str, Any] = {
+            "index": index,
+            "function": function_delta,
+        }
+        if call_id is not None:
+            tool_call_delta["id"] = call_id
+            tool_call_delta["type"] = "function"
+
+        return BackendProxy._chat_completion_chunk(
+            completion_id=completion_id,
+            created=created,
+            model=model,
+            delta={"tool_calls": [tool_call_delta]},
+            finish_reason=None,
+        )
+
+    @staticmethod
+    def _tool_call_debug_summary(
+        tool_calls: list[dict[str, Any]],
+        max_items: int = 3,
+        max_args_chars: int = 240,
+    ) -> list[dict[str, Any]]:
+        summary: list[dict[str, Any]] = []
+        for call in tool_calls[:max_items]:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict):
+                function = {}
+            arguments = function.get("arguments")
+            if not isinstance(arguments, str):
+                arguments = ""
+            summary.append(
+                {
+                    "id": call.get("id") if isinstance(call, dict) else None,
+                    "name": function.get("name"),
+                    "arguments_preview": arguments[:max_args_chars],
+                }
+            )
+        return summary
+
+    @staticmethod
+    async def _to_chat_completions_response(
+        upstream: httpx.Response,
+        stream: bool,
+        response_headers: dict[str, str],
+        model: str,
+        request_id: str,
+        audit_hook: Callable[[dict[str, Any]], None] | None,
+        routing_diagnostics: dict[str, Any],
+    ) -> Response:
+        return await ChatCompletionsResponseAdapter.to_chat_completions_response(
+            upstream=upstream,
+            stream=stream,
+            response_headers=response_headers,
+            model=model,
+            request_id=request_id,
+            audit_hook=audit_hook,
+            routing_diagnostics=routing_diagnostics,
         )
 
     def _build_candidate_targets(
