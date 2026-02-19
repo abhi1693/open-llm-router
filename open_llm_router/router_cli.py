@@ -40,6 +40,10 @@ GEMINI_APIKEY_DEFAULT_MODELS = "gemini/gemini-2.5-flash,gemini/gemini-2.5-flash-
 GEMINI_APIKEY_DEFAULT_KEY_ENV = "GEMINI_API_KEY"
 NVIDIA_APIKEY_DEFAULT_MODELS = "nvidia/z-ai/glm5,nvidia/moonshotai/kimi-k2.5"
 NVIDIA_APIKEY_DEFAULT_KEY_ENV = "NVIDIA_API_KEY"
+GITHUB_APIKEY_DEFAULT_MODELS = (
+    "github/openai/gpt-4.1,github/openai/gpt-4.1-mini,github/meta/Llama-3.3-70B-Instruct"
+)
+GITHUB_APIKEY_DEFAULT_KEY_ENV = "GITHUB_TOKEN"
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -265,6 +269,8 @@ def _normalize_provider_alias(provider: str) -> str:
         return "gemini"
     if normalized in {"nim", "nvidia-nim", "nvidia-ai"}:
         return "nvidia"
+    if normalized in {"github-models", "githubmodels", "gh-models", "ghmodels", "gh"}:
+        return "github"
     return normalized
 
 
@@ -369,7 +375,7 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
     if provider == "openai" and kind is None:
         raise ValueError("For provider 'openai', use --kind chatgpt or --kind apikey.")
 
-    if provider in {"gemini", "nvidia"}:
+    if provider in {"gemini", "nvidia", "github"}:
         kind = kind or "apikey"
         if kind != "apikey":
             raise ValueError(
@@ -431,9 +437,15 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
             models_csv = args.models or NVIDIA_APIKEY_DEFAULT_MODELS
             api_key_env = args.api_key_env or NVIDIA_APIKEY_DEFAULT_KEY_ENV
             mapped_provider = "nvidia"
+        elif provider == "github":
+            account = args.name
+            models_csv = args.models or GITHUB_APIKEY_DEFAULT_MODELS
+            api_key_env = args.api_key_env or GITHUB_APIKEY_DEFAULT_KEY_ENV
+            mapped_provider = "github"
         else:
             raise ValueError(
-                f"Unsupported provider '{provider}'. Supported: openai, gemini, nvidia."
+                "Unsupported provider "
+                f"'{provider}'. Supported: openai, gemini, nvidia, github."
             )
 
         models = _qualify_models(mapped_provider, _parse_models_csv(models_csv))
@@ -580,14 +592,15 @@ def build_parser() -> argparse.ArgumentParser:
             "'router provider login openai --kind chatgpt', "
             "'router provider login openai --kind apikey', "
             "'router provider login gemini' (defaults to apikey), "
-            "'router provider login nvidia' (defaults to apikey)."
+            "'router provider login nvidia' (defaults to apikey), "
+            "'router provider login github' (defaults to apikey)."
         ),
     )
     provider_login_cmd.add_argument(
         "provider",
         help=(
-            "Provider id: openai, gemini, or nvidia "
-            "(gemeni/gemini and nim/nvidia aliases supported)."
+            "Provider id: openai, gemini, nvidia, or github "
+            "(gemeni/gemini, nim/nvidia, and github-models/github aliases supported)."
         ),
     )
     provider_login_cmd.add_argument(

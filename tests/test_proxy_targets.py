@@ -1628,6 +1628,46 @@ def test_prepare_upstream_request_sanitizes_gemini_chat_payload() -> None:
     assert "parallel_tool_calls" not in prepared.payload
 
 
+def test_prepare_upstream_request_maps_github_chat_payload_to_inference_endpoint() -> None:
+    payload = {
+        "model": "openai/gpt-4.1-mini",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+        "max_output_tokens": 256,
+    }
+
+    prepared = _prepare_upstream_request(
+        path="/v1/chat/completions",
+        payload=payload,
+        provider="github",
+        stream=True,
+    )
+
+    assert prepared.path == "/inference/chat/completions"
+    assert prepared.stream is True
+    assert prepared.payload["model"] == "openai/gpt-4.1-mini"
+    assert prepared.payload["messages"] == [{"role": "user", "content": "Hello"}]
+    assert prepared.payload["max_tokens"] == 256
+
+
+def test_prepare_upstream_request_keeps_github_responses_passthrough() -> None:
+    payload = {
+        "model": "openai/gpt-4.1",
+        "input": [{"role": "user", "content": "Hello"}],
+    }
+
+    prepared = _prepare_upstream_request(
+        path="/v1/responses",
+        payload=payload,
+        provider="github",
+        stream=False,
+    )
+
+    assert prepared.path == "/v1/responses"
+    assert prepared.stream is False
+    assert prepared.payload == payload
+
+
 def test_prepare_upstream_request_keeps_nvidia_chat_payload_passthrough() -> None:
     payload = {
         "model": "z-ai/glm5",

@@ -727,3 +727,648 @@ models:
     general: 0.55
     instruction_following: 0.45
     image: -0.9
+- id: openai/gpt-4.1
+  provider: github
+  aliases:
+  - gpt-4.1
+  - openai/gpt-4.1
+  costs:
+    input_per_1k: 0.002
+    output_per_1k: 0.008
+  priors:
+    quality_bias: 0.7
+    quality_sensitivity: 2.0
+    latency_ms: 1000
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.65
+    thinking: 0.9
+    general: 0.75
+    instruction_following: 0.6
+    image: -0.7
+  created: 1744651385
+- id: openai/gpt-4.1-mini
+  provider: github
+  aliases:
+  - gpt-4.1-mini
+  - openai/gpt-4.1-mini
+  costs:
+    input_per_1k: 0.0004
+    output_per_1k: 0.0016
+  priors:
+    quality_bias: 0.58
+    quality_sensitivity: 1.6
+    latency_ms: 820
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.45
+    thinking: 0.5
+    general: 0.72
+    instruction_following: 0.7
+    image: -0.8
+  created: 1744651381
+- id: meta/Llama-3.3-70B-Instruct
+  provider: github
+  aliases:
+  - llama-3.3-70b-instruct
+  - meta/llama-3.3-70b-instruct
+  - meta/Llama-3.3-70B-Instruct
+  - github/meta/llama-3.3-70b-instruct
+  - github/meta/Llama-3.3-70B-Instruct
+  costs:
+    input_per_1k: 0.0001
+    output_per_1k: 0.00032
+  priors:
+    quality_bias: 0.56
+    quality_sensitivity: 1.55
+    latency_ms: 860
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.52
+    thinking: 0.58
+    general: 0.74
+    instruction_following: 0.68
+    image: -0.8
+  created: 1733506137
+- id: ai21-labs/AI21-Jamba-1.5-Large
+  provider: github
+  aliases:
+  - ai21-labs/AI21-Jamba-1.5-Large
+  - AI21-Jamba-1.5-Large
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.6
+    quality_sensitivity: 1.7
+    latency_ms: 900
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.48
+    thinking: 0.55
+    general: 0.76
+    instruction_following: 0.7
+    image: -0.8
+- id: microsoft/Phi-4-reasoning
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.7
+    quality_sensitivity: 1.95
+    latency_ms: 980
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.6
+    thinking: 0.9
+    general: 0.72
+    instruction_following: 0.62
+    image: -0.7
+- id: microsoft/Phi-4-multimodal-instruct
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.64
+    quality_sensitivity: 1.75
+    latency_ms: 950
+    failure_rate: 0.03
+  metadata_preset: vision_ctx1048576_out8192
+  tier: balanced
+  type: multimodal
+  task_affinity:
+    coding: 0.5
+    thinking: 0.62
+    general: 0.78
+    instruction_following: 0.72
+    image: 1.0
+- id: microsoft/Phi-4-mini-reasoning
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.7
+    latency_ms: 840
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out4096
+  tier: economy
+  type: reasoning
+  task_affinity:
+    coding: 0.55
+    thinking: 0.82
+    general: 0.72
+    instruction_following: 0.66
+    image: -0.7
+- id: microsoft/Phi-4-mini-instruct
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.56
+    quality_sensitivity: 1.55
+    latency_ms: 780
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.5
+    thinking: 0.58
+    general: 0.74
+    instruction_following: 0.7
+    image: -0.8
+- id: microsoft/Phi-4
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.7
+    latency_ms: 860
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.54
+    thinking: 0.64
+    general: 0.76
+    instruction_following: 0.7
+    image: -0.8
+- id: openai/o4-mini
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.72
+    quality_sensitivity: 2.05
+    latency_ms: 920
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.62
+    thinking: 0.9
+    general: 0.74
+    instruction_following: 0.64
+    image: -0.7
+- id: openai/o3-mini
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.68
+    quality_sensitivity: 1.9
+    latency_ms: 860
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: economy
+  type: reasoning
+  task_affinity:
+    coding: 0.58
+    thinking: 0.86
+    general: 0.72
+    instruction_following: 0.62
+    image: -0.7
+- id: openai/o3
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.76
+    quality_sensitivity: 2.2
+    latency_ms: 1050
+    failure_rate: 0.03
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: premium
+  type: reasoning
+  task_affinity:
+    coding: 0.66
+    thinking: 0.94
+    general: 0.76
+    instruction_following: 0.66
+    image: -0.7
+- id: openai/o1-preview
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.72
+    quality_sensitivity: 2.05
+    latency_ms: 1120
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: premium
+  type: reasoning
+  task_affinity:
+    coding: 0.6
+    thinking: 0.9
+    general: 0.72
+    instruction_following: 0.62
+    image: -0.7
+- id: openai/o1-mini
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.64
+    quality_sensitivity: 1.75
+    latency_ms: 900
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out4096
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.56
+    thinking: 0.82
+    general: 0.7
+    instruction_following: 0.62
+    image: -0.7
+- id: openai/o1
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.74
+    quality_sensitivity: 2.1
+    latency_ms: 1080
+    failure_rate: 0.03
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: premium
+  type: reasoning
+  task_affinity:
+    coding: 0.64
+    thinking: 0.92
+    general: 0.74
+    instruction_following: 0.64
+    image: -0.7
+- id: openai/gpt-5-nano
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.6
+    quality_sensitivity: 1.65
+    latency_ms: 700
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out4096
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.48
+    thinking: 0.54
+    general: 0.75
+    instruction_following: 0.72
+    image: -0.8
+- id: openai/gpt-5-mini
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.66
+    quality_sensitivity: 1.85
+    latency_ms: 840
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.58
+    thinking: 0.84
+    general: 0.74
+    instruction_following: 0.68
+    image: -0.7
+- id: openai/gpt-5-chat
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.7
+    quality_sensitivity: 1.95
+    latency_ms: 900
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.56
+    thinking: 0.68
+    general: 0.8
+    instruction_following: 0.75
+    image: -0.8
+- id: openai/gpt-5
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.78
+    quality_sensitivity: 2.25
+    latency_ms: 1100
+    failure_rate: 0.03
+  metadata_preset: reasoning_tools_ctx200000_out16384
+  tier: premium
+  type: reasoning
+  task_affinity:
+    coding: 0.66
+    thinking: 0.94
+    general: 0.78
+    instruction_following: 0.68
+    image: -0.7
+- id: openai/gpt-4o-mini
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.58
+    quality_sensitivity: 1.55
+    latency_ms: 760
+    failure_rate: 0.03
+  metadata_preset: vision_ctx1048576_out8192
+  tier: economy
+  type: multimodal
+  task_affinity:
+    coding: 0.46
+    thinking: 0.54
+    general: 0.78
+    instruction_following: 0.74
+    image: 1.0
+- id: openai/gpt-4o
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.68
+    quality_sensitivity: 1.9
+    latency_ms: 900
+    failure_rate: 0.03
+  metadata_preset: vision_ctx1048576_out8192
+  tier: balanced
+  type: multimodal
+  task_affinity:
+    coding: 0.52
+    thinking: 0.64
+    general: 0.8
+    instruction_following: 0.76
+    image: 1.0
+- id: openai/gpt-4.1-nano
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.52
+    quality_sensitivity: 1.4
+    latency_ms: 680
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out4096
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.44
+    thinking: 0.5
+    general: 0.72
+    instruction_following: 0.7
+    image: -0.8
+- id: meta/Meta-Llama-3.1-8B-Instruct
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.52
+    quality_sensitivity: 1.45
+    latency_ms: 740
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.46
+    thinking: 0.52
+    general: 0.72
+    instruction_following: 0.7
+    image: -0.8
+- id: meta/Meta-Llama-3.1-405B-Instruct
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.7
+    quality_sensitivity: 1.95
+    latency_ms: 1100
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: premium
+  type: text
+  task_affinity:
+    coding: 0.58
+    thinking: 0.68
+    general: 0.78
+    instruction_following: 0.74
+    image: -0.8
+- id: meta/Llama-4-Scout-17B-16E-Instruct
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.7
+    latency_ms: 860
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.52
+    thinking: 0.6
+    general: 0.76
+    instruction_following: 0.72
+    image: -0.8
+- id: cohere/Cohere-command-r-plus-08-2024
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.66
+    quality_sensitivity: 1.85
+    latency_ms: 920
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.5
+    thinking: 0.62
+    general: 0.78
+    instruction_following: 0.76
+    image: -0.8
+- id: cohere/Cohere-command-r-08-2024
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.6
+    quality_sensitivity: 1.65
+    latency_ms: 840
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.48
+    thinking: 0.58
+    general: 0.76
+    instruction_following: 0.74
+    image: -0.8
+- id: cohere/cohere-command-a
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.58
+    quality_sensitivity: 1.6
+    latency_ms: 820
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.46
+    thinking: 0.56
+    general: 0.75
+    instruction_following: 0.74
+    image: -0.8
+- id: mistral-ai/mistral-small-2503
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.58
+    quality_sensitivity: 1.6
+    latency_ms: 800
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.5
+    thinking: 0.58
+    general: 0.75
+    instruction_following: 0.72
+    image: -0.8
+- id: mistral-ai/Codestral-2501
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.62
+    quality_sensitivity: 1.75
+    latency_ms: 860
+    failure_rate: 0.03
+  metadata_preset: code_ctx128000_out4096
+  tier: balanced
+  type: coding
+  task_affinity:
+    coding: 1.0
+    thinking: 0.64
+    general: 0.56
+    instruction_following: 0.48
+    image: -0.9
+- id: mistral-ai/mistral-medium-2505
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.64
+    quality_sensitivity: 1.8
+    latency_ms: 900
+    failure_rate: 0.03
+  metadata_preset: chat_ctx128000_out8192
+  tier: balanced
+  type: text
+  task_affinity:
+    coding: 0.54
+    thinking: 0.64
+    general: 0.77
+    instruction_following: 0.74
+    image: -0.8
+- id: mistral-ai/Ministral-3B
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.5
+    quality_sensitivity: 1.35
+    latency_ms: 700
+    failure_rate: 0.03
+  metadata_preset: chat_ctx32768_out4096
+  tier: economy
+  type: text
+  task_affinity:
+    coding: 0.4
+    thinking: 0.46
+    general: 0.7
+    instruction_following: 0.68
+    image: -0.8
+- id: deepseek/DeepSeek-V3-0324
+  provider: github
+  costs:
+    input_per_1k: 0.0
+    output_per_1k: 0.0
+  priors:
+    quality_bias: 0.66
+    quality_sensitivity: 1.9
+    latency_ms: 940
+    failure_rate: 0.03
+  metadata_preset: reasoning_ctx128000_out8192
+  tier: balanced
+  type: reasoning
+  task_affinity:
+    coding: 0.62
+    thinking: 0.88
+    general: 0.74
+    instruction_following: 0.64
+    image: -0.7

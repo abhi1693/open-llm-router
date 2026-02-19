@@ -53,3 +53,16 @@ providers:
     reliability_priors:
       latency_ms: 950
       failure_rate: 0.03
+
+  - id: github
+    display_name: GitHub Models
+    base_url: https://models.github.ai
+    auth_modes:
+      - api_key
+      - passthrough
+    endpoint_defaults:
+      chat_completions: /inference/chat/completions
+      responses: /inference/chat/completions
+    reliability_priors:
+      latency_ms: 980
+      failure_rate: 0.03

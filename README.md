@@ -137,7 +137,12 @@ router provider login gemini --name gemini-work --api-key-env GEMINI_API_KEY
 
 # NVIDIA via API key
 router provider login nvidia --name nvidia-work --api-key-env NVIDIA_API_KEY
+
+# GitHub Models via API key/PAT
+router provider login github --name github-models-work --api-key-env GITHUB_TOKEN
 ```
+
+Note: GitHub Models is currently wired for `/v1/chat/completions` forwarding.
 
 ### 5. Run the API server
 
@@ -388,6 +393,7 @@ router explain-route --task coding --complexity medium --path router.profile.yam
 router profile list
 router profile show auto
 router provider login openai --kind apikey --name openai-work
+router provider login github --name github-models-work
 router catalog sync --dry-run
 ```
 

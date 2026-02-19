@@ -668,6 +668,13 @@ def _prepare_upstream_request(
             stream=stream,
         )
 
+    if provider.strip().lower() == "github" and path == "/v1/chat/completions":
+        return UpstreamRequestSpec(
+            path="/inference/chat/completions",
+            payload=_prepare_gemini_chat_payload(payload=payload, stream=stream),
+            stream=stream,
+        )
+
     return UpstreamRequestSpec(path=path, payload=payload, stream=stream)
 
 

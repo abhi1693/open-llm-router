@@ -214,6 +214,31 @@ def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path: Any) -> None:
     assert "nvidia/moonshotai/kimi-k2.5" in account["models"]
 
 
+def test_router_provider_login_github_defaults_to_apikey(tmp_path: Any) -> None:
+    profile_path = tmp_path / "router.profile.yaml"
+    assert (
+        main(
+            [
+                "provider",
+                "login",
+                "github",
+                "--name",
+                "github-work",
+                "--path",
+                str(profile_path),
+            ]
+        )
+        == 0
+    )
+    payload = _load(profile_path)
+    account = payload["accounts"][0]
+    assert account["provider"] == "github"
+    assert account["auth_mode"] == "api_key"
+    assert account["api_key_env"] == "GITHUB_TOKEN"
+    assert "github/openai/gpt-4.1" in account["models"]
+    assert "github/openai/gpt-4.1-mini" in account["models"]
+
+
 def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path: Any) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert (
@@ -304,6 +329,27 @@ def test_router_provider_login_accepts_nim_alias(tmp_path: Any) -> None:
     payload = _load(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "nvidia"
+
+
+def test_router_provider_login_accepts_github_models_alias(tmp_path: Any) -> None:
+    profile_path = tmp_path / "router.profile.yaml"
+    assert (
+        main(
+            [
+                "provider",
+                "login",
+                "github-models",
+                "--name",
+                "github-work-2",
+                "--path",
+                str(profile_path),
+            ]
+        )
+        == 0
+    )
+    payload = _load(profile_path)
+    account = payload["accounts"][0]
+    assert account["provider"] == "github"
 
 
 def test_provider_login_rejects_raw_schema_path(tmp_path: Any) -> None:
