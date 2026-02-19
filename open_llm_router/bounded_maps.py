@@ -36,7 +36,17 @@ class _BoundedMap(Generic[K, V]):
         return dict(self._data)
 
 
-class BoundedCounterMap(Generic[K]):
+class _BoundedMapViewMixin(Generic[K, V]):
+    _map: _BoundedMap[K, V]
+
+    def items(self) -> ItemsView[K, V]:
+        return self._map.items()
+
+    def to_dict(self) -> dict[K, V]:
+        return self._map.to_dict()
+
+
+class BoundedCounterMap(_BoundedMapViewMixin[K, int], Generic[K]):
     def __init__(self, max_keys: int):
         self._map: _BoundedMap[K, int] = _BoundedMap(max_keys=max_keys)
 
@@ -50,14 +60,8 @@ class BoundedCounterMap(Generic[K]):
         value = self._map.get(key, default)
         return int(value or 0)
 
-    def items(self) -> ItemsView[K, int]:
-        return self._map.items()
 
-    def to_dict(self) -> dict[K, int]:
-        return self._map.to_dict()
-
-
-class BoundedValueMap(Generic[K, V]):
+class BoundedValueMap(_BoundedMapViewMixin[K, V], Generic[K, V]):
     def __init__(self, max_keys: int):
         self._map: _BoundedMap[K, V] = _BoundedMap(max_keys=max_keys)
 
@@ -68,14 +72,8 @@ class BoundedValueMap(Generic[K, V]):
         value = self._map.get(key, default)
         return value if value is not None else default
 
-    def items(self) -> ItemsView[K, V]:
-        return self._map.items()
 
-    def to_dict(self) -> dict[K, V]:
-        return self._map.to_dict()
-
-
-class BoundedDequeMap(Generic[K, T]):
+class BoundedDequeMap(_BoundedMapViewMixin[K, deque[T]], Generic[K, T]):
     def __init__(self, *, max_keys: int, window_size: int):
         self._window_size = max(1, int(window_size))
         self._map: _BoundedMap[K, deque[T]] = _BoundedMap(max_keys=max_keys)
@@ -87,9 +85,3 @@ class BoundedDequeMap(Generic[K, T]):
         bucket.append(value)
         self._map.set(key, bucket)
         return bucket
-
-    def items(self) -> ItemsView[K, deque[T]]:
-        return self._map.items()
-
-    def to_dict(self) -> dict[K, deque[T]]:
-        return self._map.to_dict()

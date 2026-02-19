@@ -904,10 +904,12 @@ class ProxyResponseAdapter:
         )
 
 
-class ProxyAttemptProcessor:
+class _ProxyComponent:
     def __init__(self, *, proxy: BackendProxy) -> None:
         self._proxy = proxy
 
+
+class ProxyAttemptProcessor(_ProxyComponent):
     def routing_exhausted_response(
         self,
         *,
@@ -1233,10 +1235,7 @@ class ProxyAttemptProcessor:
         return True
 
 
-class ProxyPreflightPlanner:
-    def __init__(self, *, proxy: BackendProxy) -> None:
-        self._proxy = proxy
-
+class ProxyPreflightPlanner(_ProxyComponent):
     def prepare_candidate_targets(
         self,
         *,
@@ -1492,9 +1491,9 @@ class ProxyPreflightPlanner:
         )
 
 
-class ProxyRequestExecutor:
+class ProxyRequestExecutor(_ProxyComponent):
     def __init__(self, *, proxy: BackendProxy) -> None:
-        self._proxy = proxy
+        super().__init__(proxy=proxy)
         self._attempt_processor = ProxyAttemptProcessor(proxy=proxy)
         self._preflight_planner = ProxyPreflightPlanner(proxy=proxy)
 
@@ -2132,10 +2131,7 @@ class TargetSelectionPolicy:
         return [], rejected, requested_parameters
 
 
-class BackendTargetPlanner:
-    def __init__(self, *, proxy: BackendProxy) -> None:
-        self._proxy = proxy
-
+class BackendTargetPlanner(_ProxyComponent):
     def build_candidate_targets(
         self, route_decision: RouteDecision
     ) -> list[BackendTarget]:
