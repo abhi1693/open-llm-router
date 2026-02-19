@@ -532,3 +532,23 @@ def test_classifier_uses_recent_user_window_instead_of_full_history() -> None:
 
     assert decision.task == "general"
     assert decision.complexity == "low"
+
+
+def test_routes_single_hint_coding_intent_prompt() -> None:
+    router = _router()
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Write a Python script that validates CSV rows.",
+                }
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "coding"
+    assert decision.selected_model in {"code-7b", "code-14b", "code-32b"}
+    assert decision.signals["task_confidence"] >= 0.0

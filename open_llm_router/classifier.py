@@ -43,6 +43,41 @@ INSTRUCTION_HINTS = (
     "paraphrase",
 )
 
+CODING_ACTION_HINTS = (
+    "write",
+    "implement",
+    "build",
+    "fix",
+    "optimize",
+    "debug",
+    "refactor",
+    "create",
+)
+
+CODING_OBJECT_HINTS = (
+    "script",
+    "function",
+    "class",
+    "api",
+    "endpoint",
+    "query",
+    "sql",
+    "test",
+    "algorithm",
+)
+
+THINKING_INTENT_HINTS = (
+    "why",
+    "tradeoff",
+    "pros and cons",
+    "architecture",
+    "strategy",
+    "evaluate",
+    "compare",
+    "analyze",
+    "reason",
+)
+
 SKIP_TEXT_KEYS = {
     "model",
     "id",
@@ -112,24 +147,25 @@ def _collect_text_and_signals(
             _collect_text_and_signals(child, key, texts, signals)
 
 
-def _collect_user_message_texts(
+def _collect_message_texts(
     payload: dict[str, Any], signals: dict[str, Any]
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
-        return []
+        return [], []
 
     user_texts: list[str] = []
+    all_message_texts: list[str] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
-        role = message.get("role")
-        if not isinstance(role, str) or role.lower().strip() != "user":
-            continue
-        _collect_text_and_signals(
-            message.get("content"), "content", user_texts, signals
-        )
-    return user_texts
+        role = str(message.get("role") or "").lower().strip()
+        message_texts: list[str] = []
+        _collect_text_and_signals(message.get("content"), "content", message_texts, signals)
+        all_message_texts.extend(message_texts)
+        if role == "user":
+            user_texts.extend(message_texts)
+    return user_texts, all_message_texts
 
 
 def _scoped_user_text_blob(user_texts: list[str]) -> tuple[str, bool]:
@@ -144,17 +180,123 @@ def _scoped_user_text_blob(user_texts: list[str]) -> tuple[str, bool]:
     return trimmed_blob, True
 
 
+def _contains_any(text_lower: str, hints: tuple[str, ...]) -> bool:
+    return any(hint in text_lower for hint in hints)
+
+
+def _task_scores(
+    *,
+    text_blob: str,
+    text_lower: str,
+    text_length: int,
+    code_score: int,
+    think_score: int,
+    instruction_score: int,
+    reasoning_effort: str | None,
+    payload: dict[str, Any],
+) -> dict[str, float]:
+    coding_action = _contains_any(text_lower, CODING_ACTION_HINTS)
+    coding_object = _contains_any(text_lower, CODING_OBJECT_HINTS)
+    thinking_intent = _contains_any(text_lower, THINKING_INTENT_HINTS)
+
+    response_format = payload.get("response_format")
+    has_structured_output_hint = False
+    if isinstance(response_format, dict):
+        response_type = str(response_format.get("type") or "").strip().lower()
+        has_structured_output_hint = response_type in {"json_object", "json_schema"}
+
+    scores: dict[str, float] = {
+        "general": 0.4,
+        "coding": (float(code_score) * 1.2),
+        "thinking": (float(think_score) * 1.25),
+        "instruction_following": (float(instruction_score) * 1.25),
+    }
+    if "```" in text_blob:
+        scores["coding"] += 1.0
+    if coding_action and coding_object:
+        scores["coding"] += 1.0
+    elif coding_action or coding_object:
+        scores["coding"] += 0.4
+    if "stack trace" in text_lower:
+        scores["coding"] += 0.6
+    if payload.get("tools") or payload.get("functions"):
+        scores["coding"] += 0.2
+
+    if reasoning_effort is not None:
+        scores["thinking"] += 1.2
+    if thinking_intent:
+        scores["thinking"] += 0.7
+
+    if has_structured_output_hint:
+        scores["instruction_following"] += 0.6
+
+    if text_length <= 80:
+        scores["general"] += 0.25
+    if (
+        max(
+            scores["coding"],
+            scores["thinking"],
+            scores["instruction_following"],
+        )
+        < 0.9
+    ):
+        scores["general"] += 0.25
+
+    return scores
+
+
+def _select_task_from_scores(
+    *,
+    scores: dict[str, float],
+    text_lower: str,
+    text_length: int,
+    code_score: int,
+    instruction_score: int,
+    reasoning_effort: str | None,
+    medium_max_chars: int,
+) -> tuple[str, str, float]:
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_task, top_score = ordered[0]
+    second_score = ordered[1][1] if len(ordered) > 1 else 0.0
+    confidence = max(0.0, top_score - second_score)
+    reason = "score_top1"
+
+    if top_task == "instruction_following" and text_length > medium_max_chars:
+        for candidate_task, _ in ordered[1:]:
+            if candidate_task != "instruction_following":
+                top_task = candidate_task
+                reason = "instruction_length_guardrail"
+                break
+
+    if confidence < 0.45:
+        coding_action = _contains_any(text_lower, CODING_ACTION_HINTS)
+        coding_object = _contains_any(text_lower, CODING_OBJECT_HINTS)
+        if reasoning_effort is not None:
+            top_task = "thinking"
+            reason = "low_confidence_reasoning_effort_override"
+        elif code_score >= 1 and (coding_action or coding_object):
+            top_task = "coding"
+            reason = "low_confidence_coding_intent_override"
+        elif instruction_score >= 1 and text_length <= medium_max_chars:
+            top_task = "instruction_following"
+            reason = "low_confidence_instruction_override"
+
+    return top_task, reason, confidence
+
+
 def classify_request(
     payload: dict[str, Any],
     endpoint: str,
     complexity_cfg: ComplexityConfig,
 ) -> tuple[str, str, dict[str, Any]]:
-    texts: list[str] = []
     signals: dict[str, Any] = {"has_image": False}
-    _collect_text_and_signals(payload, "", texts, signals)
-
-    full_text_blob = " ".join(texts).strip()
-    user_texts = _collect_user_message_texts(payload, signals)
+    user_texts, message_texts = _collect_message_texts(payload, signals)
+    if message_texts:
+        full_text_blob = " ".join(message_texts).strip()
+    else:
+        texts: list[str] = []
+        _collect_text_and_signals(payload, "", texts, signals)
+        full_text_blob = " ".join(texts).strip()
     if user_texts:
         text_scope = "user_messages"
         text_blob, user_scope_truncated = _scoped_user_text_blob(user_texts)
@@ -192,21 +334,32 @@ def classify_request(
     complexity_base = complexity
     complexity_adjustments: list[str] = []
 
+    task_scores = _task_scores(
+        text_blob=text_blob,
+        text_lower=text_lower,
+        text_length=text_length,
+        code_score=code_score,
+        think_score=think_score,
+        instruction_score=instruction_score,
+        reasoning_effort=reasoning_effort,
+        payload=payload,
+    )
+    task_confidence = 1.0
+
     if endpoint.startswith("/v1/images") or signals["has_image"]:
         task = "image"
         task_reason = "image_endpoint_or_image_signal"
-    elif code_score >= 2:
-        task = "coding"
-        task_reason = "code_score>=2"
-    elif think_score >= 2 or reasoning_effort is not None:
-        task = "thinking"
-        task_reason = "think_score>=2_or_reasoning_effort_set"
-    elif instruction_score >= 1 and text_length <= complexity_cfg.medium_max_chars:
-        task = "instruction_following"
-        task_reason = "instruction_score>=1_and_length_within_medium"
+        task_scores["image"] = 1.0
     else:
-        task = "general"
-        task_reason = "default_general"
+        task, task_reason, task_confidence = _select_task_from_scores(
+            scores=task_scores,
+            text_lower=text_lower,
+            text_length=text_length,
+            code_score=code_score,
+            instruction_score=instruction_score,
+            reasoning_effort=reasoning_effort,
+            medium_max_chars=complexity_cfg.medium_max_chars,
+        )
 
     if think_score >= 2:
         complexity = _bump_complexity(complexity)
@@ -247,6 +400,10 @@ def classify_request(
             "instruction_score": instruction_score,
             "reasoning_effort": reasoning_effort,
             "task_reason": task_reason,
+            "task_confidence": round(task_confidence, 6),
+            "task_scores": {
+                name: round(score, 6) for name, score in sorted(task_scores.items())
+            },
             "complexity_base": complexity_base,
             "complexity_adjustments": complexity_adjustments,
             "complexity_final": complexity,
