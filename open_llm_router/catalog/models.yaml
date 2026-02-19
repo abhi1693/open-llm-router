@@ -452,8 +452,8 @@ models:
   aliases:
   - kimi-k2-thinking
   costs:
-    input_per_1k: 0.0004
-    output_per_1k: 0.00175
+    input_per_1k: 0.00047
+    output_per_1k: 0.002
   priors:
     quality_bias: 0.68
     quality_sensitivity: 2.0
@@ -516,8 +516,8 @@ models:
   aliases:
   - qwen3.5-397b-a17b
   costs:
-    input_per_1k: 0.0006
-    output_per_1k: 0.0036
+    input_per_1k: 0.00015
+    output_per_1k: 0.001
   priors:
     quality_bias: 0.7
     quality_sensitivity: 2.05
@@ -603,8 +603,8 @@ models:
   aliases:
   - qwen3-235b-a22b
   costs:
-    input_per_1k: 0.0003
-    output_per_1k: 0.0012
+    input_per_1k: 0.000455
+    output_per_1k: 0.00182
   priors:
     quality_bias: 0.71
     quality_sensitivity: 2.05
