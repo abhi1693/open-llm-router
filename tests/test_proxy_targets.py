@@ -768,6 +768,64 @@ def test_proxy_request_error_audit_contains_attempt_and_status_fields() -> None:
     asyncio.run(proxy.close())
 
 
+def test_proxy_upstream_connected_audit_contains_provider() -> None:
+    captured_events: list[dict[str, Any]] = []
+
+    proxy = BackendProxy(
+        base_url="http://legacy",
+        timeout_seconds=30,
+        backend_api_key="legacy-key",
+        retry_statuses=[500],
+        audit_hook=lambda event: captured_events.append(event),
+        accounts=[
+            BackendAccount(
+                name="acct-openai",
+                provider="openai",
+                base_url="http://provider-openai",
+                api_key="key-openai",
+                models=["openai/m1"],
+            ),
+        ],
+    )
+    asyncio.run(proxy.client.aclose())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            json={"ok": True},
+            request=request,
+        )
+
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=30.0
+    )
+
+    response = asyncio.run(
+        proxy.forward_with_fallback(
+            path="/v1/chat/completions",
+            payload={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            incoming_headers=Headers({"content-type": "application/json"}),
+            route_decision=_decision("openai/m1", []),
+            stream=False,
+            request_id="req-upstream-provider-audit",
+        )
+    )
+
+    assert response.status_code == 200
+    events = [
+        event
+        for event in captured_events
+        if event.get("event") == "proxy_upstream_connected"
+    ]
+    assert len(events) == 1
+    assert events[0]["provider"] == "openai"
+    asyncio.run(proxy.close())
+
+
 def test_proxy_rate_limited_audit_contains_request_context_fields() -> None:
     captured_events: list[dict[str, Any]] = []
 

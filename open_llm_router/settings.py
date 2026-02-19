@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     oauth_clock_skew_seconds: int = 30
     router_audit_log_enabled: bool = True
     router_audit_log_path: str = "logs/router_decisions.jsonl"
+    router_audit_safe_logging_enabled: bool = True
     circuit_breaker_enabled: bool = True
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout_seconds: float = 30.0

@@ -1142,6 +1142,7 @@ class BackendProxy:
                     request_id=rid,
                     target=target.label,
                     account=target.account_name,
+                    provider=target.provider,
                     model=target.model,
                     upstream_model=target.upstream_model,
                     connect_ms=round(connect_latency_ms, 3),

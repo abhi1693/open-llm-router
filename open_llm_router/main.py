@@ -406,6 +406,33 @@ def _build_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+_AUDIT_REDACTED_KEYS = {
+    "text_preview",
+    "text_preview_total",
+    "arguments_preview",
+}
+
+
+def _sanitize_audit_event(event: dict[str, Any]) -> dict[str, Any]:
+    def _sanitize_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            sanitized: dict[str, Any] = {}
+            for key, item in value.items():
+                if key in _AUDIT_REDACTED_KEYS:
+                    sanitized[key] = "[redacted]"
+                else:
+                    sanitized[key] = _sanitize_value(item)
+            return sanitized
+        if isinstance(value, list):
+            return [_sanitize_value(item) for item in value]
+        return value
+
+    sanitized_event = _sanitize_value(event)
+    if isinstance(sanitized_event, dict):
+        return cast(dict[str, Any], sanitized_event)
+    return dict(event)
+
+
 def _extract_error_type_from_response(response: Response) -> str | None:
     if not isinstance(response, JSONResponse):
         return None
@@ -904,6 +931,9 @@ async def startup() -> None:
     )
     app.state.audit_logger = audit_logger
     app.state.audit_payload_summary_enabled = bool(audit_logger.enabled)
+    app.state.audit_safe_logging_enabled = bool(
+        settings.router_audit_safe_logging_enabled
+    )
     live_metrics_store = build_live_metrics_store(
         redis_url=settings.redis_url,
         logger=logger,
@@ -921,8 +951,11 @@ async def startup() -> None:
     app.state.live_metrics_collector = live_metrics_collector
 
     def audit_event_hook(event: dict[str, Any]) -> None:
-        audit_logger.log(event)
-        live_metrics_collector.ingest(event)
+        event_payload = event
+        if bool(getattr(app.state, "audit_safe_logging_enabled", True)):
+            event_payload = _sanitize_audit_event(event)
+        audit_logger.log(event_payload)
+        live_metrics_collector.ingest(event_payload)
 
     app.state.audit_event_hook = audit_event_hook
     app.state.circuit_breakers = CircuitBreakerRegistry(
