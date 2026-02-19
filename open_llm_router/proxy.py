@@ -17,8 +17,10 @@ from starlette.datastructures import Headers
 
 from open_llm_router.circuit_breaker import CircuitBreakerRegistry
 from open_llm_router.config import BackendAccount
+from open_llm_router.model_utils import split_model_ref
 from open_llm_router.persistence import YamlFileStore
 from open_llm_router.router_engine import RouteDecision
+from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe_preserving_order
 
 HOP_BY_HOP_RESPONSE_HEADERS = {
     "connection",
@@ -1785,17 +1787,7 @@ class ModelRegistryResolver:
 
     @staticmethod
     def split_model_ref(model: str) -> tuple[str | None, str]:
-        normalized = model.strip()
-        if not normalized:
-            return None, ""
-        if "/" not in normalized:
-            return None, normalized
-        provider, model_id = normalized.split("/", 1)
-        provider = provider.strip()
-        model_id = model_id.strip()
-        if not provider or not model_id:
-            return None, normalized
-        return provider, model_id
+        return split_model_ref(model)
 
     def resolve_model_metadata(
         self, account: BackendAccount, model: str
@@ -3582,17 +3574,6 @@ class BackendProxy:
             model=model,
             upstream_model=upstream_model,
         )
-
-
-def _dedupe_preserving_order(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    output: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        output.append(value)
-    return output
 
 
 def _can_enable_http2() -> bool:

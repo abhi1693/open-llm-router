@@ -16,7 +16,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 import yaml
 
+from open_llm_router.model_utils import default_model_id as _default_model_id
 from open_llm_router.persistence import YamlFileStore
+from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
 
 DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
 DEFAULT_COMPLEXITY = {
@@ -72,13 +74,6 @@ def _qualify_models(provider: str, models: list[str]) -> list[str]:
     return [_qualify_model(provider, model) for model in models]
 
 
-def _default_model_id(model_key: str) -> str:
-    provider, sep, model_id = model_key.partition("/")
-    if sep and provider.strip() and model_id.strip():
-        return model_id.strip()
-    return model_key
-
-
 def _normalize_model_metadata(
     model_key: str, raw_metadata: dict[str, Any] | None
 ) -> dict[str, Any]:
@@ -121,17 +116,6 @@ def _coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
             )
         return normalized_models
     raise ValueError("Expected 'models' to be either a list or a mapping.")
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    output: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        output.append(value)
-    return output
 
 
 def _parse_bool(value: str) -> bool:

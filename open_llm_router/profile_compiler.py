@@ -20,6 +20,7 @@ from open_llm_router.profile_config import (
     GuardrailThresholds,
     RouterProfileConfig,
 )
+from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
 
 DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
 DEFAULT_COMPLEXITY = {
@@ -976,13 +977,3 @@ def _merge_dict(base: dict[str, Any], layer: dict[str, Any]) -> None:
             continue
         base[key] = deepcopy(value)
 
-
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    output: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        output.append(value)
-    return output

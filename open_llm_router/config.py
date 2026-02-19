@@ -7,6 +7,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from open_llm_router.model_utils import default_model_id, split_model_ref
+
 
 class ComplexityConfig(BaseModel):
     low_max_chars: int = 1200
@@ -137,17 +139,7 @@ class BackendAccount(BaseModel):
 
     @staticmethod
     def _split_model_ref(model: str) -> tuple[str | None, str]:
-        normalized = model.strip()
-        if not normalized:
-            return None, ""
-        if "/" not in normalized:
-            return None, normalized
-        provider, model_id = normalized.split("/", 1)
-        provider = provider.strip()
-        model_id = model_id.strip()
-        if not provider or not model_id:
-            return None, normalized
-        return provider, model_id
+        return split_model_ref(model)
 
     def supports_model(self, model: str) -> bool:
         def _matches_model_id(expected_model_id: str) -> bool:
@@ -292,10 +284,7 @@ class RoutingConfig(BaseModel):
 
     @staticmethod
     def _default_model_id(model_key: str) -> str:
-        provider, sep, model_id = model_key.partition("/")
-        if sep and provider.strip() and model_id.strip():
-            return model_id.strip()
-        return model_key
+        return default_model_id(model_key)
 
     @classmethod
     def _normalize_model_metadata(

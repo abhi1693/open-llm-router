@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from open_llm_router.classifier import _local_embedding_for_text, classify_request
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.scoring import ModelScore, build_routing_features, score_model
+from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe_preserving_order
 
 _CONTEXT_WINDOW_OVERFLOW_TOLERANCE = 0.10
 _HIGH_CONTEXT_SUPPLEMENT_TOKENS = 120_000
@@ -896,17 +897,6 @@ class SmartModelRouter:
             account.enabled and account.supports_model(model)
             for account in self.config.accounts
         )
-
-
-def _dedupe_preserving_order(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    output: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        output.append(value)
-    return output
 
 
 def _extract_requested_output_tokens(payload: dict[str, Any]) -> int | None:

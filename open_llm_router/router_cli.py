@@ -31,6 +31,7 @@ from open_llm_router.profile_compiler import (
 )
 from open_llm_router.profile_config import RouterProfileConfig
 from open_llm_router.scoring import build_routing_features, score_model
+from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
 
 LOGIN_CHATGPT_DEFAULT_PROVIDER = "openai-codex"
 LOGIN_CHATGPT_DEFAULT_MODELS = "gpt-5.2,gpt-5.2-codex"
@@ -350,17 +351,6 @@ def _extract_guardrail_entries(
             or context == "default_model"
         ):
             output.append(entry)
-    return output
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    output: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        output.append(value)
     return output
 
 
