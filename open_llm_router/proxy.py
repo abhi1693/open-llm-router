@@ -1309,6 +1309,314 @@ class RateLimitTracker:
             self._audit_emitter("proxy_rate_limited", fields)
 
 
+class OAuthStateManager:
+    def __init__(
+        self,
+        *,
+        oauth_runtime: dict[str, OAuthRuntimeState],
+        oauth_refresh_locks: dict[str, asyncio.Lock],
+        oauth_persistence_lock: asyncio.Lock,
+        oauth_state_persistence_path: Path | None,
+        client_getter: Callable[[], httpx.AsyncClient],
+    ) -> None:
+        self._oauth_runtime = oauth_runtime
+        self._oauth_refresh_locks = oauth_refresh_locks
+        self._oauth_persistence_lock = oauth_persistence_lock
+        self._oauth_state_persistence_path = oauth_state_persistence_path
+        self._client_getter = client_getter
+
+    async def resolve_bearer_token(self, account: BackendAccount) -> str | None:
+        if account.auth_mode == "api_key":
+            return account.resolved_api_key()
+        if account.auth_mode == "passthrough":
+            return None
+        if account.auth_mode != "oauth":
+            return account.resolved_api_key()
+
+        state = self._oauth_runtime.get(account.name)
+        if not state:
+            state = OAuthRuntimeState(
+                access_token=account.resolved_oauth_access_token() or "",
+                refresh_token=account.resolved_oauth_refresh_token(),
+                expires_at=account.resolved_oauth_expires_at(),
+                account_id=account.resolved_oauth_account_id(),
+            )
+            self._oauth_runtime[account.name] = state
+
+        if state.access_token and not _is_token_expiring(state.expires_at):
+            if not state.account_id:
+                state.account_id = _extract_chatgpt_account_id(state.access_token)
+            return state.access_token
+
+        if state.refresh_token:
+            refreshed = await self.refresh_oauth_state(account, fallback_state=state)
+            if refreshed and refreshed.access_token:
+                return refreshed.access_token
+
+        return state.access_token or None
+
+    async def refresh_oauth_state(
+        self,
+        account: BackendAccount,
+        fallback_state: OAuthRuntimeState | None = None,
+    ) -> OAuthRuntimeState | None:
+        token_url = account.effective_oauth_token_url()
+        if not token_url:
+            return fallback_state
+
+        lock = self._oauth_refresh_locks.setdefault(account.name, asyncio.Lock())
+        async with lock:
+            current = self._oauth_runtime.get(account.name) or fallback_state
+            if (
+                current
+                and current.access_token
+                and not _is_token_expiring(current.expires_at)
+            ):
+                return current
+
+            refresh_token = (
+                current.refresh_token if current else None
+            ) or account.resolved_oauth_refresh_token()
+            if not refresh_token:
+                logger.warning(
+                    "oauth_refresh_skipped account=%s reason=missing_refresh_token",
+                    account.name,
+                )
+                return current
+
+            logger.info(
+                "oauth_refresh_start account=%s token_url=%s", account.name, token_url
+            )
+            payload: dict[str, str] = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }
+            client_id = account.resolved_oauth_client_id()
+            client_secret = account.resolved_oauth_client_secret()
+            if client_id:
+                payload["client_id"] = client_id
+            if client_secret:
+                payload["client_secret"] = client_secret
+
+            try:
+                response = await self._client_getter().post(
+                    token_url,
+                    data=payload,
+                    headers={"Accept": "application/json"},
+                )
+            except httpx.RequestError:
+                logger.warning(
+                    "oauth_refresh_error account=%s reason=request_error", account.name
+                )
+                return current
+
+            if response.status_code >= 400:
+                logger.warning(
+                    "oauth_refresh_error account=%s status=%d",
+                    account.name,
+                    response.status_code,
+                )
+                return current
+
+            try:
+                body = response.json()
+            except ValueError:
+                logger.warning(
+                    "oauth_refresh_error account=%s reason=invalid_json", account.name
+                )
+                return current
+
+            raw_access = body.get("access_token")
+            access_token = str(raw_access).strip() if raw_access is not None else ""
+            if not access_token:
+                logger.warning(
+                    "oauth_refresh_error account=%s reason=missing_access_token",
+                    account.name,
+                )
+                return current
+
+            raw_refresh = body.get("refresh_token")
+            next_refresh = (
+                str(raw_refresh).strip() if raw_refresh is not None else refresh_token
+            ) or None
+            expires_at = _extract_expires_at(body)
+            if expires_at is None and current:
+                expires_at = current.expires_at
+
+            state = OAuthRuntimeState(
+                access_token=access_token,
+                refresh_token=next_refresh,
+                expires_at=expires_at,
+                account_id=_extract_chatgpt_account_id(access_token),
+            )
+            self._oauth_runtime[account.name] = state
+            await self.persist_oauth_state(account, state)
+            logger.info(
+                "oauth_refresh_success account=%s expires_at=%s",
+                account.name,
+                state.expires_at,
+            )
+            return state
+
+    async def persist_oauth_state(
+        self,
+        account: BackendAccount,
+        state: OAuthRuntimeState,
+    ) -> None:
+        config_path = self._oauth_state_persistence_path
+        if config_path is None:
+            return
+
+        # Keep env-backed fields as source of truth.
+        can_persist_access = account.oauth_access_token_env is None
+        can_persist_refresh = account.oauth_refresh_token_env is None
+        can_persist_expires = account.oauth_expires_at_env is None
+        can_persist_account_id = account.oauth_account_id_env is None
+
+        if not any(
+            (
+                can_persist_access,
+                can_persist_refresh,
+                can_persist_expires,
+                can_persist_account_id,
+            )
+        ):
+            return
+
+        async with self._oauth_persistence_lock:
+            await asyncio.to_thread(
+                self.persist_oauth_state_sync,
+                config_path,
+                account.name,
+                state,
+                can_persist_access,
+                can_persist_refresh,
+                can_persist_expires,
+                can_persist_account_id,
+            )
+
+    @staticmethod
+    def persist_oauth_state_sync(
+        config_path: Path,
+        account_name: str,
+        state: OAuthRuntimeState,
+        can_persist_access: bool,
+        can_persist_refresh: bool,
+        can_persist_expires: bool,
+        can_persist_account_id: bool,
+    ) -> None:
+        store = YamlFileStore(config_path)
+        if not store.exists():
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=config_not_found path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        try:
+            raw = store.load(default={})
+        except Exception:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=config_read_error path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        if not isinstance(raw, dict):
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=invalid_config_root path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        accounts = raw.get("accounts")
+        if not isinstance(accounts, list):
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=missing_accounts path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        entry: dict[str, Any] | None = None
+        for candidate in accounts:
+            if not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("name", "")).strip() != account_name:
+                continue
+            entry = candidate
+            break
+
+        if entry is None:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=account_not_found path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        changed = False
+
+        if can_persist_access and state.access_token:
+            if entry.get("oauth_access_token") != state.access_token:
+                entry["oauth_access_token"] = state.access_token
+                changed = True
+
+        if can_persist_refresh and state.refresh_token:
+            if entry.get("oauth_refresh_token") != state.refresh_token:
+                entry["oauth_refresh_token"] = state.refresh_token
+                changed = True
+
+        if can_persist_expires and state.expires_at is not None:
+            if entry.get("oauth_expires_at") != state.expires_at:
+                entry["oauth_expires_at"] = state.expires_at
+                changed = True
+
+        if can_persist_account_id and state.account_id:
+            if entry.get("oauth_account_id") != state.account_id:
+                entry["oauth_account_id"] = state.account_id
+                changed = True
+
+        if not changed:
+            return
+
+        try:
+            store.write(raw, sort_keys=False)
+        except Exception:
+            logger.warning(
+                "oauth_refresh_persist_skipped account=%s reason=config_write_error path=%s",
+                account_name,
+                config_path,
+            )
+            return
+
+        logger.info(
+            "oauth_refresh_persist_success account=%s path=%s",
+            account_name,
+            config_path,
+        )
+
+    def resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
+        if account.auth_mode != "oauth":
+            return None
+        runtime_state = self._oauth_runtime.get(account.name)
+        if runtime_state and runtime_state.account_id:
+            return runtime_state.account_id
+
+        configured = account.resolved_oauth_account_id()
+        if configured:
+            return configured
+
+        if runtime_state and runtime_state.access_token:
+            account_id = _extract_chatgpt_account_id(runtime_state.access_token)
+            runtime_state.account_id = account_id
+            return account_id
+        return None
+
+
 class BackendProxy:
     def __init__(
         self,
@@ -1366,6 +1674,13 @@ class BackendProxy:
             Path(oauth_state_persistence_path)
             if oauth_state_persistence_path is not None
             else None
+        )
+        self._oauth_state_manager = OAuthStateManager(
+            oauth_runtime=self._oauth_runtime,
+            oauth_refresh_locks=self._oauth_refresh_locks,
+            oauth_persistence_lock=self._oauth_persistence_lock,
+            oauth_state_persistence_path=self._oauth_state_persistence_path,
+            client_getter=lambda: self.client,
         )
         self._model_registry = model_registry or {}
         self._audit_hook = audit_hook
@@ -2524,172 +2839,22 @@ class BackendProxy:
         )
 
     async def _resolve_bearer_token(self, account: BackendAccount) -> str | None:
-        if account.auth_mode == "api_key":
-            return account.resolved_api_key()
-        if account.auth_mode == "passthrough":
-            return None
-        if account.auth_mode != "oauth":
-            return account.resolved_api_key()
-
-        state = self._oauth_runtime.get(account.name)
-        if not state:
-            state = OAuthRuntimeState(
-                access_token=account.resolved_oauth_access_token() or "",
-                refresh_token=account.resolved_oauth_refresh_token(),
-                expires_at=account.resolved_oauth_expires_at(),
-                account_id=account.resolved_oauth_account_id(),
-            )
-            self._oauth_runtime[account.name] = state
-
-        if state.access_token and not _is_token_expiring(state.expires_at):
-            if not state.account_id:
-                state.account_id = _extract_chatgpt_account_id(state.access_token)
-            return state.access_token
-
-        if state.refresh_token:
-            refreshed = await self._refresh_oauth_state(account, fallback_state=state)
-            if refreshed and refreshed.access_token:
-                return refreshed.access_token
-
-        return state.access_token or None
+        return await self._oauth_state_manager.resolve_bearer_token(account)
 
     async def _refresh_oauth_state(
         self,
         account: BackendAccount,
         fallback_state: OAuthRuntimeState | None = None,
     ) -> OAuthRuntimeState | None:
-        token_url = account.effective_oauth_token_url()
-        if not token_url:
-            return fallback_state
-
-        lock = self._oauth_refresh_locks.setdefault(account.name, asyncio.Lock())
-        async with lock:
-            current = self._oauth_runtime.get(account.name) or fallback_state
-            if (
-                current
-                and current.access_token
-                and not _is_token_expiring(current.expires_at)
-            ):
-                return current
-
-            refresh_token = (
-                current.refresh_token if current else None
-            ) or account.resolved_oauth_refresh_token()
-            if not refresh_token:
-                logger.warning(
-                    "oauth_refresh_skipped account=%s reason=missing_refresh_token",
-                    account.name,
-                )
-                return current
-
-            logger.info(
-                "oauth_refresh_start account=%s token_url=%s", account.name, token_url
-            )
-            payload: dict[str, str] = {
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            }
-            client_id = account.resolved_oauth_client_id()
-            client_secret = account.resolved_oauth_client_secret()
-            if client_id:
-                payload["client_id"] = client_id
-            if client_secret:
-                payload["client_secret"] = client_secret
-
-            try:
-                response = await self.client.post(
-                    token_url,
-                    data=payload,
-                    headers={"Accept": "application/json"},
-                )
-            except httpx.RequestError:
-                logger.warning(
-                    "oauth_refresh_error account=%s reason=request_error", account.name
-                )
-                return current
-
-            if response.status_code >= 400:
-                logger.warning(
-                    "oauth_refresh_error account=%s status=%d",
-                    account.name,
-                    response.status_code,
-                )
-                return current
-
-            try:
-                body = response.json()
-            except ValueError:
-                logger.warning(
-                    "oauth_refresh_error account=%s reason=invalid_json", account.name
-                )
-                return current
-
-            raw_access = body.get("access_token")
-            access_token = str(raw_access).strip() if raw_access is not None else ""
-            if not access_token:
-                logger.warning(
-                    "oauth_refresh_error account=%s reason=missing_access_token",
-                    account.name,
-                )
-                return current
-
-            raw_refresh = body.get("refresh_token")
-            next_refresh = (
-                str(raw_refresh).strip() if raw_refresh is not None else refresh_token
-            ) or None
-            expires_at = _extract_expires_at(body)
-            if expires_at is None and current:
-                expires_at = current.expires_at
-
-            state = OAuthRuntimeState(
-                access_token=access_token,
-                refresh_token=next_refresh,
-                expires_at=expires_at,
-                account_id=_extract_chatgpt_account_id(access_token),
-            )
-            self._oauth_runtime[account.name] = state
-            await self._persist_oauth_state(account, state)
-            logger.info(
-                "oauth_refresh_success account=%s expires_at=%s",
-                account.name,
-                state.expires_at,
-            )
-            return state
+        return await self._oauth_state_manager.refresh_oauth_state(
+            account,
+            fallback_state=fallback_state,
+        )
 
     async def _persist_oauth_state(
         self, account: BackendAccount, state: OAuthRuntimeState
     ) -> None:
-        config_path = self._oauth_state_persistence_path
-        if config_path is None:
-            return
-
-        # Keep env-backed fields as source of truth.
-        can_persist_access = account.oauth_access_token_env is None
-        can_persist_refresh = account.oauth_refresh_token_env is None
-        can_persist_expires = account.oauth_expires_at_env is None
-        can_persist_account_id = account.oauth_account_id_env is None
-
-        if not any(
-            (
-                can_persist_access,
-                can_persist_refresh,
-                can_persist_expires,
-                can_persist_account_id,
-            )
-        ):
-            return
-
-        async with self._oauth_persistence_lock:
-            await asyncio.to_thread(
-                self._persist_oauth_state_sync,
-                config_path,
-                account.name,
-                state,
-                can_persist_access,
-                can_persist_refresh,
-                can_persist_expires,
-                can_persist_account_id,
-            )
+        await self._oauth_state_manager.persist_oauth_state(account, state)
 
     @staticmethod
     def _persist_oauth_state_sync(
@@ -2701,116 +2866,18 @@ class BackendProxy:
         can_persist_expires: bool,
         can_persist_account_id: bool,
     ) -> None:
-        store = YamlFileStore(config_path)
-        if not store.exists():
-            logger.warning(
-                "oauth_refresh_persist_skipped account=%s reason=config_not_found path=%s",
-                account_name,
-                config_path,
-            )
-            return
-
-        try:
-            raw = store.load(default={})
-        except Exception:
-            logger.warning(
-                "oauth_refresh_persist_skipped account=%s reason=config_read_error path=%s",
-                account_name,
-                config_path,
-            )
-            return
-
-        if not isinstance(raw, dict):
-            logger.warning(
-                "oauth_refresh_persist_skipped account=%s reason=invalid_config_root path=%s",
-                account_name,
-                config_path,
-            )
-            return
-
-        accounts = raw.get("accounts")
-        if not isinstance(accounts, list):
-            logger.warning(
-                "oauth_refresh_persist_skipped account=%s reason=missing_accounts path=%s",
-                account_name,
-                config_path,
-            )
-            return
-
-        entry: dict[str, Any] | None = None
-        for candidate in accounts:
-            if not isinstance(candidate, dict):
-                continue
-            if str(candidate.get("name", "")).strip() != account_name:
-                continue
-            entry = candidate
-            break
-
-        if entry is None:
-            logger.warning(
-                "oauth_refresh_persist_skipped account=%s reason=account_not_found path=%s",
-                account_name,
-                config_path,
-            )
-            return
-
-        changed = False
-
-        if can_persist_access and state.access_token:
-            if entry.get("oauth_access_token") != state.access_token:
-                entry["oauth_access_token"] = state.access_token
-                changed = True
-
-        if can_persist_refresh and state.refresh_token:
-            if entry.get("oauth_refresh_token") != state.refresh_token:
-                entry["oauth_refresh_token"] = state.refresh_token
-                changed = True
-
-        if can_persist_expires and state.expires_at is not None:
-            if entry.get("oauth_expires_at") != state.expires_at:
-                entry["oauth_expires_at"] = state.expires_at
-                changed = True
-
-        if can_persist_account_id and state.account_id:
-            if entry.get("oauth_account_id") != state.account_id:
-                entry["oauth_account_id"] = state.account_id
-                changed = True
-
-        if not changed:
-            return
-
-        try:
-            store.write(raw, sort_keys=False)
-        except Exception:
-            logger.warning(
-                "oauth_refresh_persist_skipped account=%s reason=config_write_error path=%s",
-                account_name,
-                config_path,
-            )
-            return
-
-        logger.info(
-            "oauth_refresh_persist_success account=%s path=%s",
-            account_name,
+        OAuthStateManager.persist_oauth_state_sync(
             config_path,
+            account_name,
+            state,
+            can_persist_access,
+            can_persist_refresh,
+            can_persist_expires,
+            can_persist_account_id,
         )
 
     def _resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
-        if account.auth_mode != "oauth":
-            return None
-        runtime_state = self._oauth_runtime.get(account.name)
-        if runtime_state and runtime_state.account_id:
-            return runtime_state.account_id
-
-        configured = account.resolved_oauth_account_id()
-        if configured:
-            return configured
-
-        if runtime_state and runtime_state.access_token:
-            account_id = _extract_chatgpt_account_id(runtime_state.access_token)
-            runtime_state.account_id = account_id
-            return account_id
-        return None
+        return self._oauth_state_manager.resolve_oauth_account_id(account)
 
     @property
     def circuit_breakers(self) -> CircuitBreakerRegistry | None:
