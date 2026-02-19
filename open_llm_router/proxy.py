@@ -694,6 +694,559 @@ def _prepare_upstream_request(
     return UpstreamRequestSpec(path=path, payload=payload, stream=stream)
 
 
+class ProxyRequestExecutor:
+    def __init__(self, *, proxy: BackendProxy) -> None:
+        self._proxy = proxy
+
+    async def execute(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        incoming_headers: Headers,
+        route_decision: RouteDecision,
+        stream: bool,
+        request_id: str | None = None,
+    ) -> Response:
+        candidate_targets = self._proxy.build_candidate_targets(route_decision)
+        parameter_rejections: dict[str, list[str]] = {}
+        requested_parameters: list[str] = []
+        if self._proxy.requires_parameter_compatibility(
+            route_decision.provider_preferences
+        ):
+            (
+                candidate_targets,
+                parameter_rejections,
+                requested_parameters,
+            ) = self._proxy.filter_targets_by_parameter_support(
+                candidate_targets=candidate_targets,
+                payload=payload,
+            )
+        rid = request_id or "-"
+        allow_fallbacks = self._proxy.allows_fallbacks(
+            route_decision.provider_preferences
+        )
+        if not allow_fallbacks and len(candidate_targets) > 1:
+            primary_target = candidate_targets[0]
+            candidate_targets = [primary_target]
+            self._proxy.audit(
+                "proxy_fallbacks_disabled",
+                request_id=rid,
+                selected_model=primary_target.model,
+                primary_target=primary_target.label,
+            )
+        effective_model_chain = _dedupe_preserving_order(
+            [target.model for target in candidate_targets]
+        )
+        effective_selected_model = (
+            effective_model_chain[0]
+            if effective_model_chain
+            else route_decision.selected_model
+        )
+        effective_fallback_models = (
+            effective_model_chain[1:] if effective_model_chain else []
+        )
+        request_started = time.perf_counter()
+        logger.info(
+            (
+                "proxy_start request_id=%s path=%s selected_model=%s stream=%s "
+                "candidate_targets=%d"
+            ),
+            rid,
+            path,
+            effective_selected_model,
+            stream,
+            len(candidate_targets),
+        )
+        self._proxy.audit(
+            "proxy_start",
+            request_id=rid,
+            path=path,
+            selected_model=effective_selected_model,
+            source=route_decision.source,
+            task=route_decision.task,
+            complexity=route_decision.complexity,
+            requested_model=route_decision.requested_model,
+            fallback_models=effective_fallback_models,
+            provider_preferences=route_decision.provider_preferences,
+            stream=stream,
+            candidate_targets=len(candidate_targets),
+        )
+        if parameter_rejections:
+            self._proxy.audit(
+                "proxy_parameter_compatibility_filter",
+                request_id=rid,
+                requested_parameters=requested_parameters,
+                rejections=parameter_rejections,
+            )
+        if (
+            self._proxy.requires_parameter_compatibility(
+                route_decision.provider_preferences
+            )
+            and not candidate_targets
+        ):
+            logger.warning(
+                "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
+                rid,
+                ",".join(requested_parameters),
+            )
+            self._proxy.audit(
+                "proxy_require_parameters_no_target",
+                request_id=rid,
+                requested_parameters=requested_parameters,
+                rejections=parameter_rejections,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "type": "routing_constraints_unsatisfied",
+                        "message": (
+                            "No provider/account targets satisfy require_parameters constraints."
+                        ),
+                        "constraint": "require_parameters",
+                        "details": {
+                            "requested_parameters": requested_parameters,
+                            "rejections": parameter_rejections,
+                        },
+                    }
+                },
+            )
+        if (
+            self._proxy.has_provider_filters(route_decision.provider_preferences)
+            and not candidate_targets
+        ):
+            only = self._proxy.normalized_provider_filter_values(
+                route_decision.provider_preferences.get("only")
+            )
+            ignore = self._proxy.normalized_provider_filter_values(
+                route_decision.provider_preferences.get("ignore")
+            )
+            logger.warning(
+                "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
+                rid,
+                ",".join(only),
+                ",".join(ignore),
+            )
+            self._proxy.audit(
+                "proxy_provider_filters_no_target",
+                request_id=rid,
+                selected_model=route_decision.selected_model,
+                fallback_models=route_decision.fallback_models,
+                only=only,
+                ignore=ignore,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "type": "routing_constraints_unsatisfied",
+                        "message": (
+                            "No provider/account targets satisfy provider only/ignore constraints."
+                        ),
+                        "constraint": "provider",
+                        "details": {
+                            "only": only,
+                            "ignore": ignore,
+                        },
+                    }
+                },
+            )
+        if not candidate_targets:
+            logger.warning(
+                "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
+                rid,
+                route_decision.selected_model,
+                ",".join(route_decision.fallback_models),
+            )
+            self._proxy.audit(
+                "proxy_no_target",
+                request_id=rid,
+                selected_model=route_decision.selected_model,
+                fallback_models=route_decision.fallback_models,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "error": {
+                        "type": "no_backend_target",
+                        "message": "No backend account supports the selected model set.",
+                        "selected_model": route_decision.selected_model,
+                        "fallback_models": route_decision.fallback_models,
+                    }
+                },
+            )
+
+        attempted_targets: list[str] = []
+        attempted_upstream_models: list[str] = []
+        candidate_targets_total = len(candidate_targets)
+        skipped_rate_limited = 0
+        skipped_circuit_open = 0
+        skipped_oauth_token_missing = 0
+        trial_payload = dict(payload)
+
+        for index, target in enumerate(candidate_targets):
+            breaker_key = f"{target.account_name}:{target.provider}"
+            if (
+                self._proxy.circuit_breakers is not None
+                and not self._proxy.circuit_breakers.allow_request(breaker_key)
+            ):
+                snapshot = self._proxy.circuit_breakers.snapshot(breaker_key)
+                logger.info(
+                    "proxy_skip_circuit_open request_id=%s target=%s state=%s failures=%s",
+                    rid,
+                    target.label,
+                    snapshot.get("state"),
+                    snapshot.get("failure_count"),
+                )
+                self._proxy.audit(
+                    "proxy_skip_circuit_open",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                    breaker=snapshot,
+                )
+                skipped_circuit_open += 1
+                continue
+            if self._proxy.is_temporarily_rate_limited(target.account_name):
+                logger.info(
+                    "proxy_skip_rate_limited request_id=%s target=%s",
+                    rid,
+                    target.label,
+                )
+                self._proxy.audit(
+                    "proxy_skip_rate_limited",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                )
+                skipped_rate_limited += 1
+                continue
+            attempted_targets.append(target.label)
+            attempted_upstream_models.append(target.upstream_model)
+            logger.info(
+                "proxy_attempt request_id=%s attempt=%d/%d target=%s provider=%s auth_mode=%s",
+                rid,
+                index + 1,
+                len(candidate_targets),
+                target.label,
+                target.provider,
+                target.auth_mode,
+            )
+            self._proxy.audit(
+                "proxy_attempt",
+                request_id=rid,
+                attempt=index + 1,
+                total_attempts=len(candidate_targets),
+                target=target.label,
+                account=target.account_name,
+                provider=target.provider,
+                model=target.model,
+                upstream_model=target.upstream_model,
+                auth_mode=target.auth_mode,
+            )
+            trial_payload["model"] = target.upstream_model
+            request_spec = _prepare_upstream_request(
+                path=path,
+                payload=trial_payload,
+                provider=target.provider,
+                stream=stream,
+            )
+            bearer_token = await self._proxy.resolve_bearer_token(target.account)
+            if target.auth_mode == "oauth" and not bearer_token:
+                logger.warning(
+                    "proxy_oauth_token_missing request_id=%s target=%s",
+                    rid,
+                    target.label,
+                )
+                self._proxy.audit(
+                    "proxy_oauth_token_missing",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                    upstream_model=target.upstream_model,
+                )
+                skipped_oauth_token_missing += 1
+                if index < len(candidate_targets) - 1:
+                    continue
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={
+                        "error": {
+                            "type": "oauth_credentials_unavailable",
+                            "message": (
+                                "Selected OAuth-backed target has no usable access token "
+                                "and could not refresh one."
+                            ),
+                            "attempted_targets": attempted_targets,
+                            "attempted_upstream_models": attempted_upstream_models,
+                        }
+                    },
+                )
+            headers = _build_upstream_headers(
+                incoming_headers=incoming_headers,
+                bearer_token=bearer_token,
+                provider=target.provider,
+                oauth_account_id=self._proxy.resolve_oauth_account_id(target.account),
+                organization=target.organization,
+                project=target.project,
+                stream=request_spec.stream,
+                allow_passthrough_auth=target.account.allows_passthrough_auth(),
+            )
+
+            try:
+                attempt_started = time.perf_counter()
+                request = self._proxy.client.build_request(
+                    method="POST",
+                    url=f"{target.base_url.rstrip('/')}{request_spec.path}",
+                    json=request_spec.payload,
+                    headers=headers,
+                )
+                upstream = await self._proxy.client.send(
+                    request, stream=request_spec.stream
+                )
+                connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
+                logger.info(
+                    "proxy_upstream_connected request_id=%s target=%s connect_ms=%.2f status=%d",
+                    rid,
+                    target.label,
+                    connect_latency_ms,
+                    upstream.status_code,
+                )
+                self._proxy.audit(
+                    "proxy_upstream_connected",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    provider=target.provider,
+                    model=target.model,
+                    upstream_model=target.upstream_model,
+                    connect_ms=round(connect_latency_ms, 3),
+                    status=upstream.status_code,
+                )
+            except httpx.RequestError as exc:
+                error_details = _request_error_details(exc)
+                attempt_number = index + 1
+                total_attempts = len(candidate_targets)
+                if self._proxy.circuit_breakers is not None:
+                    self._proxy.circuit_breakers.on_failure(breaker_key)
+                logger.warning(
+                    (
+                        "proxy_request_error request_id=%s target=%s "
+                        "attempt=%d/%d error_type=%s status_code=%s error=%s"
+                    ),
+                    rid,
+                    target.label,
+                    attempt_number,
+                    total_attempts,
+                    error_details["error_type"],
+                    error_details.get("status_code"),
+                    error_details["error"],
+                )
+                self._proxy.audit(
+                    "proxy_request_error",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                    upstream_model=target.upstream_model,
+                    attempt=attempt_number,
+                    total_attempts=total_attempts,
+                    attempt_latency_ms=round(
+                        (time.perf_counter() - attempt_started) * 1000.0, 3
+                    ),
+                    **error_details,
+                )
+                if index < len(candidate_targets) - 1:
+                    continue
+                return JSONResponse(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    content={
+                        "error": {
+                            "type": "upstream_connection_error",
+                            "message": (
+                                "Could not reach backend "
+                                f"({error_details['error_type']}): {error_details['error']}"
+                            ),
+                            "error_type": error_details["error_type"],
+                            "attempted_targets": attempted_targets,
+                            "attempted_upstream_models": attempted_upstream_models,
+                        }
+                    },
+                )
+
+            should_retry = (
+                upstream.status_code in self._proxy.retry_statuses
+                and index < len(candidate_targets) - 1
+            )
+            if upstream.status_code < 500 and upstream.status_code != 429:
+                if self._proxy.circuit_breakers is not None:
+                    self._proxy.circuit_breakers.on_success(breaker_key)
+            elif (
+                upstream.status_code in self._proxy.retry_statuses
+                and self._proxy.circuit_breakers is not None
+            ):
+                self._proxy.circuit_breakers.on_failure(breaker_key)
+            if upstream.status_code == 429:
+                self._proxy.mark_rate_limited(
+                    target.account_name,
+                    upstream.headers,
+                    request_id=rid,
+                    target=target.label,
+                    model=target.model,
+                    upstream_model=target.upstream_model,
+                )
+            if should_retry:
+                logger.info(
+                    "proxy_retry request_id=%s target=%s status=%d",
+                    rid,
+                    target.label,
+                    upstream.status_code,
+                )
+                self._proxy.audit(
+                    "proxy_retry",
+                    request_id=rid,
+                    target=target.label,
+                    account=target.account_name,
+                    model=target.model,
+                    upstream_model=target.upstream_model,
+                    status=upstream.status_code,
+                )
+                await upstream.aclose()
+                continue
+
+            return await BackendProxy._to_fastapi_response(
+                upstream=upstream,
+                stream=stream,
+                upstream_stream=request_spec.stream,
+                target=target,
+                attempted_targets=attempted_targets,
+                attempted_upstream_models=attempted_upstream_models,
+                request_latency_ms=round(
+                    (time.perf_counter() - request_started) * 1000.0, 3
+                ),
+                route_decision=route_decision,
+                request_id=rid,
+                adapter=request_spec.adapter,
+                audit_hook=self._proxy.audit_hook,
+            )
+
+        logger.error(
+            (
+                "proxy_exhausted request_id=%s attempted_targets=%s "
+                "candidate_targets_total=%d skipped_rate_limited=%d "
+                "skipped_circuit_open=%d skipped_oauth_token_missing=%d"
+            ),
+            rid,
+            ",".join(attempted_targets),
+            candidate_targets_total,
+            skipped_rate_limited,
+            skipped_circuit_open,
+            skipped_oauth_token_missing,
+        )
+        self._proxy.audit(
+            "proxy_exhausted",
+            request_id=rid,
+            candidate_targets_total=candidate_targets_total,
+            attempted_count=len(attempted_targets),
+            attempted_targets=attempted_targets,
+            attempted_upstream_models=attempted_upstream_models,
+            skipped_rate_limited=skipped_rate_limited,
+            skipped_circuit_open=skipped_circuit_open,
+            skipped_oauth_token_missing=skipped_oauth_token_missing,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={
+                "error": {
+                    "type": "routing_exhausted",
+                    "message": "All model/account targets failed.",
+                    "candidate_targets_total": candidate_targets_total,
+                    "attempted_count": len(attempted_targets),
+                    "attempted_targets": attempted_targets,
+                    "attempted_upstream_models": attempted_upstream_models,
+                    "skipped_rate_limited": skipped_rate_limited,
+                    "skipped_circuit_open": skipped_circuit_open,
+                    "skipped_oauth_token_missing": skipped_oauth_token_missing,
+                }
+            },
+        )
+
+
+class BackendTargetPlanner:
+    def __init__(self, *, proxy: BackendProxy) -> None:
+        self._proxy = proxy
+
+    def build_candidate_targets(
+        self, route_decision: RouteDecision
+    ) -> list[BackendTarget]:
+        if route_decision.source == "request":
+            model_chain = [route_decision.selected_model]
+        else:
+            model_chain = _dedupe_preserving_order(
+                [route_decision.selected_model, *route_decision.fallback_models]
+            )
+        provider_preferences = route_decision.provider_preferences or {}
+        partition = self._proxy.provider_partition_mode(provider_preferences)
+        grouped_targets: list[list[BackendTarget]] = []
+        for model in model_chain:
+            model_targets: list[BackendTarget] = []
+            for account in self._proxy.accounts:
+                if account.enabled and account.supports_model(model):
+                    metadata = self._proxy.resolve_model_metadata(account, model)
+                    model_targets.append(
+                        BackendTarget(
+                            account=account,
+                            account_name=account.name,
+                            provider=account.provider,
+                            base_url=account.base_url,
+                            model=model,
+                            upstream_model=self._proxy.resolve_upstream_model(
+                                account,
+                                model,
+                                metadata=metadata,
+                            ),
+                            auth_mode=account.auth_mode,
+                            organization=account.organization,
+                            project=account.project,
+                            metadata=metadata,
+                        )
+                    )
+            model_targets = self._proxy.filter_targets_by_provider_preferences(
+                model_targets=model_targets,
+                provider_preferences=provider_preferences,
+            )
+            grouped_targets.append(model_targets)
+
+        if (
+            route_decision.source != "request"
+            and self._proxy.allows_fallbacks(provider_preferences)
+        ):
+            grouped_targets = self._proxy.prioritize_model_groups_by_rate_limit(
+                grouped_targets
+            )
+
+        if partition == "none":
+            flattened_targets = [target for group in grouped_targets for target in group]
+            sorted_targets = self._proxy.sort_model_targets(
+                model_targets=flattened_targets,
+                provider_preferences=provider_preferences,
+            )
+            return self._proxy.prioritize_targets_by_rate_limit(sorted_targets)
+
+        targets: list[BackendTarget] = []
+        for model_targets in grouped_targets:
+            sorted_targets = self._proxy.sort_model_targets(
+                model_targets=model_targets,
+                provider_preferences=provider_preferences,
+            )
+            targets.extend(self._proxy.prioritize_targets_by_rate_limit(sorted_targets))
+        return targets
+
+
 class BackendProxy:
     def __init__(
         self,
@@ -853,463 +1406,13 @@ class BackendProxy:
         stream: bool,
         request_id: str | None = None,
     ) -> Response:
-        candidate_targets = self._build_candidate_targets(route_decision)
-        parameter_rejections: dict[str, list[str]] = {}
-        requested_parameters: list[str] = []
-        if self._requires_parameter_compatibility(route_decision.provider_preferences):
-            (
-                candidate_targets,
-                parameter_rejections,
-                requested_parameters,
-            ) = self._filter_targets_by_parameter_support(
-                candidate_targets=candidate_targets,
-                payload=payload,
-            )
-        rid = request_id or "-"
-        allow_fallbacks = self._allows_fallbacks(route_decision.provider_preferences)
-        if not allow_fallbacks and len(candidate_targets) > 1:
-            primary_target = candidate_targets[0]
-            candidate_targets = [primary_target]
-            self._audit(
-                "proxy_fallbacks_disabled",
-                request_id=rid,
-                selected_model=primary_target.model,
-                primary_target=primary_target.label,
-            )
-        effective_model_chain = _dedupe_preserving_order(
-            [target.model for target in candidate_targets]
-        )
-        effective_selected_model = (
-            effective_model_chain[0]
-            if effective_model_chain
-            else route_decision.selected_model
-        )
-        effective_fallback_models = (
-            effective_model_chain[1:] if effective_model_chain else []
-        )
-        request_started = time.perf_counter()
-        logger.info(
-            (
-                "proxy_start request_id=%s path=%s selected_model=%s stream=%s "
-                "candidate_targets=%d"
-            ),
-            rid,
-            path,
-            effective_selected_model,
-            stream,
-            len(candidate_targets),
-        )
-        self._audit(
-            "proxy_start",
-            request_id=rid,
+        return await ProxyRequestExecutor(proxy=self).execute(
             path=path,
-            selected_model=effective_selected_model,
-            source=route_decision.source,
-            task=route_decision.task,
-            complexity=route_decision.complexity,
-            requested_model=route_decision.requested_model,
-            fallback_models=effective_fallback_models,
-            provider_preferences=route_decision.provider_preferences,
+            payload=payload,
+            incoming_headers=incoming_headers,
+            route_decision=route_decision,
             stream=stream,
-            candidate_targets=len(candidate_targets),
-        )
-        if parameter_rejections:
-            self._audit(
-                "proxy_parameter_compatibility_filter",
-                request_id=rid,
-                requested_parameters=requested_parameters,
-                rejections=parameter_rejections,
-            )
-        if (
-            self._requires_parameter_compatibility(route_decision.provider_preferences)
-            and not candidate_targets
-        ):
-            logger.warning(
-                "proxy_require_parameters_no_target request_id=%s requested_parameters=%s",
-                rid,
-                ",".join(requested_parameters),
-            )
-            self._audit(
-                "proxy_require_parameters_no_target",
-                request_id=rid,
-                requested_parameters=requested_parameters,
-                rejections=parameter_rejections,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": {
-                        "type": "routing_constraints_unsatisfied",
-                        "message": (
-                            "No provider/account targets satisfy require_parameters constraints."
-                        ),
-                        "constraint": "require_parameters",
-                        "details": {
-                            "requested_parameters": requested_parameters,
-                            "rejections": parameter_rejections,
-                        },
-                    }
-                },
-            )
-        if (
-            self._has_provider_filters(route_decision.provider_preferences)
-            and not candidate_targets
-        ):
-            only = self._normalized_provider_filter_values(
-                route_decision.provider_preferences.get("only")
-            )
-            ignore = self._normalized_provider_filter_values(
-                route_decision.provider_preferences.get("ignore")
-            )
-            logger.warning(
-                "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
-                rid,
-                ",".join(only),
-                ",".join(ignore),
-            )
-            self._audit(
-                "proxy_provider_filters_no_target",
-                request_id=rid,
-                selected_model=route_decision.selected_model,
-                fallback_models=route_decision.fallback_models,
-                only=only,
-                ignore=ignore,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": {
-                        "type": "routing_constraints_unsatisfied",
-                        "message": (
-                            "No provider/account targets satisfy provider only/ignore constraints."
-                        ),
-                        "constraint": "provider",
-                        "details": {
-                            "only": only,
-                            "ignore": ignore,
-                        },
-                    }
-                },
-            )
-        if not candidate_targets:
-            logger.warning(
-                "proxy_no_target request_id=%s selected_model=%s fallback_models=%s",
-                rid,
-                route_decision.selected_model,
-                ",".join(route_decision.fallback_models),
-            )
-            self._audit(
-                "proxy_no_target",
-                request_id=rid,
-                selected_model=route_decision.selected_model,
-                fallback_models=route_decision.fallback_models,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={
-                    "error": {
-                        "type": "no_backend_target",
-                        "message": "No backend account supports the selected model set.",
-                        "selected_model": route_decision.selected_model,
-                        "fallback_models": route_decision.fallback_models,
-                    }
-                },
-            )
-
-        attempted_targets: list[str] = []
-        attempted_upstream_models: list[str] = []
-        candidate_targets_total = len(candidate_targets)
-        skipped_rate_limited = 0
-        skipped_circuit_open = 0
-        skipped_oauth_token_missing = 0
-        trial_payload = dict(payload)
-
-        for index, target in enumerate(candidate_targets):
-            breaker_key = f"{target.account_name}:{target.provider}"
-            if (
-                self._circuit_breakers is not None
-                and not self._circuit_breakers.allow_request(breaker_key)
-            ):
-                snapshot = self._circuit_breakers.snapshot(breaker_key)
-                logger.info(
-                    "proxy_skip_circuit_open request_id=%s target=%s state=%s failures=%s",
-                    rid,
-                    target.label,
-                    snapshot.get("state"),
-                    snapshot.get("failure_count"),
-                )
-                self._audit(
-                    "proxy_skip_circuit_open",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    breaker=snapshot,
-                )
-                skipped_circuit_open += 1
-                continue
-            if self._is_temporarily_rate_limited(target.account_name):
-                logger.info(
-                    "proxy_skip_rate_limited request_id=%s target=%s",
-                    rid,
-                    target.label,
-                )
-                self._audit(
-                    "proxy_skip_rate_limited",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                )
-                skipped_rate_limited += 1
-                continue
-            attempted_targets.append(target.label)
-            attempted_upstream_models.append(target.upstream_model)
-            logger.info(
-                "proxy_attempt request_id=%s attempt=%d/%d target=%s provider=%s auth_mode=%s",
-                rid,
-                index + 1,
-                len(candidate_targets),
-                target.label,
-                target.provider,
-                target.auth_mode,
-            )
-            self._audit(
-                "proxy_attempt",
-                request_id=rid,
-                attempt=index + 1,
-                total_attempts=len(candidate_targets),
-                target=target.label,
-                account=target.account_name,
-                provider=target.provider,
-                model=target.model,
-                upstream_model=target.upstream_model,
-                auth_mode=target.auth_mode,
-            )
-            trial_payload["model"] = target.upstream_model
-            request_spec = _prepare_upstream_request(
-                path=path,
-                payload=trial_payload,
-                provider=target.provider,
-                stream=stream,
-            )
-            bearer_token = await self._resolve_bearer_token(target.account)
-            if target.auth_mode == "oauth" and not bearer_token:
-                logger.warning(
-                    "proxy_oauth_token_missing request_id=%s target=%s",
-                    rid,
-                    target.label,
-                )
-                self._audit(
-                    "proxy_oauth_token_missing",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                )
-                skipped_oauth_token_missing += 1
-                if index < len(candidate_targets) - 1:
-                    continue
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={
-                        "error": {
-                            "type": "oauth_credentials_unavailable",
-                            "message": (
-                                "Selected OAuth-backed target has no usable access token "
-                                "and could not refresh one."
-                            ),
-                            "attempted_targets": attempted_targets,
-                            "attempted_upstream_models": attempted_upstream_models,
-                        }
-                    },
-                )
-            headers = _build_upstream_headers(
-                incoming_headers=incoming_headers,
-                bearer_token=bearer_token,
-                provider=target.provider,
-                oauth_account_id=self._resolve_oauth_account_id(target.account),
-                organization=target.organization,
-                project=target.project,
-                stream=request_spec.stream,
-                allow_passthrough_auth=target.account.allows_passthrough_auth(),
-            )
-
-            try:
-                attempt_started = time.perf_counter()
-                request = self.client.build_request(
-                    method="POST",
-                    url=f"{target.base_url.rstrip('/')}{request_spec.path}",
-                    json=request_spec.payload,
-                    headers=headers,
-                )
-                upstream = await self.client.send(request, stream=request_spec.stream)
-                connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
-                logger.info(
-                    "proxy_upstream_connected request_id=%s target=%s connect_ms=%.2f status=%d",
-                    rid,
-                    target.label,
-                    connect_latency_ms,
-                    upstream.status_code,
-                )
-                self._audit(
-                    "proxy_upstream_connected",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    provider=target.provider,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                    connect_ms=round(connect_latency_ms, 3),
-                    status=upstream.status_code,
-                )
-            except httpx.RequestError as exc:
-                error_details = _request_error_details(exc)
-                attempt_number = index + 1
-                total_attempts = len(candidate_targets)
-                if self._circuit_breakers is not None:
-                    self._circuit_breakers.on_failure(breaker_key)
-                logger.warning(
-                    (
-                        "proxy_request_error request_id=%s target=%s "
-                        "attempt=%d/%d error_type=%s status_code=%s error=%s"
-                    ),
-                    rid,
-                    target.label,
-                    attempt_number,
-                    total_attempts,
-                    error_details["error_type"],
-                    error_details.get("status_code"),
-                    error_details["error"],
-                )
-                self._audit(
-                    "proxy_request_error",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                    attempt=attempt_number,
-                    total_attempts=total_attempts,
-                    attempt_latency_ms=round(
-                        (time.perf_counter() - attempt_started) * 1000.0, 3
-                    ),
-                    **error_details,
-                )
-                if index < len(candidate_targets) - 1:
-                    continue
-                return JSONResponse(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    content={
-                        "error": {
-                            "type": "upstream_connection_error",
-                            "message": (
-                                "Could not reach backend "
-                                f"({error_details['error_type']}): {error_details['error']}"
-                            ),
-                            "error_type": error_details["error_type"],
-                            "attempted_targets": attempted_targets,
-                            "attempted_upstream_models": attempted_upstream_models,
-                        }
-                    },
-                )
-
-            should_retry = (
-                upstream.status_code in self.retry_statuses
-                and index < len(candidate_targets) - 1
-            )
-            if upstream.status_code < 500 and upstream.status_code != 429:
-                if self._circuit_breakers is not None:
-                    self._circuit_breakers.on_success(breaker_key)
-            elif (
-                upstream.status_code in self.retry_statuses
-                and self._circuit_breakers is not None
-            ):
-                self._circuit_breakers.on_failure(breaker_key)
-            if upstream.status_code == 429:
-                self._mark_rate_limited(
-                    target.account_name,
-                    upstream.headers,
-                    request_id=rid,
-                    target=target.label,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                )
-            if should_retry:
-                logger.info(
-                    "proxy_retry request_id=%s target=%s status=%d",
-                    rid,
-                    target.label,
-                    upstream.status_code,
-                )
-                self._audit(
-                    "proxy_retry",
-                    request_id=rid,
-                    target=target.label,
-                    account=target.account_name,
-                    model=target.model,
-                    upstream_model=target.upstream_model,
-                    status=upstream.status_code,
-                )
-                await upstream.aclose()
-                continue
-
-            return await self._to_fastapi_response(
-                upstream=upstream,
-                stream=stream,
-                upstream_stream=request_spec.stream,
-                target=target,
-                attempted_targets=attempted_targets,
-                attempted_upstream_models=attempted_upstream_models,
-                request_latency_ms=round(
-                    (time.perf_counter() - request_started) * 1000.0, 3
-                ),
-                route_decision=route_decision,
-                request_id=rid,
-                adapter=request_spec.adapter,
-                audit_hook=self._audit_hook,
-            )
-
-        logger.error(
-            (
-                "proxy_exhausted request_id=%s attempted_targets=%s "
-                "candidate_targets_total=%d skipped_rate_limited=%d "
-                "skipped_circuit_open=%d skipped_oauth_token_missing=%d"
-            ),
-            rid,
-            ",".join(attempted_targets),
-            candidate_targets_total,
-            skipped_rate_limited,
-            skipped_circuit_open,
-            skipped_oauth_token_missing,
-        )
-        self._audit(
-            "proxy_exhausted",
-            request_id=rid,
-            candidate_targets_total=candidate_targets_total,
-            attempted_count=len(attempted_targets),
-            attempted_targets=attempted_targets,
-            attempted_upstream_models=attempted_upstream_models,
-            skipped_rate_limited=skipped_rate_limited,
-            skipped_circuit_open=skipped_circuit_open,
-            skipped_oauth_token_missing=skipped_oauth_token_missing,
-        )
-        return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content={
-                "error": {
-                    "type": "routing_exhausted",
-                    "message": "All model/account targets failed.",
-                    "candidate_targets_total": candidate_targets_total,
-                    "attempted_count": len(attempted_targets),
-                    "attempted_targets": attempted_targets,
-                    "attempted_upstream_models": attempted_upstream_models,
-                    "skipped_rate_limited": skipped_rate_limited,
-                    "skipped_circuit_open": skipped_circuit_open,
-                    "skipped_oauth_token_missing": skipped_oauth_token_missing,
-                }
-            },
+            request_id=request_id,
         )
 
     @staticmethod
@@ -2020,70 +2123,7 @@ class BackendProxy:
     def _build_candidate_targets(
         self, route_decision: RouteDecision
     ) -> list[BackendTarget]:
-        if route_decision.source == "request":
-            model_chain = [route_decision.selected_model]
-        else:
-            model_chain = _dedupe_preserving_order(
-                [route_decision.selected_model, *route_decision.fallback_models]
-            )
-        provider_preferences = route_decision.provider_preferences or {}
-        partition = self._provider_partition_mode(provider_preferences)
-        grouped_targets: list[list[BackendTarget]] = []
-        for model in model_chain:
-            model_targets: list[BackendTarget] = []
-            for account in self.accounts:
-                if account.enabled and account.supports_model(model):
-                    metadata = self._resolve_model_metadata(account, model)
-                    model_targets.append(
-                        BackendTarget(
-                            account=account,
-                            account_name=account.name,
-                            provider=account.provider,
-                            base_url=account.base_url,
-                            model=model,
-                            upstream_model=self._resolve_upstream_model(
-                                account,
-                                model,
-                                metadata=metadata,
-                            ),
-                            auth_mode=account.auth_mode,
-                            organization=account.organization,
-                            project=account.project,
-                            metadata=metadata,
-                        )
-                    )
-            model_targets = self._filter_targets_by_provider_preferences(
-                model_targets=model_targets,
-                provider_preferences=provider_preferences,
-            )
-            grouped_targets.append(model_targets)
-
-        if (
-            route_decision.source != "request"
-            and self._allows_fallbacks(provider_preferences)
-        ):
-            grouped_targets = self._prioritize_model_groups_by_rate_limit(
-                grouped_targets
-            )
-
-        if partition == "none":
-            flattened_targets = [
-                target for group in grouped_targets for target in group
-            ]
-            sorted_targets = self._sort_model_targets(
-                model_targets=flattened_targets,
-                provider_preferences=provider_preferences,
-            )
-            return self._prioritize_targets_by_rate_limit(sorted_targets)
-
-        targets: list[BackendTarget] = []
-        for model_targets in grouped_targets:
-            sorted_targets = self._sort_model_targets(
-                model_targets=model_targets,
-                provider_preferences=provider_preferences,
-            )
-            targets.extend(self._prioritize_targets_by_rate_limit(sorted_targets))
-        return targets
+        return BackendTargetPlanner(proxy=self).build_candidate_targets(route_decision)
 
     def _prioritize_model_groups_by_rate_limit(
         self, grouped_targets: list[list[BackendTarget]]
@@ -2141,6 +2181,10 @@ class BackendProxy:
         if isinstance(value, bool):
             return value
         return True
+
+    @staticmethod
+    def allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
+        return BackendProxy._allows_fallbacks(provider_preferences)
 
     @staticmethod
     def _normalized_provider_filter_values(raw: Any) -> list[str]:
@@ -2333,6 +2377,17 @@ class BackendProxy:
         if accepted:
             return accepted, rejected, requested_parameters
         return [], rejected, requested_parameters
+
+    def filter_targets_by_parameter_support(
+        self,
+        *,
+        candidate_targets: list[BackendTarget],
+        payload: dict[str, Any],
+    ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
+        return self._filter_targets_by_parameter_support(
+            candidate_targets=candidate_targets,
+            payload=payload,
+        )
 
     @staticmethod
     def _as_non_negative_float(value: Any, default: float = 0.0) -> float:
@@ -2718,6 +2773,114 @@ class BackendProxy:
             runtime_state.account_id = account_id
             return account_id
         return None
+
+    @property
+    def circuit_breakers(self) -> CircuitBreakerRegistry | None:
+        return self._circuit_breakers
+
+    @property
+    def audit_hook(self) -> Callable[[dict[str, Any]], None] | None:
+        return self._audit_hook
+
+    def audit(self, event: str, **fields: Any) -> None:
+        self._audit(event, **fields)
+
+    def build_candidate_targets(
+        self, route_decision: RouteDecision
+    ) -> list[BackendTarget]:
+        return self._build_candidate_targets(route_decision)
+
+    @staticmethod
+    def provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
+        return BackendProxy._provider_partition_mode(provider_preferences)
+
+    @staticmethod
+    def requires_parameter_compatibility(
+        provider_preferences: dict[str, Any],
+    ) -> bool:
+        return BackendProxy._requires_parameter_compatibility(provider_preferences)
+
+    @staticmethod
+    def normalized_provider_filter_values(raw: Any) -> list[str]:
+        return BackendProxy._normalized_provider_filter_values(raw)
+
+    @staticmethod
+    def has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
+        return BackendProxy._has_provider_filters(provider_preferences)
+
+    def resolve_model_metadata(
+        self, account: BackendAccount, model: str
+    ) -> dict[str, Any]:
+        return self._resolve_model_metadata(account, model)
+
+    def resolve_upstream_model(
+        self,
+        account: BackendAccount,
+        model: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        return self._resolve_upstream_model(account, model, metadata=metadata)
+
+    def filter_targets_by_provider_preferences(
+        self,
+        *,
+        model_targets: list[BackendTarget],
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        return self._filter_targets_by_provider_preferences(
+            model_targets=model_targets,
+            provider_preferences=provider_preferences,
+        )
+
+    def sort_model_targets(
+        self,
+        *,
+        model_targets: list[BackendTarget],
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        return self._sort_model_targets(
+            model_targets=model_targets,
+            provider_preferences=provider_preferences,
+        )
+
+    def prioritize_model_groups_by_rate_limit(
+        self, grouped_targets: list[list[BackendTarget]]
+    ) -> list[list[BackendTarget]]:
+        return self._prioritize_model_groups_by_rate_limit(grouped_targets)
+
+    def prioritize_targets_by_rate_limit(
+        self, model_targets: list[BackendTarget]
+    ) -> list[BackendTarget]:
+        return self._prioritize_targets_by_rate_limit(model_targets)
+
+    def is_temporarily_rate_limited(self, account_name: str) -> bool:
+        return self._is_temporarily_rate_limited(account_name)
+
+    async def resolve_bearer_token(self, account: BackendAccount) -> str | None:
+        return await self._resolve_bearer_token(account)
+
+    def resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
+        return self._resolve_oauth_account_id(account)
+
+    def mark_rate_limited(
+        self,
+        account_name: str,
+        headers: httpx.Headers,
+        *,
+        request_id: str | None = None,
+        target: str | None = None,
+        model: str | None = None,
+        upstream_model: str | None = None,
+    ) -> None:
+        self._mark_rate_limited(
+            account_name,
+            headers,
+            request_id=request_id,
+            target=target,
+            model=model,
+            upstream_model=upstream_model,
+        )
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
