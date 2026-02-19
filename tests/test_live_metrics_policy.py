@@ -601,3 +601,57 @@ def test_apply_runtime_overrides_updates_learned_feature_weights(tmp_path: Path)
     assert config.learned_routing.feature_weights[
         "reasoning_effort_high"
     ] == pytest.approx(0.72)
+
+
+def test_live_metrics_collector_bounds_high_cardinality_maps() -> None:
+    async def _run() -> None:
+        store = InMemoryLiveMetricsStore(alpha=0.5)
+        collector = LiveMetricsCollector(
+            store=store,
+            enabled=True,
+            target_dimension_max_keys=2,
+            error_type_max_keys=2,
+        )
+        await collector.start()
+
+        for account, error_type in (
+            ("acct-a", "ConnectTimeout"),
+            ("acct-b", "ReadTimeout"),
+            ("acct-c", "ProtocolError"),
+        ):
+            collector.ingest(
+                {
+                    "event": "proxy_retry",
+                    "provider": "openai",
+                    "account": account,
+                    "model": "m1",
+                }
+            )
+            collector.ingest(
+                {
+                    "event": "proxy_request_error",
+                    "provider": "openai",
+                    "account": account,
+                    "model": "m1",
+                    "error_type": error_type,
+                    "is_timeout": True,
+                }
+            )
+
+        await asyncio.sleep(0)
+        await collector.close()
+
+        assert collector.proxy_retries_by_target == {
+            ("openai", "acct-b"): 1,
+            ("openai", "acct-c"): 1,
+        }
+        assert collector.proxy_timeouts_by_target == {
+            ("openai", "acct-b"): 1,
+            ("openai", "acct-c"): 1,
+        }
+        assert collector.proxy_errors_by_type == {
+            "ReadTimeout": 1,
+            "ProtocolError": 1,
+        }
+
+    asyncio.run(_run())

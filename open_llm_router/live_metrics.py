@@ -5,10 +5,16 @@ import base64
 import json
 import logging
 import time
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass
 from math import ceil
 from typing import Any, Protocol
+
+from open_llm_router.bounded_maps import (
+    BoundedCounterMap,
+    BoundedDequeMap,
+    BoundedValueMap,
+)
 
 TARGET_METRICS_KEY_PREFIX = "target::"
 
@@ -568,6 +574,8 @@ class LiveMetricsCollector:
         queue_size: int = 8192,
         connect_latency_window_size: int = 256,
         connect_latency_alert_threshold_ms: float = 8000.0,
+        target_dimension_max_keys: int = 4096,
+        error_type_max_keys: int = 256,
     ) -> None:
         self._store = store
         self._logger = logger
@@ -579,6 +587,8 @@ class LiveMetricsCollector:
         self._connect_latency_alert_threshold_ms = max(
             0.0, float(connect_latency_alert_threshold_ms)
         )
+        self._target_dimension_max_keys = max(1, int(target_dimension_max_keys))
+        self._error_type_max_keys = max(1, int(error_type_max_keys))
         self._worker_task: asyncio.Task[None] | None = None
         self._dropped_events = 0
         self._proxy_retries_total = 0
@@ -587,19 +597,30 @@ class LiveMetricsCollector:
         self._proxy_connect_latency_alerts_total = 0
         self._proxy_attempt_latency_sum_ms = 0.0
         self._proxy_attempt_latency_count = 0
-        self._proxy_retries_by_target: dict[tuple[str, str], int] = defaultdict(int)
-        self._proxy_timeouts_by_target: dict[tuple[str, str], int] = defaultdict(int)
-        self._proxy_connect_latency_alerts_by_target: dict[tuple[str, str, str], int] = (
-            defaultdict(int)
+        self._proxy_retries_by_target: BoundedCounterMap[tuple[str, str]] = (
+            BoundedCounterMap(max_keys=self._target_dimension_max_keys)
         )
-        self._proxy_connect_latency_alert_active_by_target: dict[
+        self._proxy_timeouts_by_target: BoundedCounterMap[tuple[str, str]] = (
+            BoundedCounterMap(max_keys=self._target_dimension_max_keys)
+        )
+        self._proxy_connect_latency_alerts_by_target: BoundedCounterMap[
+            tuple[str, str, str]
+        ] = BoundedCounterMap(max_keys=self._target_dimension_max_keys)
+        self._proxy_connect_latency_alert_active_by_target: BoundedValueMap[
             tuple[str, str, str], bool
-        ] = defaultdict(bool)
-        self._proxy_connect_latency_samples_by_target: dict[
-            tuple[str, str, str], deque[float]
-        ] = {}
-        self._proxy_errors_by_type: dict[str, int] = defaultdict(int)
-        self._proxy_responses_by_status_class: dict[str, int] = defaultdict(int)
+        ] = BoundedValueMap(max_keys=self._target_dimension_max_keys)
+        self._proxy_connect_latency_samples_by_target: BoundedDequeMap[
+            tuple[str, str, str], float
+        ] = BoundedDequeMap(
+            max_keys=self._target_dimension_max_keys,
+            window_size=self._connect_latency_window_size,
+        )
+        self._proxy_errors_by_type: BoundedCounterMap[str] = BoundedCounterMap(
+            max_keys=self._error_type_max_keys
+        )
+        self._proxy_responses_by_status_class: BoundedCounterMap[str] = (
+            BoundedCounterMap(max_keys=16)
+        )
         self._classifier_secondary_total = 0
         self._classifier_secondary_success = 0
         self._classifier_secondary_non_success = 0
@@ -653,15 +674,15 @@ class LiveMetricsCollector:
 
     @property
     def proxy_retries_by_target(self) -> dict[tuple[str, str], int]:
-        return dict(self._proxy_retries_by_target)
+        return self._proxy_retries_by_target.to_dict()
 
     @property
     def proxy_timeouts_by_target(self) -> dict[tuple[str, str], int]:
-        return dict(self._proxy_timeouts_by_target)
+        return self._proxy_timeouts_by_target.to_dict()
 
     @property
     def proxy_connect_latency_alerts_by_target(self) -> dict[tuple[str, str, str], int]:
-        return dict(self._proxy_connect_latency_alerts_by_target)
+        return self._proxy_connect_latency_alerts_by_target.to_dict()
 
     @property
     def proxy_connect_latency_quantiles_by_target(
@@ -682,11 +703,11 @@ class LiveMetricsCollector:
 
     @property
     def proxy_errors_by_type(self) -> dict[str, int]:
-        return dict(self._proxy_errors_by_type)
+        return self._proxy_errors_by_type.to_dict()
 
     @property
     def proxy_responses_by_status_class(self) -> dict[str, int]:
-        return dict(self._proxy_responses_by_status_class)
+        return self._proxy_responses_by_status_class.to_dict()
 
     @property
     def classifier_calibration_snapshot(self) -> ClassifierCalibrationSnapshot:
@@ -800,39 +821,35 @@ class LiveMetricsCollector:
                     account=account,
                 )
                 connect_target_key = (provider or "unknown", account or "unknown", model)
-                samples = self._proxy_connect_latency_samples_by_target.get(
-                    connect_target_key
+                samples = self._proxy_connect_latency_samples_by_target.append(
+                    connect_target_key, connect_value
                 )
-                if samples is None:
-                    samples = deque(maxlen=self._connect_latency_window_size)
-                    self._proxy_connect_latency_samples_by_target[connect_target_key] = (
-                        samples
-                    )
-                samples.append(connect_value)
                 if self._connect_latency_alert_threshold_ms > 0.0:
                     p95_value = _percentile(list(samples), 0.95)
                     is_alerting = (
                         p95_value is not None
                         and p95_value > self._connect_latency_alert_threshold_ms
                     )
-                    was_alerting = self._proxy_connect_latency_alert_active_by_target[
-                        connect_target_key
-                    ]
+                    was_alerting = self._proxy_connect_latency_alert_active_by_target.get(
+                        connect_target_key, False
+                    )
                     if is_alerting and not was_alerting:
                         self._proxy_connect_latency_alerts_total += 1
-                        self._proxy_connect_latency_alerts_by_target[
+                        self._proxy_connect_latency_alerts_by_target.increment(
                             connect_target_key
-                        ] += 1
-                    self._proxy_connect_latency_alert_active_by_target[
-                        connect_target_key
-                    ] = is_alerting
+                        )
+                    self._proxy_connect_latency_alert_active_by_target.set(
+                        connect_target_key, is_alerting
+                    )
             return
 
         if event_name == "proxy_response":
             status = event.get("status")
             if not isinstance(status, int):
                 return
-            self._proxy_responses_by_status_class[f"{max(0, status) // 100}xx"] += 1
+            self._proxy_responses_by_status_class.increment(
+                f"{max(0, status) // 100}xx"
+            )
             if status == 429:
                 self._proxy_rate_limited_total += 1
             request_latency_ms = event.get("request_latency_ms")
@@ -852,15 +869,15 @@ class LiveMetricsCollector:
 
         if event_name == "proxy_retry":
             self._proxy_retries_total += 1
-            self._proxy_retries_by_target[target_key] += 1
+            self._proxy_retries_by_target.increment(target_key)
             return
 
         if event_name == "proxy_request_error":
             error_type = str(event.get("error_type") or "").strip() or "unknown"
-            self._proxy_errors_by_type[error_type] += 1
+            self._proxy_errors_by_type.increment(error_type)
             if bool(event.get("is_timeout")):
                 self._proxy_timeouts_total += 1
-                self._proxy_timeouts_by_target[target_key] += 1
+                self._proxy_timeouts_by_target.increment(target_key)
             attempt_latency_ms = event.get("attempt_latency_ms")
             if isinstance(attempt_latency_ms, (int, float)):
                 self._proxy_attempt_latency_sum_ms += max(
