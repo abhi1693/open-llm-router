@@ -1176,6 +1176,339 @@ class ProxyRequestExecutor:
         )
 
 
+class ModelRegistryResolver:
+    def __init__(self, *, model_registry: dict[str, dict[str, Any]]) -> None:
+        self._model_registry = model_registry
+
+    @staticmethod
+    def split_model_ref(model: str) -> tuple[str | None, str]:
+        normalized = model.strip()
+        if not normalized:
+            return None, ""
+        if "/" not in normalized:
+            return None, normalized
+        provider, model_id = normalized.split("/", 1)
+        provider = provider.strip()
+        model_id = model_id.strip()
+        if not provider or not model_id:
+            return None, normalized
+        return provider, model_id
+
+    def resolve_model_metadata(
+        self, account: BackendAccount, model: str
+    ) -> dict[str, Any]:
+        metadata = self._model_registry.get(model)
+        if isinstance(metadata, dict):
+            return metadata
+
+        # Fallback for metadata maps that only key by provider/modelId with empty metadata.
+        provider, model_id = self.split_model_ref(model)
+        account_provider = account.provider.strip().lower()
+        if provider and provider.lower() == account_provider:
+            provider_key = f"{provider.lower()}/{model_id}"
+            provider_metadata = self._model_registry.get(provider_key)
+            if isinstance(provider_metadata, dict):
+                return provider_metadata
+
+        if "/" not in model:
+            provider_key = f"{account_provider}/{model.strip()}"
+            provider_metadata = self._model_registry.get(provider_key)
+            if isinstance(provider_metadata, dict):
+                return provider_metadata
+
+        return {}
+
+    def resolve_upstream_model(
+        self,
+        account: BackendAccount,
+        model: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        resolved_metadata = (
+            metadata
+            if isinstance(metadata, dict)
+            else self.resolve_model_metadata(account, model)
+        )
+        metadata_id = (
+            resolved_metadata.get("id") if isinstance(resolved_metadata, dict) else None
+        )
+        if isinstance(metadata_id, str) and metadata_id.strip():
+            return metadata_id.strip()
+
+        # Fallback for metadata maps keyed by provider/modelId.
+        provider, model_id = self.split_model_ref(model)
+        if provider and provider.lower() == account.provider.strip().lower():
+            return model_id
+
+        # Backward-compatible fallback for plain model ids.
+        return account.upstream_model(model)
+
+    def resolve_target_metadata(self, target: BackendTarget) -> dict[str, Any]:
+        if isinstance(target.metadata, dict):
+            return target.metadata
+        metadata = self._model_registry.get(target.model)
+        if isinstance(metadata, dict):
+            return metadata
+
+        if "/" not in target.model:
+            provider_key = f"{target.provider.strip().lower()}/{target.model.strip()}"
+            provider_metadata = self._model_registry.get(provider_key)
+            if isinstance(provider_metadata, dict):
+                return provider_metadata
+
+        return {}
+
+
+class TargetSelectionPolicy:
+    def __init__(
+        self,
+        *,
+        target_metadata_resolver: Callable[[BackendTarget], dict[str, Any]],
+    ) -> None:
+        self._target_metadata_resolver = target_metadata_resolver
+
+    @staticmethod
+    def provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
+        partition = str(provider_preferences.get("partition") or "").strip().lower()
+        if partition == "none":
+            return "none"
+        return "model"
+
+    @staticmethod
+    def requires_parameter_compatibility(provider_preferences: dict[str, Any]) -> bool:
+        return bool(provider_preferences.get("require_parameters"))
+
+    @staticmethod
+    def allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
+        value = provider_preferences.get("allow_fallbacks")
+        if isinstance(value, bool):
+            return value
+        return True
+
+    @staticmethod
+    def normalized_provider_filter_values(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        output: list[str] = []
+        seen: set[str] = set()
+        for value in raw:
+            if not isinstance(value, str):
+                continue
+            normalized = value.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            output.append(normalized)
+        return output
+
+    @staticmethod
+    def has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
+        return bool(provider_preferences.get("only")) or bool(
+            provider_preferences.get("ignore")
+        )
+
+    def filter_targets_by_provider_preferences(
+        self,
+        *,
+        model_targets: list[BackendTarget],
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        only = set(
+            self.normalized_provider_filter_values(provider_preferences.get("only"))
+        )
+        ignore = set(
+            self.normalized_provider_filter_values(provider_preferences.get("ignore"))
+        )
+        if not only and not ignore:
+            return model_targets
+
+        filtered: list[BackendTarget] = []
+        for target in model_targets:
+            provider = target.provider.strip().lower()
+            account = target.account_name.strip().lower()
+
+            if only and provider not in only and account not in only:
+                continue
+            if provider in ignore or account in ignore:
+                continue
+
+            filtered.append(target)
+        return filtered
+
+    @staticmethod
+    def provider_order_index_map(raw_order: Any) -> dict[str, int]:
+        if not isinstance(raw_order, list):
+            return {}
+        output: dict[str, int] = {}
+        for index, item in enumerate(raw_order):
+            if not isinstance(item, str):
+                continue
+            normalized = item.strip().lower()
+            if not normalized:
+                continue
+            output.setdefault(normalized, index)
+        return output
+
+    def target_metadata(self, target: BackendTarget) -> dict[str, Any]:
+        return self._target_metadata_resolver(target)
+
+    @staticmethod
+    def as_non_negative_float(value: Any, default: float = 0.0) -> float:
+        if not isinstance(value, (int, float)):
+            return default
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed >= 0.0 else default
+
+    def target_effective_price(self, target: BackendTarget) -> float:
+        metadata = self.target_metadata(target)
+        costs = metadata.get("costs")
+        if not isinstance(costs, dict):
+            return float("inf")
+        input_cost = self.as_non_negative_float(costs.get("input_per_1k"), default=0.0)
+        output_cost = self.as_non_negative_float(costs.get("output_per_1k"), default=0.0)
+        if input_cost <= 0.0 and output_cost <= 0.0:
+            return float("inf")
+        return input_cost + output_cost
+
+    def target_latency_ms(self, target: BackendTarget) -> float:
+        metadata = self.target_metadata(target)
+        priors = metadata.get("priors")
+        if not isinstance(priors, dict):
+            return float("inf")
+        latency_ms = self.as_non_negative_float(priors.get("latency_ms"), default=0.0)
+        return latency_ms if latency_ms > 0.0 else float("inf")
+
+    def target_throughput(self, target: BackendTarget) -> float:
+        metadata = self.target_metadata(target)
+        priors = metadata.get("priors")
+        if isinstance(priors, dict):
+            throughput = self.as_non_negative_float(
+                priors.get("throughput_tps"), default=0.0
+            )
+            if throughput > 0.0:
+                return throughput
+
+        latency_ms = self.target_latency_ms(target)
+        if latency_ms == float("inf") or latency_ms <= 0.0:
+            return 0.0
+        return 1000.0 / latency_ms
+
+    def sort_model_targets(
+        self,
+        *,
+        model_targets: list[BackendTarget],
+        provider_preferences: dict[str, Any],
+    ) -> list[BackendTarget]:
+        if len(model_targets) <= 1 or not provider_preferences:
+            return model_targets
+
+        order_index = self.provider_order_index_map(provider_preferences.get("order"))
+        sort_by = str(provider_preferences.get("sort") or "").strip().lower()
+        if sort_by not in {"price", "latency", "throughput"}:
+            sort_by = ""
+
+        def _sort_key(target: BackendTarget) -> tuple[float, float, str]:
+            order_rank = float(order_index.get(target.provider.strip().lower(), 10_000))
+            if order_rank >= 10_000:
+                order_rank = float(
+                    order_index.get(target.account_name.strip().lower(), 10_000)
+                )
+
+            metric = 0.0
+            if sort_by == "price":
+                metric = self.target_effective_price(target)
+            elif sort_by == "latency":
+                metric = self.target_latency_ms(target)
+            elif sort_by == "throughput":
+                metric = -self.target_throughput(target)
+
+            return (
+                order_rank,
+                metric,
+                target.account_name,
+            )
+
+        return sorted(model_targets, key=_sort_key)
+
+    @staticmethod
+    def extract_request_parameter_names(payload: dict[str, Any]) -> set[str]:
+        ignored_keys = {
+            "model",
+            "messages",
+            "input",
+            "prompt",
+            "stream",
+            "provider",
+            "allowed_models",
+            "plugins",
+        }
+        output: set[str] = set()
+        for raw_key in payload:
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip().lower()
+            if not key or key in ignored_keys:
+                continue
+            output.add(key)
+        return output
+
+    @staticmethod
+    def normalize_parameter_set(raw: Any) -> set[str]:
+        if not isinstance(raw, list):
+            return set()
+        output: set[str] = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            normalized = item.strip().lower()
+            if normalized:
+                output.add(normalized)
+        return output
+
+    def filter_targets_by_parameter_support(
+        self,
+        *,
+        candidate_targets: list[BackendTarget],
+        payload: dict[str, Any],
+    ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
+        requested = self.extract_request_parameter_names(payload)
+        requested_parameters = sorted(requested)
+        if not requested:
+            return candidate_targets, {}, requested_parameters
+
+        accepted: list[BackendTarget] = []
+        rejected: dict[str, list[str]] = {}
+        for target in candidate_targets:
+            metadata = self.target_metadata(target)
+            supported = self.normalize_parameter_set(metadata.get("supported_parameters"))
+            unsupported = self.normalize_parameter_set(
+                metadata.get("unsupported_parameters")
+            )
+
+            reasons: list[str] = []
+            if supported:
+                missing = sorted(requested - supported)
+                if missing:
+                    reasons.append(f"missing_supported_parameters:{','.join(missing)}")
+
+            blocked = sorted(requested & unsupported)
+            if blocked:
+                reasons.append(f"unsupported_parameters:{','.join(blocked)}")
+
+            if reasons:
+                rejected[target.label] = reasons
+                continue
+            accepted.append(target)
+
+        if accepted:
+            return accepted, rejected, requested_parameters
+        return [], rejected, requested_parameters
+
+
 class BackendTargetPlanner:
     def __init__(self, *, proxy: BackendProxy) -> None:
         self._proxy = proxy
@@ -1683,6 +2016,12 @@ class BackendProxy:
             client_getter=lambda: self.client,
         )
         self._model_registry = model_registry or {}
+        self._model_registry_resolver = ModelRegistryResolver(
+            model_registry=self._model_registry
+        )
+        self._target_selection_policy = TargetSelectionPolicy(
+            target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata
+        )
         self._audit_hook = audit_hook
         self._circuit_breakers = circuit_breakers
         self._rate_limited_until: dict[str, float] = {}
@@ -1707,42 +2046,10 @@ class BackendProxy:
     async def close(self) -> None:
         await self.client.aclose()
 
-    @staticmethod
-    def _split_model_ref(model: str) -> tuple[str | None, str]:
-        normalized = model.strip()
-        if not normalized:
-            return None, ""
-        if "/" not in normalized:
-            return None, normalized
-        provider, model_id = normalized.split("/", 1)
-        provider = provider.strip()
-        model_id = model_id.strip()
-        if not provider or not model_id:
-            return None, normalized
-        return provider, model_id
-
     def _resolve_model_metadata(
         self, account: BackendAccount, model: str
     ) -> dict[str, Any]:
-        metadata = self._model_registry.get(model)
-        if isinstance(metadata, dict):
-            return metadata
-
-        # Fallback for metadata maps that only key by provider/modelId with empty metadata.
-        provider, model_id = self._split_model_ref(model)
-        if provider and provider.lower() == account.provider.strip().lower():
-            provider_key = f"{provider.lower()}/{model_id}"
-            provider_metadata = self._model_registry.get(provider_key)
-            if isinstance(provider_metadata, dict):
-                return provider_metadata
-
-        if "/" not in model:
-            provider_key = f"{account.provider.strip().lower()}/{model.strip()}"
-            provider_metadata = self._model_registry.get(provider_key)
-            if isinstance(provider_metadata, dict):
-                return provider_metadata
-
-        return {}
+        return self._model_registry_resolver.resolve_model_metadata(account, model)
 
     def _resolve_upstream_model(
         self,
@@ -1751,24 +2058,9 @@ class BackendProxy:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        resolved_metadata = (
-            metadata
-            if isinstance(metadata, dict)
-            else self._resolve_model_metadata(account, model)
+        return self._model_registry_resolver.resolve_upstream_model(
+            account, model, metadata=metadata
         )
-        metadata_id = (
-            resolved_metadata.get("id") if isinstance(resolved_metadata, dict) else None
-        )
-        if isinstance(metadata_id, str) and metadata_id.strip():
-            return metadata_id.strip()
-
-        # Fallback for metadata maps keyed by provider/modelId.
-        provider, model_id = self._split_model_ref(model)
-        if provider and provider.lower() == account.provider.strip().lower():
-            return model_id
-
-        # Backward-compatible fallback for plain model ids.
-        return account.upstream_model(model)
 
     def _audit(self, event: str, **fields: Any) -> None:
         if self._audit_hook is None:
@@ -2547,21 +2839,17 @@ class BackendProxy:
 
     @staticmethod
     def _provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
-        partition = str(provider_preferences.get("partition") or "").strip().lower()
-        if partition == "none":
-            return "none"
-        return "model"
+        return TargetSelectionPolicy.provider_partition_mode(provider_preferences)
 
     @staticmethod
     def _requires_parameter_compatibility(provider_preferences: dict[str, Any]) -> bool:
-        return bool(provider_preferences.get("require_parameters"))
+        return TargetSelectionPolicy.requires_parameter_compatibility(
+            provider_preferences
+        )
 
     @staticmethod
     def _allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
-        value = provider_preferences.get("allow_fallbacks")
-        if isinstance(value, bool):
-            return value
-        return True
+        return TargetSelectionPolicy.allows_fallbacks(provider_preferences)
 
     @staticmethod
     def allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
@@ -2569,25 +2857,11 @@ class BackendProxy:
 
     @staticmethod
     def _normalized_provider_filter_values(raw: Any) -> list[str]:
-        if not isinstance(raw, list):
-            return []
-        output: list[str] = []
-        seen: set[str] = set()
-        for value in raw:
-            if not isinstance(value, str):
-                continue
-            normalized = value.strip().lower()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            output.append(normalized)
-        return output
+        return TargetSelectionPolicy.normalized_provider_filter_values(raw)
 
     @staticmethod
     def _has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
-        return bool(provider_preferences.get("only")) or bool(
-            provider_preferences.get("ignore")
-        )
+        return TargetSelectionPolicy.has_provider_filters(provider_preferences)
 
     def _filter_targets_by_provider_preferences(
         self,
@@ -2595,27 +2869,10 @@ class BackendProxy:
         model_targets: list[BackendTarget],
         provider_preferences: dict[str, Any],
     ) -> list[BackendTarget]:
-        only = set(
-            self._normalized_provider_filter_values(provider_preferences.get("only"))
+        return self._target_selection_policy.filter_targets_by_provider_preferences(
+            model_targets=model_targets,
+            provider_preferences=provider_preferences,
         )
-        ignore = set(
-            self._normalized_provider_filter_values(provider_preferences.get("ignore"))
-        )
-        if not only and not ignore:
-            return model_targets
-
-        filtered: list[BackendTarget] = []
-        for target in model_targets:
-            provider = target.provider.strip().lower()
-            account = target.account_name.strip().lower()
-
-            if only and provider not in only and account not in only:
-                continue
-            if provider in ignore or account in ignore:
-                continue
-
-            filtered.append(target)
-        return filtered
 
     def _sort_model_targets(
         self,
@@ -2623,100 +2880,25 @@ class BackendProxy:
         model_targets: list[BackendTarget],
         provider_preferences: dict[str, Any],
     ) -> list[BackendTarget]:
-        if len(model_targets) <= 1 or not provider_preferences:
-            return model_targets
-
-        order_index = self._provider_order_index_map(provider_preferences.get("order"))
-        sort_by = str(provider_preferences.get("sort") or "").strip().lower()
-        if sort_by not in {"price", "latency", "throughput"}:
-            sort_by = ""
-
-        def _sort_key(target: BackendTarget) -> tuple[float, float, str]:
-            order_rank = float(order_index.get(target.provider.strip().lower(), 10_000))
-            if order_rank >= 10_000:
-                order_rank = float(
-                    order_index.get(target.account_name.strip().lower(), 10_000)
-                )
-
-            metric = 0.0
-            if sort_by == "price":
-                metric = self._target_effective_price(target)
-            elif sort_by == "latency":
-                metric = self._target_latency_ms(target)
-            elif sort_by == "throughput":
-                metric = -self._target_throughput(target)
-
-            return (
-                order_rank,
-                metric,
-                target.account_name,
-            )
-
-        return sorted(model_targets, key=_sort_key)
+        return self._target_selection_policy.sort_model_targets(
+            model_targets=model_targets,
+            provider_preferences=provider_preferences,
+        )
 
     @staticmethod
     def _provider_order_index_map(raw_order: Any) -> dict[str, int]:
-        if not isinstance(raw_order, list):
-            return {}
-        output: dict[str, int] = {}
-        for index, item in enumerate(raw_order):
-            if not isinstance(item, str):
-                continue
-            normalized = item.strip().lower()
-            if not normalized:
-                continue
-            output.setdefault(normalized, index)
-        return output
+        return TargetSelectionPolicy.provider_order_index_map(raw_order)
 
     def _target_metadata(self, target: BackendTarget) -> dict[str, Any]:
-        if isinstance(target.metadata, dict):
-            return target.metadata
-        metadata = self._model_registry.get(target.model)
-        if isinstance(metadata, dict):
-            return metadata
-
-        if "/" not in target.model:
-            provider_key = f"{target.provider.strip().lower()}/{target.model.strip()}"
-            provider_metadata = self._model_registry.get(provider_key)
-            if isinstance(provider_metadata, dict):
-                return provider_metadata
-
-        return {}
+        return self._target_selection_policy.target_metadata(target)
 
     @staticmethod
     def _extract_request_parameter_names(payload: dict[str, Any]) -> set[str]:
-        ignored_keys = {
-            "model",
-            "messages",
-            "input",
-            "prompt",
-            "stream",
-            "provider",
-            "allowed_models",
-            "plugins",
-        }
-        output: set[str] = set()
-        for raw_key in payload:
-            if not isinstance(raw_key, str):
-                continue
-            key = raw_key.strip().lower()
-            if not key or key in ignored_keys:
-                continue
-            output.add(key)
-        return output
+        return TargetSelectionPolicy.extract_request_parameter_names(payload)
 
     @staticmethod
     def _normalize_parameter_set(raw: Any) -> set[str]:
-        if not isinstance(raw, list):
-            return set()
-        output: set[str] = set()
-        for item in raw:
-            if not isinstance(item, str):
-                continue
-            normalized = item.strip().lower()
-            if normalized:
-                output.add(normalized)
-        return output
+        return TargetSelectionPolicy.normalize_parameter_set(raw)
 
     def _filter_targets_by_parameter_support(
         self,
@@ -2724,40 +2906,10 @@ class BackendProxy:
         candidate_targets: list[BackendTarget],
         payload: dict[str, Any],
     ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
-        requested = self._extract_request_parameter_names(payload)
-        requested_parameters = sorted(requested)
-        if not requested:
-            return candidate_targets, {}, requested_parameters
-
-        accepted: list[BackendTarget] = []
-        rejected: dict[str, list[str]] = {}
-        for target in candidate_targets:
-            metadata = self._target_metadata(target)
-            supported = self._normalize_parameter_set(
-                metadata.get("supported_parameters")
-            )
-            unsupported = self._normalize_parameter_set(
-                metadata.get("unsupported_parameters")
-            )
-
-            reasons: list[str] = []
-            if supported:
-                missing = sorted(requested - supported)
-                if missing:
-                    reasons.append(f"missing_supported_parameters:{','.join(missing)}")
-
-            blocked = sorted(requested & unsupported)
-            if blocked:
-                reasons.append(f"unsupported_parameters:{','.join(blocked)}")
-
-            if reasons:
-                rejected[target.label] = reasons
-                continue
-            accepted.append(target)
-
-        if accepted:
-            return accepted, rejected, requested_parameters
-        return [], rejected, requested_parameters
+        return self._target_selection_policy.filter_targets_by_parameter_support(
+            candidate_targets=candidate_targets,
+            payload=payload,
+        )
 
     def filter_targets_by_parameter_support(
         self,
@@ -2772,49 +2924,16 @@ class BackendProxy:
 
     @staticmethod
     def _as_non_negative_float(value: Any, default: float = 0.0) -> float:
-        if not isinstance(value, (int, float)):
-            return default
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return default
-        return parsed if parsed >= 0.0 else default
+        return TargetSelectionPolicy.as_non_negative_float(value, default)
 
     def _target_effective_price(self, target: BackendTarget) -> float:
-        metadata = self._target_metadata(target)
-        costs = metadata.get("costs")
-        if not isinstance(costs, dict):
-            return float("inf")
-        input_cost = self._as_non_negative_float(costs.get("input_per_1k"), default=0.0)
-        output_cost = self._as_non_negative_float(
-            costs.get("output_per_1k"), default=0.0
-        )
-        if input_cost <= 0.0 and output_cost <= 0.0:
-            return float("inf")
-        return input_cost + output_cost
+        return self._target_selection_policy.target_effective_price(target)
 
     def _target_latency_ms(self, target: BackendTarget) -> float:
-        metadata = self._target_metadata(target)
-        priors = metadata.get("priors")
-        if not isinstance(priors, dict):
-            return float("inf")
-        latency_ms = self._as_non_negative_float(priors.get("latency_ms"), default=0.0)
-        return latency_ms if latency_ms > 0.0 else float("inf")
+        return self._target_selection_policy.target_latency_ms(target)
 
     def _target_throughput(self, target: BackendTarget) -> float:
-        metadata = self._target_metadata(target)
-        priors = metadata.get("priors")
-        if isinstance(priors, dict):
-            throughput = self._as_non_negative_float(
-                priors.get("throughput_tps"), default=0.0
-            )
-            if throughput > 0.0:
-                return throughput
-
-        latency_ms = self._target_latency_ms(target)
-        if latency_ms == float("inf") or latency_ms <= 0.0:
-            return 0.0
-        return 1000.0 / latency_ms
+        return self._target_selection_policy.target_throughput(target)
 
     def _is_temporarily_rate_limited(self, account_name: str) -> bool:
         return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
