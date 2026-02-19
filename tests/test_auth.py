@@ -84,3 +84,36 @@ def test_v1_models_accepts_valid_oauth_token(monkeypatch: Any) -> None:
             "/v1/models", headers={"Authorization": f"Bearer {token}"}
         )
         assert response.status_code == 200
+
+
+def test_v1_models_rejects_openai_like_token_without_match(monkeypatch: Any) -> None:
+    with _build_client(
+        monkeypatch,
+        INGRESS_AUTH_REQUIRED="true",
+        INGRESS_API_KEYS="router-key-1",
+    ) as client:
+        response = client.get(
+            "/v1/models",
+            headers={"Authorization": "Bearer sk-not-a-real-api-key-token-12345"},
+        )
+        assert response.status_code == 401
+        assert response.json()["error"]["message"] == "Invalid API key or OAuth token."
+
+
+def test_v1_models_oauth_errors_do_not_leak_details(monkeypatch: Any) -> None:
+    secret = "local-test-secret-with-32-bytes-minimum"
+    with _build_client(
+        monkeypatch,
+        INGRESS_AUTH_REQUIRED="true",
+        INGRESS_API_KEYS="",
+        OAUTH_ENABLED="true",
+        OAUTH_ISSUER="https://chatgpt.com",
+        OAUTH_AUDIENCE="open-llm-router",
+        OAUTH_ALGORITHMS="HS256",
+        OAUTH_JWT_SECRET=secret,
+    ) as client:
+        response = client.get(
+            "/v1/models", headers={"Authorization": "Bearer not-a-valid-jwt"}
+        )
+        assert response.status_code == 401
+        assert response.json()["error"]["message"] == "Invalid OAuth token."

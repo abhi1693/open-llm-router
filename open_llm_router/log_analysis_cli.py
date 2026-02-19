@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 @dataclass(slots=True)
@@ -158,37 +158,69 @@ def _rough_model_match(selected_model: str | None, target_model: str | None) -> 
     return selected_tail in target_tail or target_tail in selected_tail
 
 
-def _parse_objects(path: Path) -> tuple[list[dict[str, Any]], ParseState]:
-    decoder = json.JSONDecoder()
-    text = path.read_text(encoding="utf-8")
-    idx = 0
-    parse_state = ParseState()
-    objects: list[dict[str, Any]] = []
+def _decode_buffer(
+    *,
+    buffer: str,
+    decoder: json.JSONDecoder,
+    parse_state: ParseState,
+    allow_incomplete: bool,
+) -> tuple[str, list[dict[str, Any]]]:
+    parsed_objects: list[dict[str, Any]] = []
+    working = buffer
 
-    while idx < len(text):
-        while idx < len(text) and text[idx].isspace():
-            idx += 1
-        if idx >= len(text):
-            break
+    while working:
+        stripped = working.lstrip()
+        if not stripped:
+            return "", parsed_objects
 
         try:
-            obj, end_idx = decoder.raw_decode(text, idx)
-        except json.JSONDecodeError:
+            obj, end_idx = decoder.raw_decode(stripped)
+        except json.JSONDecodeError as exc:
+            if allow_incomplete and exc.pos >= len(stripped) - 1:
+                return stripped, parsed_objects
+
             parse_state.parse_errors += 1
-            next_start = text.find("{", idx + 1)
+            next_start = stripped.find("{", max(1, exc.pos + 1))
             if next_start == -1:
-                break
-            idx = next_start
+                return "", parsed_objects
+            working = stripped[next_start:]
             continue
 
         parse_state.total_objects += 1
         if isinstance(obj, dict):
-            objects.append(obj)
+            parsed_objects.append(obj)
         else:
             parse_state.non_dict_objects += 1
-        idx = end_idx
+        working = stripped[end_idx:]
 
-    return objects, parse_state
+    return "", parsed_objects
+
+
+def _iter_objects(path: Path, parse_state: ParseState) -> Iterator[dict[str, Any]]:
+    decoder = json.JSONDecoder()
+    buffer = ""
+
+    with path.open("r", encoding="utf-8") as handle:
+        for chunk in handle:
+            buffer += chunk
+            buffer, parsed_objects = _decode_buffer(
+                buffer=buffer,
+                decoder=decoder,
+                parse_state=parse_state,
+                allow_incomplete=True,
+            )
+            for obj in parsed_objects:
+                yield obj
+
+    if buffer.strip():
+        _, parsed_objects = _decode_buffer(
+            buffer=buffer,
+            decoder=decoder,
+            parse_state=parse_state,
+            allow_incomplete=False,
+        )
+        for obj in parsed_objects:
+            yield obj
 
 
 def _update_latency_maps(
@@ -525,9 +557,9 @@ def _build_summary(
 
 
 def summarize_log(path: Path, *, top_n: int = 8) -> dict[str, Any]:
-    events, parse_state = _parse_objects(path)
+    parse_state = ParseState()
     state = AggregationState(parse=parse_state)
-    for event in events:
+    for event in _iter_objects(path, parse_state):
         _process_event(state, event)
     return _build_summary(path=path, state=state, top_n=max(1, top_n))
 

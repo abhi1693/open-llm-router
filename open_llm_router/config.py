@@ -260,11 +260,7 @@ class BackendAccount(BaseModel):
         return None
 
     def allows_passthrough_auth(self) -> bool:
-        if self.auth_mode == "passthrough":
-            return True
-        if self.auth_mode == "api_key":
-            return not bool(self.resolved_api_key())
-        return False
+        return self.auth_mode == "passthrough"
 
 
 class ModelProfile(BaseModel):

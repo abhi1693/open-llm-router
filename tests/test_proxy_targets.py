@@ -1471,6 +1471,60 @@ def test_build_upstream_headers_preserves_trace_context_headers() -> None:
     assert headers["baggage"] == "user_id=123"
 
 
+def test_build_upstream_headers_drops_untrusted_x_headers() -> None:
+    headers = _build_upstream_headers(
+        incoming_headers=Headers(
+            {
+                "content-type": "application/json",
+                "x-custom-secret": "should-not-forward",
+                "x-request-id": "req-123",
+            }
+        ),
+        bearer_token="token-1",
+        provider="openai",
+        oauth_account_id=None,
+        organization=None,
+        project=None,
+        stream=False,
+    )
+
+    assert headers["x-request-id"] == "req-123"
+    assert "x-custom-secret" not in headers
+
+
+def test_build_upstream_headers_passthrough_auth_allows_only_bearer() -> None:
+    basic_headers = _build_upstream_headers(
+        incoming_headers=Headers(
+            {"content-type": "application/json", "authorization": "Basic abc123"}
+        ),
+        bearer_token=None,
+        provider="openai",
+        oauth_account_id=None,
+        organization=None,
+        project=None,
+        stream=False,
+        allow_passthrough_auth=True,
+    )
+    assert "Authorization" not in basic_headers
+
+    bearer_headers = _build_upstream_headers(
+        incoming_headers=Headers(
+            {
+                "content-type": "application/json",
+                "authorization": "Bearer upstream-token-1",
+            }
+        ),
+        bearer_token=None,
+        provider="openai",
+        oauth_account_id=None,
+        organization=None,
+        project=None,
+        stream=False,
+        allow_passthrough_auth=True,
+    )
+    assert bearer_headers["Authorization"] == "Bearer upstream-token-1"
+
+
 def test_prepare_upstream_request_maps_chat_completions_to_codex_responses() -> None:
     payload = {
         "model": "gpt-5.2-codex",

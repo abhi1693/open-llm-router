@@ -193,15 +193,31 @@ def _build_upstream_headers(
         "accept",
         "baggage",
         "content-type",
+        "idempotency-key",
         "openai-organization",
         "openai-project",
         "traceparent",
         "tracestate",
     }
+    safe_x_headers = {
+        "x-openai-client-source",
+        "x-openai-client-user-agent",
+        "x-request-id",
+        "x-stainless-arch",
+        "x-stainless-async",
+        "x-stainless-lang",
+        "x-stainless-os",
+        "x-stainless-package-version",
+        "x-stainless-read-timeout",
+        "x-stainless-retry-count",
+        "x-stainless-runtime",
+        "x-stainless-runtime-version",
+    }
     canonical_names = {
         "accept": "Accept",
         "baggage": "baggage",
         "content-type": "Content-Type",
+        "idempotency-key": "Idempotency-Key",
         "openai-organization": "OpenAI-Organization",
         "openai-project": "OpenAI-Project",
         "traceparent": "traceparent",
@@ -212,15 +228,15 @@ def _build_upstream_headers(
         lower = name.lower()
         if lower in {"host", "content-length", "connection", "authorization"}:
             continue
-        if lower in passthrough or lower.startswith("x-"):
+        if lower in passthrough or lower in safe_x_headers:
             key = canonical_names.get(lower, name)
             headers[key] = value
 
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     elif allow_passthrough_auth:
-        incoming_auth = incoming_headers.get("authorization")
-        if incoming_auth:
+        incoming_auth = incoming_headers.get("authorization", "").strip()
+        if incoming_auth.lower().startswith("bearer "):
             headers["Authorization"] = incoming_auth
 
     if organization:

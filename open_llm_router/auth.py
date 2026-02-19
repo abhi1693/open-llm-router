@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,20 +124,10 @@ class Authenticator:
                 result = self.oauth_verifier.verify(bearer_token)
                 request.state.auth = result
                 return None
-            except InvalidTokenError as exc:
-                return _unauthorized(f"OAuth token validation failed: {exc}")
-            except Exception as exc:
-                return _unauthorized(f"OAuth verification error: {exc}")
-
-        # Optional convenience when no static API keys are configured: allow OpenAI-style key shapes.
-        if not self.api_keys and _looks_like_openai_api_key(bearer_token):
-            request.state.auth = AuthResult(
-                method="api_key_passthrough",
-                principal="openai-api-key",
-                scopes=set(),
-                claims={"detected": True, "validated_at": int(time.time())},
-            )
-            return None
+            except InvalidTokenError:
+                return _unauthorized("Invalid OAuth token.")
+            except Exception:
+                return _unauthorized("Invalid OAuth token.")
 
         return _unauthorized("Invalid API key or OAuth token.")
 
@@ -150,11 +139,6 @@ def _extract_scopes(claims: dict[str, Any]) -> set[str]:
     if isinstance(raw_scope, list):
         return {str(scope).strip() for scope in raw_scope if str(scope).strip()}
     return set()
-
-
-def _looks_like_openai_api_key(token: str) -> bool:
-    prefixes = ("sk-", "sess-", "oai-")
-    return token.startswith(prefixes) and len(token) >= 20
 
 
 def _unauthorized(message: str) -> JSONResponse:
