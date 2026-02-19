@@ -195,6 +195,56 @@ class AccountConfigMutator:
             account["oauth_expires_at"] = oauth_expires_at
 
 
+class AccountEntryManager:
+    @staticmethod
+    def find_or_create(*, data: dict[str, Any], name: str) -> dict[str, Any]:
+        accounts = data["accounts"]
+        account = _find_account(accounts, name)
+        if account is None:
+            account = {"name": name}
+            accounts.append(account)
+        return account
+
+    @staticmethod
+    def configure_core(
+        *,
+        account: dict[str, Any],
+        provider: str,
+        base_url: str,
+        enabled: bool,
+        auth_mode: str | None = None,
+        default_auth_mode: str | None = None,
+    ) -> None:
+        account["provider"] = provider
+        account["base_url"] = base_url
+        account["enabled"] = enabled
+        if auth_mode is not None:
+            account["auth_mode"] = auth_mode
+        elif default_auth_mode is not None and "auth_mode" not in account:
+            account["auth_mode"] = default_auth_mode
+
+    @staticmethod
+    def merge_qualified_models(
+        *,
+        data: dict[str, Any],
+        account: dict[str, Any],
+        provider: str,
+        raw_models: list[str],
+    ) -> tuple[list[str], dict[str, str]]:
+        account_models = _qualify_models(provider, raw_models)
+        raw_to_qualified = {
+            raw_model: qualified_model
+            for raw_model, qualified_model in zip(raw_models, account_models, strict=False)
+        }
+        if not account_models:
+            return account_models, raw_to_qualified
+
+        existing = _qualify_models(provider, account.get("models", []))
+        account["models"] = _dedupe([*existing, *account_models])
+        _add_models(data, account_models)
+        return account_models, raw_to_qualified
+
+
 def _drop_none_fields(data: dict[str, Any]) -> None:
     for key in [item_key for item_key, value in data.items() if value is None]:
         data.pop(key, None)
@@ -525,27 +575,24 @@ def _add_models(data: dict[str, Any], models: list[str]) -> None:
 
 
 def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
-    accounts = data["accounts"]
-    account = _find_account(accounts, args.name)
-    if account is None:
-        account = {"name": args.name}
-        accounts.append(account)
-
-    account["provider"] = args.provider
-    account["base_url"] = args.base_url
-    account["enabled"] = not args.disabled
-    if args.auth_mode is not None:
-        account["auth_mode"] = args.auth_mode
-    elif "auth_mode" not in account:
-        account["auth_mode"] = "api_key"
+    account = AccountEntryManager.find_or_create(data=data, name=args.name)
+    AccountEntryManager.configure_core(
+        account=account,
+        provider=args.provider,
+        base_url=args.base_url,
+        enabled=not args.disabled,
+        auth_mode=args.auth_mode,
+        default_auth_mode="api_key",
+    )
 
     AccountConfigMutator.apply_from_args(account=account, args=args)
 
-    account_models = _qualify_models(args.provider, _parse_csv(args.models))
-    if account_models:
-        existing = _qualify_models(args.provider, account.get("models", []))
-        account["models"] = _dedupe([*existing, *account_models])
-        _add_models(data, account_models)
+    account_models, _ = AccountEntryManager.merge_qualified_models(
+        data=data,
+        account=account,
+        provider=args.provider,
+        raw_models=_parse_csv(args.models),
+    )
 
     if args.set_default and account_models:
         data["default_model"] = account_models[0]
@@ -559,38 +606,31 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.provider != "openai-codex":
         raise ValueError("login-chatgpt only supports --provider openai-codex.")
 
-    accounts = data["accounts"]
-    account = _find_account(accounts, args.account)
-    if account is None:
-        account = {"name": args.account}
-        accounts.append(account)
-
-    account["provider"] = args.provider
-    account["base_url"] = args.base_url
-    account["enabled"] = True
-    account["auth_mode"] = "oauth"
+    account = AccountEntryManager.find_or_create(data=data, name=args.account)
+    AccountEntryManager.configure_core(
+        account=account,
+        provider=args.provider,
+        base_url=args.base_url,
+        enabled=True,
+        auth_mode="oauth",
+    )
 
     oauth_data = _run_chatgpt_oauth_login_flow(args)
     account.update(oauth_data)
 
     raw_account_models = _parse_csv(args.models)
-    account_models = _qualify_models(args.provider, raw_account_models)
-    if account_models:
-        existing = _qualify_models(args.provider, account.get("models", []))
-        account["models"] = _dedupe([*existing, *account_models])
-        _add_models(data, account_models)
+    account_models, raw_to_qualified = AccountEntryManager.merge_qualified_models(
+        data=data,
+        account=account,
+        provider=args.provider,
+        raw_models=raw_account_models,
+    )
 
     if args.set_default and account_models:
         data["default_model"] = account_models[0]
     elif account_models:
         current_default = str(data.get("default_model") or "").strip()
         if current_default:
-            raw_to_qualified = {
-                raw_model: qualified_model
-                for raw_model, qualified_model in zip(
-                    raw_account_models, account_models, strict=False
-                )
-            }
             if current_default in raw_to_qualified:
                 data["default_model"] = raw_to_qualified[current_default]
             else:
