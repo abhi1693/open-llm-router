@@ -533,8 +533,8 @@ def _load_local_embedding_runtime(
     local_files_only: bool,
 ) -> tuple[Any, Any, Any] | None:
     try:
-        import torch  # type: ignore
-        from transformers import AutoModel, AutoTokenizer  # type: ignore
+        import torch
+        from transformers import AutoModel, AutoTokenizer
     except ImportError:
         return None
 

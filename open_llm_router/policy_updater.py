@@ -9,13 +9,13 @@ from typing import Any
 
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.live_metrics import (
-    ClassifierCalibrationSnapshot,
     LiveMetricsStore,
     ModelMetricsSnapshot,
     is_target_metrics_key,
     snapshot_to_dict,
 )
 from open_llm_router.persistence import YamlFileStore
+from open_llm_router.route_decision_tracker import ClassifierCalibrationSnapshot
 
 
 @dataclass(slots=True)
