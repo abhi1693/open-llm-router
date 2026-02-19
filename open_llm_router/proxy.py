@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Literal, cast
 
 import httpx
-import yaml
 from fastapi import status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.datastructures import Headers
 
 from open_llm_router.circuit_breaker import CircuitBreakerRegistry
 from open_llm_router.config import BackendAccount
+from open_llm_router.persistence import YamlFileStore
 from open_llm_router.router_engine import RouteDecision
 
 HOP_BY_HOP_RESPONSE_HEADERS = {
@@ -2608,16 +2608,17 @@ class BackendProxy:
         can_persist_expires: bool,
         can_persist_account_id: bool,
     ) -> None:
-        try:
-            with config_path.open("r", encoding="utf-8") as handle:
-                raw = yaml.safe_load(handle) or {}
-        except FileNotFoundError:
+        store = YamlFileStore(config_path)
+        if not store.exists():
             logger.warning(
                 "oauth_refresh_persist_skipped account=%s reason=config_not_found path=%s",
                 account_name,
                 config_path,
             )
             return
+
+        try:
+            raw = store.load(default={})
         except Exception:
             logger.warning(
                 "oauth_refresh_persist_skipped account=%s reason=config_read_error path=%s",
@@ -2685,21 +2686,14 @@ class BackendProxy:
         if not changed:
             return
 
-        temp_path = config_path.with_suffix(config_path.suffix + ".tmp")
         try:
-            with temp_path.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(raw, handle, sort_keys=False)
-            temp_path.replace(config_path)
+            store.write(raw, sort_keys=False)
         except Exception:
             logger.warning(
                 "oauth_refresh_persist_skipped account=%s reason=config_write_error path=%s",
                 account_name,
                 config_path,
             )
-            try:
-                temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
             return
 
         logger.info(

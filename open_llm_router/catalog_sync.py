@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import yaml
+
+from open_llm_router.persistence import YamlFileStore
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_CATALOG_MODELS_PATH = (
@@ -62,11 +63,11 @@ def fetch_openrouter_models(
 
 
 def load_catalog_models_document(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    store = YamlFileStore(path)
+    if not store.exists():
         raise FileNotFoundError(f"Catalog file not found: {path}")
 
-    with path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
+    raw = store.load(default={})
 
     if not isinstance(raw, dict):
         raise ValueError(f"Expected YAML object in '{path}'.")
@@ -79,9 +80,7 @@ def load_catalog_models_document(path: Path) -> dict[str, Any]:
 
 
 def write_catalog_models_document(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
+    YamlFileStore(path).write(payload, sort_keys=False)
 
 
 def sync_catalog_models_pricing(

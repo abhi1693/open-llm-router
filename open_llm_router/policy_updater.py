@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.live_metrics import (
     ClassifierCalibrationSnapshot,
@@ -17,6 +15,7 @@ from open_llm_router.live_metrics import (
     is_target_metrics_key,
     snapshot_to_dict,
 )
+from open_llm_router.persistence import YamlFileStore
 
 
 @dataclass(slots=True)
@@ -483,13 +482,16 @@ def apply_runtime_overrides(
         return 0
 
     try:
-        with file_path.open("r", encoding="utf-8") as handle:
-            raw = yaml.safe_load(handle) or {}
+        raw = YamlFileStore(file_path).load(default={})
     except Exception as exc:
         if logger is not None:
             logger.warning(
                 "runtime_overrides_load_failed path=%s error=%s", file_path, str(exc)
             )
+        return 0
+    if not isinstance(raw, dict):
+        if logger is not None:
+            logger.warning("runtime_overrides_load_failed path=%s error=invalid_root", file_path)
         return 0
 
     overrides = raw.get("model_profiles")
@@ -557,9 +559,7 @@ def _write_runtime_overrides(
         }
     }
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
+    YamlFileStore(path).write(payload, sort_keys=False)
 
 
 def _apply_classifier_calibration_overrides(

@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 import yaml
 
+from open_llm_router.persistence import YamlFileStore
+
 DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
 DEFAULT_COMPLEXITY = {
     "low_max_chars": 1200,
@@ -417,15 +419,9 @@ def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _load_config(path: Path) -> dict[str, Any]:
-    if path.exists():
-        with path.open("r", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle) or {}
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"Expected root object in {path}, found: {type(data).__name__}"
-            )
-    else:
-        data = {}
+    data = YamlFileStore(path).load(default={})
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected root object in {path}, found: {type(data).__name__}")
     _ensure_schema(data)
     return data
 
@@ -477,9 +473,7 @@ def _ensure_default_model(data: dict[str, Any]) -> None:
 
 
 def _save_config(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(data, handle, sort_keys=False)
+    YamlFileStore(path).write(data, sort_keys=False)
 
 
 def _find_account(accounts: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
