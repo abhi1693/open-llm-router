@@ -8,7 +8,7 @@ from math import log, sqrt
 from threading import Lock
 from typing import Any, Iterator
 
-from open_llm_router.classifier import classify_request
+from open_llm_router.classifier import _local_embedding_for_text, classify_request
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.scoring import ModelScore, build_routing_features, score_model
 
@@ -16,6 +16,8 @@ _CONTEXT_WINDOW_OVERFLOW_TOLERANCE = 0.10
 _HIGH_CONTEXT_SUPPLEMENT_TOKENS = 120_000
 _MAX_SUPPLEMENTAL_MODELS = 2
 _UCB_EXPLORATION_WEIGHT = 0.25
+_RERANKER_QUERY_TEXT_LIMIT = 4_000
+_RERANKER_MODEL_HINT_LIMIT = 2_000
 
 
 class InvalidModelError(ValueError):
@@ -206,9 +208,36 @@ class SmartModelRouter:
                     }
                 )
             else:
-                selected_model = default_chain[0]
+                rule_chain_reranker_trace: dict[str, Any] = {
+                    "enabled": bool(self.config.route_reranker.enabled),
+                    "status": "not_evaluated",
+                }
+                chain_for_selection = list(default_chain)
+                if use_factual_rule_chain_guardrail:
+                    rule_chain_reranker_trace["status"] = "skipped_guardrail"
+                else:
+                    baseline_chain_scores = {
+                        model: float(len(chain_for_selection) - index)
+                        for index, model in enumerate(chain_for_selection)
+                    }
+                    (
+                        chain_for_selection,
+                        _,
+                        _,
+                        _,
+                        rule_chain_reranker_trace,
+                    ) = self._apply_route_reranker(
+                        candidate_models=chain_for_selection,
+                        base_selection_scores=baseline_chain_scores,
+                        payload=payload,
+                        signals=signals,
+                        task=task,
+                        complexity=complexity,
+                    )
+
+                selected_model = chain_for_selection[0]
                 fallbacks = [
-                    model for model in default_chain[1:] if model != selected_model
+                    model for model in chain_for_selection[1:] if model != selected_model
                 ]
                 ranked_models = [selected_model, *fallbacks]
                 candidate_scores = []
@@ -219,6 +248,7 @@ class SmartModelRouter:
                 decision_trace.update(
                     {
                         "selected_reason": selected_reason,
+                        "rule_chain_reranker": rule_chain_reranker_trace,
                     }
                 )
             source = "auto"
@@ -387,6 +417,22 @@ class SmartModelRouter:
             item.model: item.utility + provider_order_bonus.get(item.model, 0.0)
             for item in scored
         }
+        (
+            reranked_models,
+            base_selection_scores,
+            reranker_bonus,
+            reranker_similarity,
+            reranker_trace,
+        ) = self._apply_route_reranker(
+            candidate_models=[item.model for item in scored],
+            base_selection_scores=base_selection_scores,
+            payload=payload,
+            signals=signals,
+            task=task,
+            complexity=complexity,
+        )
+        scored_by_model = {item.model: item for item in scored}
+        scored = [scored_by_model[model] for model in reranked_models if model in scored_by_model]
         scored.sort(
             key=lambda item: (
                 base_selection_scores[item.model],
@@ -424,6 +470,10 @@ class SmartModelRouter:
                 row["provider_order_bonus"] = round(
                     provider_order_bonus[item.model], 6
                 )
+            if item.model in reranker_similarity:
+                row["reranker_similarity"] = round(reranker_similarity[item.model], 6)
+            if reranker_bonus.get(item.model, 0.0) != 0.0:
+                row["reranker_bonus"] = round(reranker_bonus[item.model], 6)
             candidate_scores.append(row)
         return (
             selected_model,
@@ -435,6 +485,7 @@ class SmartModelRouter:
                 "configured_candidates": configured_candidates,
                 "default_chain": default_chain,
                 "provider_order_applied": bool(provider_order_index),
+                "reranker": reranker_trace,
                 "bandit": {
                     "strategy": "ucb1",
                     "enabled": len(scored) >= 2,
@@ -491,6 +542,109 @@ class SmartModelRouter:
             self._bandit_selection_counts[model] = (
                 self._bandit_selection_counts.get(model, 0) + 1
             )
+
+    def _apply_route_reranker(
+        self,
+        *,
+        candidate_models: list[str],
+        base_selection_scores: dict[str, float],
+        payload: dict[str, Any],
+        signals: dict[str, Any],
+        task: str,
+        complexity: str,
+    ) -> tuple[list[str], dict[str, float], dict[str, float], dict[str, float], dict[str, Any]]:
+        reranker_cfg = self.config.route_reranker
+        base_chain = list(candidate_models)
+        base_scores = {model: float(base_selection_scores.get(model, 0.0)) for model in base_chain}
+        trace: dict[str, Any] = {
+            "enabled": bool(reranker_cfg.enabled),
+            "backend": reranker_cfg.backend,
+            "status": "disabled",
+        }
+        if not base_chain:
+            trace["status"] = "no_candidates"
+            return base_chain, base_scores, {}, {}, trace
+        if not bool(reranker_cfg.enabled):
+            return base_chain, base_scores, {}, {}, trace
+        if reranker_cfg.backend != "local_embedding":
+            trace["status"] = "unsupported_backend"
+            return base_chain, base_scores, {}, {}, trace
+
+        query_text = _build_reranker_query_text(
+            payload=payload,
+            signals=signals,
+            task=task,
+            complexity=complexity,
+        )
+        if not query_text:
+            trace["status"] = "empty_query"
+            return base_chain, base_scores, {}, {}, trace
+
+        model_name = str(reranker_cfg.local_model_name or "").strip()
+        if not model_name:
+            trace["status"] = "missing_model_name"
+            return base_chain, base_scores, {}, {}, trace
+
+        query_vector = _local_embedding_for_text(
+            model_name=model_name,
+            local_files_only=bool(reranker_cfg.local_files_only),
+            max_length=max(16, int(reranker_cfg.local_max_length)),
+            text=query_text,
+        )
+        if query_vector is None:
+            trace["status"] = "embedding_unavailable"
+            return base_chain, base_scores, {}, {}, trace
+
+        min_similarity = float(reranker_cfg.min_similarity)
+        similarity_weight = float(reranker_cfg.similarity_weight)
+        reranker_bonus: dict[str, float] = {}
+        reranker_similarity: dict[str, float] = {}
+
+        for model in base_chain:
+            model_hint_text = _build_reranker_model_hint(
+                model=model,
+                metadata=self.config.models.get(model),
+                custom_hint=reranker_cfg.model_hints.get(model),
+            )
+            model_vector = _local_embedding_for_text(
+                model_name=model_name,
+                local_files_only=bool(reranker_cfg.local_files_only),
+                max_length=max(16, int(reranker_cfg.local_max_length)),
+                text=model_hint_text,
+            )
+            if model_vector is None:
+                continue
+            similarity = _vector_cosine(query_vector, model_vector)
+            reranker_similarity[model] = similarity
+            reranker_bonus[model] = max(0.0, similarity - min_similarity) * similarity_weight
+
+        if not reranker_similarity:
+            trace["status"] = "model_embeddings_unavailable"
+            return base_chain, base_scores, {}, {}, trace
+
+        adjusted_scores = dict(base_scores)
+        for model, bonus in reranker_bonus.items():
+            adjusted_scores[model] = adjusted_scores.get(model, 0.0) + bonus
+
+        reranked_models = sorted(
+            base_chain,
+            key=lambda model: (
+                adjusted_scores.get(model, 0.0),
+                base_scores.get(model, 0.0),
+            ),
+            reverse=True,
+        )
+        trace.update(
+            {
+                "status": "applied",
+                "query_preview": query_text[:200],
+                "model_count": len(base_chain),
+                "embedded_model_count": len(reranker_similarity),
+                "similarity_weight": similarity_weight,
+                "min_similarity": min_similarity,
+            }
+        )
+        return reranked_models, adjusted_scores, reranker_bonus, reranker_similarity, trace
 
     @staticmethod
     def _required_capabilities(
@@ -854,6 +1008,81 @@ def _iter_text_fragments(value: Any) -> Iterator[str]:
     prompt = value.get("prompt")
     if prompt is not None:
         yield from _iter_text_fragments(prompt)
+
+
+def _build_reranker_query_text(
+    *,
+    payload: dict[str, Any],
+    signals: dict[str, Any],
+    task: str,
+    complexity: str,
+) -> str:
+    pieces = list(_iter_payload_text(payload))
+    request_text = " ".join(piece.strip() for piece in pieces if piece.strip()).strip()
+    if not request_text:
+        preview = str(signals.get("text_preview_total") or signals.get("text_preview") or "")
+        request_text = preview.strip()
+    if not request_text:
+        return ""
+    return (
+        f"task:{task} complexity:{complexity} "
+        f"request:{request_text[:_RERANKER_QUERY_TEXT_LIMIT]}"
+    )
+
+
+def _build_reranker_model_hint(
+    *,
+    model: str,
+    metadata: Any,
+    custom_hint: str | None,
+) -> str:
+    parts: list[str] = [f"model:{model}"]
+    if isinstance(custom_hint, str) and custom_hint.strip():
+        parts.append(custom_hint.strip())
+
+    if isinstance(metadata, dict):
+        for key in ("id", "provider", "type", "tier", "description"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{key}:{value.strip()}")
+        capabilities = metadata.get("capabilities")
+        if isinstance(capabilities, list):
+            normalized_capabilities = [
+                str(item).strip()
+                for item in capabilities
+                if str(item).strip()
+            ]
+            if normalized_capabilities:
+                parts.append("capabilities:" + " ".join(sorted(normalized_capabilities)))
+        task_affinity = metadata.get("task_affinity")
+        if isinstance(task_affinity, dict):
+            affinity_parts: list[str] = []
+            for task_name, weight in sorted(task_affinity.items()):
+                if not isinstance(task_name, str):
+                    continue
+                if not isinstance(weight, (int, float)):
+                    continue
+                if float(weight) <= 0.0:
+                    continue
+                affinity_parts.append(f"{task_name}:{float(weight):.2f}")
+            if affinity_parts:
+                parts.append("task_affinity:" + " ".join(affinity_parts))
+
+    model_lower = model.lower()
+    if any(token in model_lower for token in ("code", "codex", "coder")):
+        parts.append("specialty:coding software engineering")
+    if any(token in model_lower for token in ("reason", "think", "o1", "o3", "o4")):
+        parts.append("specialty:reasoning analysis")
+    if any(token in model_lower for token in ("vision", "image")):
+        parts.append("specialty:vision multimodal")
+
+    return " ".join(parts)[:_RERANKER_MODEL_HINT_LIMIT]
+
+
+def _vector_cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    if len(left) != len(right) or not left:
+        return 0.0
+    return float(sum(a * b for a, b in zip(left, right)))
 
 
 @lru_cache(maxsize=32)

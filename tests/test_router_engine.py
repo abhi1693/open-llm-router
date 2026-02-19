@@ -914,6 +914,150 @@ def test_local_embedding_semantic_classifier_falls_back_to_prototype_when_unavai
     )
 
 
+def test_route_reranker_can_reorder_rule_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_embedding_for_text(
+        *, model_name: str, local_files_only: bool, max_length: int, text: str
+    ) -> tuple[float, float] | None:
+        _ = (model_name, local_files_only, max_length)
+        normalized = text.lower()
+        if "task:coding" in normalized or "write code" in normalized:
+            return (1.0, 0.0)
+        if "general chit chat" in normalized:
+            return (0.0, 1.0)
+        if "specialty:coding" in normalized:
+            return (1.0, 0.0)
+        return (0.0, 1.0)
+
+    monkeypatch.setattr(
+        "open_llm_router.router_engine._local_embedding_for_text",
+        _fake_embedding_for_text,
+    )
+
+    config = RoutingConfig.model_validate(
+        {
+            "default_model": "general-7b",
+            "task_routes": {
+                "general": {"default": "general-7b"},
+                "coding": {"low": ["general-7b", "code-7b"]},
+            },
+            "models": {
+                "general-7b": {"capabilities": ["chat"]},
+                "code-7b": {"capabilities": ["chat"]},
+            },
+            "route_reranker": {
+                "enabled": True,
+                "backend": "local_embedding",
+                "local_model_name": "/models/local-reranker",
+                "local_files_only": True,
+                "local_max_length": 256,
+                "similarity_weight": 4.0,
+                "min_similarity": 0.0,
+                "model_hints": {
+                    "general-7b": "general chit chat summarization",
+                    "code-7b": "write code debug compile",
+                },
+            },
+        }
+    )
+    router = SmartModelRouter(config)
+    decision = router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {"role": "user", "content": "Write code to parse CSV rows safely."}
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert decision.task == "coding"
+    assert decision.selected_model == "code-7b"
+    assert decision.ranked_models[0] == "code-7b"
+    assert decision.decision_trace["rule_chain_reranker"]["status"] == "applied"
+
+
+def test_route_reranker_can_shift_learned_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_embedding_for_text(
+        *, model_name: str, local_files_only: bool, max_length: int, text: str
+    ) -> tuple[float, float] | None:
+        _ = (model_name, local_files_only, max_length)
+        normalized = text.lower()
+        if "task:coding" in normalized or "write code" in normalized:
+            return (1.0, 0.0)
+        if "general writing assistant" in normalized:
+            return (0.0, 1.0)
+        if "software engineering code generation" in normalized:
+            return (1.0, 0.0)
+        return (0.0, 1.0)
+
+    monkeypatch.setattr(
+        "open_llm_router.router_engine._local_embedding_for_text",
+        _fake_embedding_for_text,
+    )
+
+    base_config = RoutingConfig.model_validate(
+        {
+            "default_model": "general-7b",
+            "task_routes": {
+                "general": {"default": "general-7b"},
+                "coding": {"low": ["general-7b", "code-7b"]},
+            },
+            "models": {
+                "general-7b": {"capabilities": ["chat"]},
+                "code-7b": {"capabilities": ["chat"]},
+            },
+            "model_profiles": {
+                "general-7b": {"quality_bias": 1.2},
+                "code-7b": {"quality_bias": -0.8},
+            },
+            "learned_routing": {
+                "enabled": True,
+                "task_candidates": {"coding": ["general-7b", "code-7b"]},
+                "utility_weights": {"cost": 0.0, "latency": 0.0, "failure": 0.0},
+            },
+        }
+    )
+    baseline_router = SmartModelRouter(base_config)
+    baseline_decision = baseline_router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {"role": "user", "content": "Write code to parse CSV rows safely."}
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    reranked_config = base_config.model_copy(deep=True)
+    reranked_config.route_reranker.enabled = True
+    reranked_config.route_reranker.local_model_name = "/models/local-reranker"
+    reranked_config.route_reranker.similarity_weight = 5.0
+    reranked_config.route_reranker.model_hints = {
+        "general-7b": "general writing assistant",
+        "code-7b": "software engineering code generation",
+    }
+    reranked_router = SmartModelRouter(reranked_config)
+    reranked_decision = reranked_router.decide(
+        payload={
+            "model": "auto",
+            "messages": [
+                {"role": "user", "content": "Write code to parse CSV rows safely."}
+            ],
+        },
+        endpoint="/v1/chat/completions",
+    )
+
+    assert baseline_decision.selected_model == "general-7b"
+    assert reranked_decision.selected_model == "code-7b"
+    assert reranked_decision.decision_trace["learned_trace"]["reranker"]["status"] == (
+        "applied"
+    )
+    assert reranked_decision.candidate_scores[0]["model"] == "code-7b"
+    assert "reranker_bonus" in reranked_decision.candidate_scores[0]
+
+
 def test_routes_coding_without_language_name_using_structural_signals() -> None:
     router = _router()
     decision = router.decide(

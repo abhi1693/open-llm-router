@@ -50,6 +50,16 @@ BASE_EFFECTIVE_CONFIG: dict[str, Any] = {
         "min_threshold": 0.05,
         "max_threshold": 0.9,
     },
+    "route_reranker": {
+        "enabled": False,
+        "backend": "local_embedding",
+        "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+        "local_files_only": True,
+        "local_max_length": 256,
+        "similarity_weight": 0.35,
+        "min_similarity": 0.0,
+        "model_hints": {},
+    },
     "learned_routing": {
         "enabled": False,
         "bias": -4.0,

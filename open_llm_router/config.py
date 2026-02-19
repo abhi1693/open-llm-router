@@ -35,6 +35,17 @@ class SemanticClassifierConfig(BaseModel):
     min_confidence: float = 0.2
 
 
+class RouteRerankerConfig(BaseModel):
+    enabled: bool = False
+    backend: Literal["local_embedding"] = "local_embedding"
+    local_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    local_files_only: bool = True
+    local_max_length: int = 256
+    similarity_weight: float = 0.35
+    min_similarity: float = 0.0
+    model_hints: dict[str, str] = Field(default_factory=dict)
+
+
 class UtilityWeights(BaseModel):
     cost: float = 12.0
     latency: float = 0.2
@@ -280,6 +291,7 @@ class RoutingConfig(BaseModel):
     semantic_classifier: SemanticClassifierConfig = Field(
         default_factory=SemanticClassifierConfig
     )
+    route_reranker: RouteRerankerConfig = Field(default_factory=RouteRerankerConfig)
     learned_routing: LearnedRoutingConfig = Field(default_factory=LearnedRoutingConfig)
 
     @staticmethod

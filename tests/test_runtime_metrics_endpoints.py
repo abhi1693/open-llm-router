@@ -102,3 +102,52 @@ def test_startup_prefetches_local_semantic_model_when_enabled(
 
     assert response.status_code == 200
     assert calls == [("sentence-transformers/all-MiniLM-L6-v2", False)]
+
+
+def test_startup_prefetches_local_route_reranker_model_when_enabled(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    config_path = tmp_path / "router.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_model": "openai-codex/gpt-5.2-codex",
+                "task_routes": {
+                    "general": {
+                        "default": ["openai-codex/gpt-5.2-codex"],
+                    }
+                },
+                "route_reranker": {
+                    "enabled": True,
+                    "backend": "local_embedding",
+                    "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                    "local_files_only": False,
+                    "local_max_length": 256,
+                    "similarity_weight": 0.35,
+                    "min_similarity": 0.0,
+                    "model_hints": {},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, bool]] = []
+
+    def _fake_load_local_embedding_runtime(
+        *, model_name: str, local_files_only: bool
+    ) -> tuple[str, str, str] | None:
+        calls.append((model_name, local_files_only))
+        return ("tokenizer", "model", "torch")
+
+    monkeypatch.setattr(
+        "open_llm_router.main._load_local_embedding_runtime",
+        _fake_load_local_embedding_runtime,
+    )
+
+    with _build_client(monkeypatch, ROUTING_CONFIG_PATH=str(config_path)) as client:
+        response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert calls == [("sentence-transformers/all-MiniLM-L6-v2", False)]

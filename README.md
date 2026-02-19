@@ -251,6 +251,51 @@ Behavior:
 - If `local_files_only: true`, startup only uses already-cached/local files (offline-friendly).
 - If local embedding runtime is unavailable at request time, classifier falls back to the prototype semantic path and records `semantic_classifier_status=local_embedding_unavailable` in routing signals.
 
+### Transformer route reranker (optional)
+
+You can optionally apply a local embedding-based reranker to route candidate ordering.
+
+When enabled, the router computes semantic similarity between the request and each candidate model hint, then adds a configurable reranker bonus on top of routing selection scores.
+
+For profile-based config, set it under `raw_overrides` in `router.profile.yaml`:
+
+```yaml
+raw_overrides:
+  route_reranker:
+    enabled: true
+    backend: local_embedding
+    local_model_name: sentence-transformers/all-MiniLM-L6-v2
+    local_files_only: false
+    local_max_length: 256
+    similarity_weight: 0.35
+    min_similarity: 0.0
+    model_hints:
+      openai-codex/gpt-5.2-codex: "software engineering coding code generation"
+      gemini/gemini-2.5-flash: "general assistant concise responses"
+```
+
+Behavior:
+
+- In learned routing mode, reranker bonus is added before final rank + exploration ordering.
+- In rule-chain mode, reranker can reorder the post-constraint candidate chain.
+- Reranker is skipped for factual low-complexity guardrail-pinned queries.
+- On startup, enabled reranker models are prefetched (same local embedding runtime path as semantic classifier).
+
+Benchmark command:
+
+```bash
+router-benchmark-reranker \
+  --config router.profile.yaml \
+  --dataset ./bench/router_cases.jsonl \
+  --output ./bench/reranker_report.json
+```
+
+Dataset format (`.jsonl`, one case per line):
+
+```json
+{"id":"case-1","endpoint":"/v1/chat/completions","payload":{"model":"auto","messages":[{"role":"user","content":"Write code to parse csv rows"}]},"expected_model":"openai-codex/gpt-5.2-codex","expected_task":"coding"}
+```
+
 ## Request Routing Controls
 
 ### `model`

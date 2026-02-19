@@ -844,6 +844,41 @@ def _prefetch_local_semantic_classifier_model(routing_config: RoutingConfig) -> 
     )
 
 
+def _prefetch_local_route_reranker_model(routing_config: RoutingConfig) -> None:
+    reranker_cfg = routing_config.route_reranker
+    if not bool(reranker_cfg.enabled):
+        return
+    if reranker_cfg.backend != "local_embedding":
+        return
+
+    model_name = str(reranker_cfg.local_model_name or "").strip()
+    if not model_name:
+        return
+
+    local_files_only = bool(reranker_cfg.local_files_only)
+    logger.info(
+        "route_reranker_prefetch_start model=%s local_files_only=%s",
+        model_name,
+        local_files_only,
+    )
+    runtime = _load_local_embedding_runtime(
+        model_name=model_name,
+        local_files_only=local_files_only,
+    )
+    if runtime is None:
+        logger.warning(
+            "route_reranker_prefetch_failed model=%s local_files_only=%s",
+            model_name,
+            local_files_only,
+        )
+        return
+    logger.info(
+        "route_reranker_prefetch_complete model=%s local_files_only=%s",
+        model_name,
+        local_files_only,
+    )
+
+
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
@@ -856,6 +891,7 @@ async def startup() -> None:
         logger=logger,
     )
     await asyncio.to_thread(_prefetch_local_semantic_classifier_model, routing_config)
+    await asyncio.to_thread(_prefetch_local_route_reranker_model, routing_config)
     authenticator = Authenticator(settings)
     app.state.settings = settings
     app.state.authenticator = authenticator

@@ -33,6 +33,16 @@ DEFAULT_CLASSIFIER_CALIBRATION = {
     "min_threshold": 0.05,
     "max_threshold": 0.9,
 }
+DEFAULT_ROUTE_RERANKER = {
+    "enabled": False,
+    "backend": "local_embedding",
+    "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "local_files_only": True,
+    "local_max_length": 256,
+    "similarity_weight": 0.35,
+    "min_similarity": 0.0,
+    "model_hints": {},
+}
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -433,6 +443,16 @@ def _ensure_schema(data: dict[str, Any]) -> None:
     classifier_calibration = data["classifier_calibration"]
     for key, value in DEFAULT_CLASSIFIER_CALIBRATION.items():
         classifier_calibration.setdefault(key, value)
+    data.setdefault("route_reranker", {})
+    route_reranker = data["route_reranker"]
+    if not isinstance(route_reranker, dict):
+        route_reranker = {}
+        data["route_reranker"] = route_reranker
+    for reranker_key, reranker_value in DEFAULT_ROUTE_RERANKER.items():
+        if reranker_key == "model_hints" and isinstance(reranker_value, dict):
+            route_reranker.setdefault(reranker_key, dict(reranker_value))
+        else:
+            route_reranker.setdefault(reranker_key, reranker_value)
     data.setdefault("learned_routing", {})
     learned = data["learned_routing"]
     learned.setdefault("enabled", False)

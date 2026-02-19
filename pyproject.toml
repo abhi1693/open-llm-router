@@ -31,6 +31,7 @@ dev = [
 open-llm-router = "open_llm_router.main:run"
 router = "open_llm_router.router_cli:main"
 router-log-analyze = "open_llm_router.log_analysis_cli:main"
+router-benchmark-reranker = "open_llm_router.reranker_benchmark_cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
