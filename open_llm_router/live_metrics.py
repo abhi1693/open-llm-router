@@ -99,6 +99,68 @@ class _ModelMetricsState:
         )
 
 
+class _ModelMetricsUpdater:
+    def __init__(self, *, alpha: float) -> None:
+        self._alpha = alpha
+
+    def apply_route_decision(
+        self,
+        *,
+        state: _ModelMetricsState,
+        now_epoch: float,
+    ) -> None:
+        state.route_decisions += 1
+        state.last_updated_epoch = now_epoch
+
+    def apply_connect(
+        self,
+        *,
+        state: _ModelMetricsState,
+        connect_ms: float,
+        now_epoch: float,
+    ) -> None:
+        value = max(0.0, float(connect_ms))
+        state.samples += 1
+        state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
+        state.last_updated_epoch = now_epoch
+
+    def apply_response(
+        self,
+        *,
+        state: _ModelMetricsState,
+        status: int,
+        request_latency_ms: float | None,
+        now_epoch: float,
+    ) -> None:
+        state.responses += 1
+        state.samples += 1
+        failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
+        state.ewma_failure_rate = _ewma(
+            state.ewma_failure_rate, failure_flag, self._alpha
+        )
+        if failure_flag > 0:
+            state.errors += 1
+        if request_latency_ms is not None:
+            latency = max(0.0, float(request_latency_ms))
+            state.ewma_request_latency_ms = _ewma(
+                state.ewma_request_latency_ms,
+                latency,
+                self._alpha,
+            )
+        state.last_updated_epoch = now_epoch
+
+    def apply_error(
+        self,
+        *,
+        state: _ModelMetricsState,
+        now_epoch: float,
+    ) -> None:
+        state.errors += 1
+        state.samples += 1
+        state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
+        state.last_updated_epoch = now_epoch
+
+
 def _ewma(previous: float | None, value: float, alpha: float) -> float:
     if previous is None:
         return value
@@ -163,6 +225,7 @@ def _metric_keys(
 class InMemoryLiveMetricsStore:
     def __init__(self, *, alpha: float = 0.2) -> None:
         self._alpha = max(0.01, min(1.0, alpha))
+        self._updater = _ModelMetricsUpdater(alpha=self._alpha)
         self._lock = asyncio.Lock()
         self._models: dict[str, _ModelMetricsState] = {}
 
@@ -184,8 +247,7 @@ class InMemoryLiveMetricsStore:
         async with self._lock:
             for key in keys:
                 state = self._models.setdefault(key, _ModelMetricsState(model=key))
-                state.route_decisions += 1
-                state.last_updated_epoch = now
+                self._updater.apply_route_decision(state=state, now_epoch=now)
 
     async def record_connect(
         self,
@@ -199,13 +261,14 @@ class InMemoryLiveMetricsStore:
         if not keys:
             return
         now = time.time()
-        value = max(0.0, float(connect_ms))
         async with self._lock:
             for key in keys:
                 state = self._models.setdefault(key, _ModelMetricsState(model=key))
-                state.samples += 1
-                state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
-                state.last_updated_epoch = now
+                self._updater.apply_connect(
+                    state=state,
+                    connect_ms=connect_ms,
+                    now_epoch=now,
+                )
 
     async def record_response(
         self,
@@ -223,22 +286,12 @@ class InMemoryLiveMetricsStore:
         async with self._lock:
             for key in keys:
                 state = self._models.setdefault(key, _ModelMetricsState(model=key))
-                state.responses += 1
-                state.samples += 1
-                failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
-                state.ewma_failure_rate = _ewma(
-                    state.ewma_failure_rate, failure_flag, self._alpha
+                self._updater.apply_response(
+                    state=state,
+                    status=status,
+                    request_latency_ms=request_latency_ms,
+                    now_epoch=now,
                 )
-                if failure_flag > 0:
-                    state.errors += 1
-                if request_latency_ms is not None:
-                    latency = max(0.0, float(request_latency_ms))
-                    state.ewma_request_latency_ms = _ewma(
-                        state.ewma_request_latency_ms,
-                        latency,
-                        self._alpha,
-                    )
-                state.last_updated_epoch = now
 
     async def record_error(
         self,
@@ -256,12 +309,7 @@ class InMemoryLiveMetricsStore:
         async with self._lock:
             for key in keys:
                 state = self._models.setdefault(key, _ModelMetricsState(model=key))
-                state.errors += 1
-                state.samples += 1
-                state.ewma_failure_rate = _ewma(
-                    state.ewma_failure_rate, 1.0, self._alpha
-                )
-                state.last_updated_epoch = now
+                self._updater.apply_error(state=state, now_epoch=now)
 
     async def snapshot_all(self) -> dict[str, ModelMetricsSnapshot]:
         async with self._lock:
@@ -279,6 +327,7 @@ class RedisLiveMetricsStore:
     ) -> None:
         self._redis = redis_client
         self._alpha = max(0.01, min(1.0, alpha))
+        self._updater = _ModelMetricsUpdater(alpha=self._alpha)
         self._key_prefix = key_prefix
         self._key_ttl_seconds = max(60, int(key_ttl_seconds))
 
@@ -406,8 +455,7 @@ class RedisLiveMetricsStore:
         updated: list[_ModelMetricsState] = []
         for key in keys:
             state = states.get(key, _ModelMetricsState(model=key))
-            state.route_decisions += 1
-            state.last_updated_epoch = now
+            self._updater.apply_route_decision(state=state, now_epoch=now)
             updated.append(state)
         await self._save_states(updated)
 
@@ -422,15 +470,16 @@ class RedisLiveMetricsStore:
         keys = _metric_keys(model=model, provider=provider, account=account)
         if not keys:
             return
-        value = max(0.0, float(connect_ms))
         now = time.time()
         states = await self._load_states(keys)
         updated: list[_ModelMetricsState] = []
         for key in keys:
             state = states.get(key, _ModelMetricsState(model=key))
-            state.samples += 1
-            state.ewma_connect_ms = _ewma(state.ewma_connect_ms, value, self._alpha)
-            state.last_updated_epoch = now
+            self._updater.apply_connect(
+                state=state,
+                connect_ms=connect_ms,
+                now_epoch=now,
+            )
             updated.append(state)
         await self._save_states(updated)
 
@@ -451,22 +500,12 @@ class RedisLiveMetricsStore:
         updated: list[_ModelMetricsState] = []
         for key in keys:
             state = states.get(key, _ModelMetricsState(model=key))
-            state.responses += 1
-            state.samples += 1
-            failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
-            state.ewma_failure_rate = _ewma(
-                state.ewma_failure_rate, failure_flag, self._alpha
+            self._updater.apply_response(
+                state=state,
+                status=status,
+                request_latency_ms=request_latency_ms,
+                now_epoch=now,
             )
-            if failure_flag > 0:
-                state.errors += 1
-            if request_latency_ms is not None:
-                latency = max(0.0, float(request_latency_ms))
-                state.ewma_request_latency_ms = _ewma(
-                    state.ewma_request_latency_ms,
-                    latency,
-                    self._alpha,
-                )
-            state.last_updated_epoch = now
             updated.append(state)
         await self._save_states(updated)
 
@@ -487,10 +526,7 @@ class RedisLiveMetricsStore:
         updated: list[_ModelMetricsState] = []
         for key in keys:
             state = states.get(key, _ModelMetricsState(model=key))
-            state.errors += 1
-            state.samples += 1
-            state.ewma_failure_rate = _ewma(state.ewma_failure_rate, 1.0, self._alpha)
-            state.last_updated_epoch = now
+            self._updater.apply_error(state=state, now_epoch=now)
             updated.append(state)
         await self._save_states(updated)
 
