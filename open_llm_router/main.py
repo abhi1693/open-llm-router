@@ -17,7 +17,6 @@ from fastapi.responses import (
 from open_llm_router.audit import JsonlAuditLogger
 from open_llm_router.auth import AuthConfigurationError, Authenticator
 from open_llm_router.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
-from open_llm_router.classifier import _load_local_embedding_runtime
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
@@ -29,7 +28,8 @@ from open_llm_router.idempotency import (
     build_idempotency_store,
 )
 from open_llm_router.proxy import BackendProxy
-from open_llm_router.router_engine import (
+from open_llm_router.routing.classifier import _load_local_embedding_runtime
+from open_llm_router.routing.router_engine import (
     InvalidModelError,
     RouteDecision,
     RoutingConstraintError,

@@ -20,15 +20,15 @@ from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
 )
-from open_llm_router.profile_compiler import (
+from open_llm_router.profile.profile_compiler import (
     compile_profile_document,
     compile_profile_file,
     get_builtin_profile_template,
     is_profile_document,
     list_builtin_profiles,
 )
-from open_llm_router.profile_config import RouterProfileConfig
-from open_llm_router.scoring import build_routing_features, score_model
+from open_llm_router.profile.profile_config import RouterProfileConfig
+from open_llm_router.routing.scoring import build_routing_features, score_model
 from open_llm_router.utils.cli_output import emit_or_persist_yaml, print_yaml
 from open_llm_router.utils.cli_utils import (
     build_router_summary,

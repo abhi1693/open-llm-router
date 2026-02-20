@@ -335,7 +335,7 @@ def load_routing_config_with_metadata(
         load_internal_catalog,
         validate_routing_document_against_catalog,
     )
-    from open_llm_router.profile_compiler import (
+    from open_llm_router.profile.profile_compiler import (
         compile_profile_document,
         is_profile_document,
     )

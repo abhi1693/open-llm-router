@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from open_llm_router.config import load_routing_config_with_metadata
-from open_llm_router.router_engine import SmartModelRouter
+from open_llm_router.routing.router_engine import SmartModelRouter
 from open_llm_router.utils.cli_output import write_cli_report
 
 

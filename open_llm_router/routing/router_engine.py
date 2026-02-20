@@ -8,9 +8,16 @@ from math import log, sqrt
 from threading import Lock
 from typing import Any, Iterator
 
-from open_llm_router.classifier import _local_embedding_for_text, classify_request
 from open_llm_router.config import ModelProfile, RoutingConfig
-from open_llm_router.scoring import ModelScore, build_routing_features, score_model
+from open_llm_router.routing.classifier import (
+    _local_embedding_for_text,
+    classify_request,
+)
+from open_llm_router.routing.scoring import (
+    ModelScore,
+    build_routing_features,
+    score_model,
+)
 from open_llm_router.utils.sequence_utils import (
     dedupe_preserving_order as _dedupe_preserving_order,
 )

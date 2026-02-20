@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from open_llm_router.routing_defaults import (
+from open_llm_router.routing.routing_defaults import (
     DEFAULT_CLASSIFIER_CALIBRATION,
     DEFAULT_COMPLEXITY,
     DEFAULT_RETRY_STATUSES,

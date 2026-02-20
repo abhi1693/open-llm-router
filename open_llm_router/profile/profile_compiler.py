@@ -14,11 +14,11 @@ from open_llm_router.catalog import (
     load_internal_catalog,
     validate_routing_document_against_catalog,
 )
-from open_llm_router.profile_config import (
+from open_llm_router.profile.profile_config import (
     GuardrailThresholds,
     RouterProfileConfig,
 )
-from open_llm_router.routing_defaults import (
+from open_llm_router.routing.routing_defaults import (
     DEFAULT_CLASSIFIER_CALIBRATION,
     DEFAULT_COMPLEXITY,
     DEFAULT_LEARNED_ROUTING,
@@ -54,7 +54,7 @@ class CompileResult:
 
 @lru_cache
 def _load_profiles_file() -> dict[str, Any]:
-    profiles_path = Path(__file__).resolve().parent / "catalog" / "profiles.yaml"
+    profiles_path = Path(__file__).resolve().parents[1] / "catalog" / "profiles.yaml"
     raw = load_yaml_dict(
         profiles_path,
         error_message="Expected profiles catalog to be an object.",

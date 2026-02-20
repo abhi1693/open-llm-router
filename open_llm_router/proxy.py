@@ -18,7 +18,7 @@ from starlette.datastructures import Headers
 from open_llm_router.circuit_breaker import CircuitBreakerRegistry
 from open_llm_router.config import BackendAccount
 from open_llm_router.persistence import YamlFileStore
-from open_llm_router.router_engine import RouteDecision
+from open_llm_router.routing.router_engine import RouteDecision
 from open_llm_router.utils.model_utils import split_model_ref
 from open_llm_router.utils.sequence_utils import (
     dedupe_preserving_order as _dedupe_preserving_order,
