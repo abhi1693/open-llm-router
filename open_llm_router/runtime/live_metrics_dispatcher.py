@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from open_llm_router.runtime.proxy_metrics import ProxyMetricsAccumulator
 from open_llm_router.runtime.route_decision_tracker import RouteDecisionTracker
@@ -46,7 +47,8 @@ class LiveMetricsEventDispatcher:
         self._proxy_metrics = proxy_metrics
         self._route_decision_tracker = route_decision_tracker
         self._model_handlers: dict[
-            str, Callable[[dict[str, Any], EventContext], Awaitable[None]]
+            str,
+            Callable[[dict[str, Any], EventContext], Awaitable[None]],
         ] = {
             "proxy_upstream_connected": self._handle_proxy_upstream_connected,
             "proxy_response": self._handle_proxy_response,
@@ -96,7 +98,9 @@ class LiveMetricsEventDispatcher:
         )
 
     async def _handle_proxy_upstream_connected(
-        self, event: dict[str, Any], context: EventContext
+        self,
+        event: dict[str, Any],
+        context: EventContext,
     ) -> None:
         connect_ms = event.get("connect_ms")
         if not isinstance(connect_ms, (int, float)):
@@ -116,7 +120,9 @@ class LiveMetricsEventDispatcher:
         self._proxy_metrics.record_connect(connect_target_key, connect_value)
 
     async def _handle_proxy_response(
-        self, event: dict[str, Any], context: EventContext
+        self,
+        event: dict[str, Any],
+        context: EventContext,
     ) -> None:
         status = event.get("status")
         if not isinstance(status, int):
@@ -137,12 +143,16 @@ class LiveMetricsEventDispatcher:
         )
 
     async def _handle_proxy_retry(
-        self, _: dict[str, Any], context: EventContext
+        self,
+        _: dict[str, Any],
+        context: EventContext,
     ) -> None:
         self._proxy_metrics.record_retry(context.target_key)
 
     async def _handle_proxy_request_error(
-        self, event: dict[str, Any], context: EventContext
+        self,
+        event: dict[str, Any],
+        context: EventContext,
     ) -> None:
         error_type = str(event.get("error_type") or "").strip() or "unknown"
         attempt_latency_ms = event.get("attempt_latency_ms")

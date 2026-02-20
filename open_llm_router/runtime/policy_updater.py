@@ -121,7 +121,7 @@ class RuntimePolicyUpdater:
         self._status.last_feature_weight_scale = feature_weight_scale
         self._status.last_classifier_adjusted = classifier_adjusted
         self._status.classifier_adjustment_history = list(
-            self._classifier_adjustment_history
+            self._classifier_adjustment_history,
         )
         self._status.last_error = None
         return applied + feature_weight_adjusted_count
@@ -135,7 +135,8 @@ class RuntimePolicyUpdater:
                 self._status.last_error = str(exc)
                 if self._logger is not None:
                     self._logger.warning(
-                        "runtime_policy_update_failed error=%s", str(exc)
+                        "runtime_policy_update_failed error=%s",
+                        str(exc),
                     )
             await asyncio.sleep(self._interval_seconds)
 
@@ -220,8 +221,9 @@ class RuntimePolicyUpdater:
                 if metrics.ewma_failure_rate is not None
                 else float(
                     self._routing_config.model_profiles.get(
-                        model, ModelProfile()
-                    ).failure_rate
+                        model,
+                        ModelProfile(),
+                    ).failure_rate,
                 )
             )
             observed_failure = min(max(observed_failure, 0.0), 1.0)
@@ -235,8 +237,9 @@ class RuntimePolicyUpdater:
                 if baseline_profile is not None and baseline_profile.latency_ms > 0
                 else float(
                     self._routing_config.model_profiles.get(
-                        model, ModelProfile()
-                    ).latency_ms
+                        model,
+                        ModelProfile(),
+                    ).latency_ms,
                 )
             )
             latency_ratio = 1.0
@@ -431,7 +434,8 @@ class RuntimePolicyUpdater:
             else None
         )
         if snapshot is not None and not isinstance(
-            snapshot, ClassifierCalibrationSnapshot
+            snapshot,
+            ClassifierCalibrationSnapshot,
         ):
             snapshot = None
 
@@ -439,10 +443,10 @@ class RuntimePolicyUpdater:
             "enabled": bool(cfg.enabled),
             "target_secondary_success_rate": float(cfg.target_secondary_success_rate),
             "secondary_low_confidence_min_confidence": float(
-                cfg.secondary_low_confidence_min_confidence
+                cfg.secondary_low_confidence_min_confidence,
             ),
             "secondary_mixed_signal_min_confidence": float(
-                cfg.secondary_mixed_signal_min_confidence
+                cfg.secondary_mixed_signal_min_confidence,
             ),
             "min_samples": int(cfg.min_samples),
             "adjustment_step": float(cfg.adjustment_step),
@@ -548,7 +552,9 @@ class RuntimeOverridesManager:
 
         if applied and self._logger is not None and source_path is not None:
             self._logger.info(
-                "runtime_overrides_applied path=%s models=%d", source_path, applied
+                "runtime_overrides_applied path=%s models=%d",
+                source_path,
+                applied,
             )
         return applied
 
@@ -577,10 +583,10 @@ class RuntimeOverridesManager:
             "feature_weights": {
                 name: float(value)
                 for name, value in sorted(
-                    self._routing_config.learned_routing.feature_weights.items()
+                    self._routing_config.learned_routing.feature_weights.items(),
                 )
                 if isinstance(value, (int, float))
-            }
+            },
         }
 
         write_yaml_dict(path, payload)

@@ -173,7 +173,7 @@ SECONDARY_TASK_TOKEN_HINTS: dict[str, frozenset[str]] = {
             "module",
             "library",
             "class",
-        }
+        },
     ),
     "thinking": frozenset(
         {
@@ -187,7 +187,7 @@ SECONDARY_TASK_TOKEN_HINTS: dict[str, frozenset[str]] = {
             "decide",
             "choose",
             "better",
-        }
+        },
     ),
     "instruction_following": frozenset(
         {
@@ -202,7 +202,7 @@ SECONDARY_TASK_TOKEN_HINTS: dict[str, frozenset[str]] = {
             "extract",
             "rephrase",
             "grammar",
-        }
+        },
     ),
     "general": frozenset({"hello", "hi", "thanks", "explain", "what", "tell"}),
 }
@@ -266,7 +266,7 @@ _SEMANTIC_STOPWORDS = frozenset(
         "with",
         "you",
         "your",
-    }
+    },
 )
 
 _SECONDARY_TOKEN_PATTERN = re.compile(r"[a-z0-9_+#.-]+")
@@ -351,7 +351,10 @@ def _extract_reasoning_effort(payload: dict[str, Any]) -> str | None:
 
 
 def _collect_text_and_signals(
-    value: Any, parent_key: str, texts: list[str], signals: dict[str, Any]
+    value: Any,
+    parent_key: str,
+    texts: list[str],
+    signals: dict[str, Any],
 ) -> None:
     if value is None:
         return
@@ -383,7 +386,8 @@ def _collect_text_and_signals(
 
 
 def _collect_message_texts(
-    payload: dict[str, Any], signals: dict[str, Any]
+    payload: dict[str, Any],
+    signals: dict[str, Any],
 ) -> tuple[list[str], list[str], str, str]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
@@ -399,7 +403,10 @@ def _collect_message_texts(
         role = str(message.get("role") or "").lower().strip()
         message_texts: list[str] = []
         _collect_text_and_signals(
-            message.get("content"), "content", message_texts, signals
+            message.get("content"),
+            "content",
+            message_texts,
+            signals,
         )
         all_message_texts.extend(message_texts)
         message_blob = " ".join(message_texts).strip()
@@ -407,7 +414,7 @@ def _collect_message_texts(
             user_texts.extend(message_texts)
             if message_blob:
                 latest_user_text = message_blob
-        if message_blob and role not in {"system"}:
+        if message_blob and role != "system":
             latest_conversation_text = message_blob
     return user_texts, all_message_texts, latest_user_text, latest_conversation_text
 
@@ -469,9 +476,9 @@ def _normalize_semantic_token(token: str) -> str:
         normalized = normalized[:-3] + "y"
     elif normalized.endswith("ing") and len(normalized) > 5:
         normalized = normalized[:-3]
-    elif normalized.endswith("ed") and len(normalized) > 4:
-        normalized = normalized[:-2]
-    elif normalized.endswith("es") and len(normalized) > 4:
+    elif (normalized.endswith("ed") and len(normalized) > 4) or (
+        normalized.endswith("es") and len(normalized) > 4
+    ):
         normalized = normalized[:-2]
     elif normalized.endswith("s") and len(normalized) > 3:
         normalized = normalized[:-1]
@@ -616,7 +623,7 @@ def _mean_normalized_vector(
 def _cosine_similarity(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     if len(a) != len(b) or not a:
         return 0.0
-    return sum(left * right for left, right in zip(a, b))
+    return sum(left * right for left, right in zip(a, b, strict=False))
 
 
 @lru_cache(maxsize=16)
@@ -721,7 +728,8 @@ def _semantic_task_prediction(
 
 
 def _collect_structural_code_signals(
-    text_blob: str, text_lower: str
+    text_blob: str,
+    text_lower: str,
 ) -> tuple[list[str], float]:
     matches: list[str] = []
     score = 0.0
@@ -923,7 +931,8 @@ def _select_task_from_scores(
             semantic_used = True
 
     secondary_trigger = confidence < 0.45 or _contains_any(
-        text_lower, SECONDARY_INSTRUCTION_HINTS
+        text_lower,
+        SECONDARY_INSTRUCTION_HINTS,
     )
     if secondary_trigger:
         (
@@ -933,10 +942,13 @@ def _select_task_from_scores(
         ) = _secondary_task_prediction(text_lower)
         if structural_code_score > 0.0:
             secondary_scores["coding"] = secondary_scores.get("coding", 0.0) + min(
-                1.2, structural_code_score
+                1.2,
+                structural_code_score,
             )
             ordered_secondary = sorted(
-                secondary_scores.items(), key=lambda item: item[1], reverse=True
+                secondary_scores.items(),
+                key=lambda item: item[1],
+                reverse=True,
             )
             secondary_task = ordered_secondary[0][0]
             secondary_top = ordered_secondary[0][1]
@@ -944,7 +956,8 @@ def _select_task_from_scores(
                 ordered_secondary[1][1] if len(ordered_secondary) > 1 else 0.0
             )
             secondary_confidence_value = (secondary_top - secondary_second) / max(
-                1.0, secondary_top
+                1.0,
+                secondary_top,
             )
         secondary_confidence = secondary_confidence_value
         min_secondary_confidence = (
@@ -1025,7 +1038,7 @@ def classify_request(
         latest_user_structural_code_score,
     ) = _collect_structural_code_signals(latest_user_text, latest_user_text_lower)
 
-    code_score = len(matched_code_hints) + int(round(structural_code_score))
+    code_score = len(matched_code_hints) + round(structural_code_score)
     think_score = len(matched_thinking_hints)
     instruction_score = len(matched_instruction_hints)
     if "```" in text_blob:
@@ -1098,7 +1111,8 @@ def classify_request(
             semantic_confidence=semantic_task_confidence,
             semantic_scores=semantic_task_scores,
             semantic_min_confidence=max(
-                0.0, float(effective_semantic_cfg.min_confidence)
+                0.0,
+                float(effective_semantic_cfg.min_confidence),
             ),
             calibration_cfg=effective_calibration_cfg,
         )
@@ -1134,7 +1148,7 @@ def classify_request(
     if reasoning_effort in {"high", "xhigh", "max"}:
         complexity = "xhigh"
         complexity_adjustments.append("set:xhigh_for_reasoning_effort_high")
-    elif reasoning_effort in {"medium"}:
+    elif reasoning_effort == "medium":
         complexity = _bump_complexity(complexity)
         complexity_adjustments.append("bump:reasoning_effort_medium")
 
@@ -1170,10 +1184,10 @@ def classify_request(
             },
             "secondary_classifier_used": secondary_classifier_used,
             "secondary_min_confidence_low": float(
-                effective_calibration_cfg.secondary_low_confidence_min_confidence
+                effective_calibration_cfg.secondary_low_confidence_min_confidence,
             ),
             "secondary_min_confidence_mixed": float(
-                effective_calibration_cfg.secondary_mixed_signal_min_confidence
+                effective_calibration_cfg.secondary_mixed_signal_min_confidence,
             ),
             "secondary_task_confidence": (
                 None
@@ -1187,7 +1201,7 @@ def classify_request(
             "latest_turn_override_applied": latest_turn_override_applied,
             "latest_user_text_length": len(latest_user_text),
             "latest_user_factual_query": bool(
-                _LATEST_FACTUAL_QUERY_PATTERN.search(latest_user_text)
+                _LATEST_FACTUAL_QUERY_PATTERN.search(latest_user_text),
             ),
             "latest_user_references_context": any(
                 hint in latest_user_text_lower
@@ -1195,7 +1209,8 @@ def classify_request(
             ),
             "latest_user_structural_code_hints": latest_user_structural_code_hints,
             "latest_user_structural_code_score": round(
-                latest_user_structural_code_score, 6
+                latest_user_structural_code_score,
+                6,
             ),
             "complexity_base": complexity_base,
             "complexity_adjustments": complexity_adjustments,
@@ -1208,6 +1223,6 @@ def classify_request(
             "text_preview": text_blob[:500],
             "text_preview_total": full_text_blob[:500],
             "endpoint": endpoint,
-        }
+        },
     )
     return task, complexity, signals

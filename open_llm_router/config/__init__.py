@@ -105,11 +105,18 @@ class TaskRoute(BaseModel):
     def pick(self, complexity: str) -> list[str]:
         if complexity == "low":
             return self._pick_first_non_empty(
-                self.low, self.medium, self.high, self.xhigh, self.default
+                self.low,
+                self.medium,
+                self.high,
+                self.xhigh,
+                self.default,
             )
         if complexity == "medium":
             return self._pick_first_non_empty(
-                self.medium, self.high, self.xhigh, self.default
+                self.medium,
+                self.high,
+                self.xhigh,
+                self.default,
             )
         if complexity == "high":
             return self._pick_first_non_empty(self.high, self.xhigh, self.default)
@@ -133,7 +140,7 @@ class BackendAccount(AccountCommonFields):
                 return False
             for configured in self.models:
                 configured_provider, configured_model_id = self._split_model_ref(
-                    configured
+                    configured,
                 )
                 if configured_model_id != expected:
                     continue
@@ -177,35 +184,40 @@ class BackendAccount(AccountCommonFields):
         if self.auth_mode != "oauth":
             return None
         return self._resolve_env_or_value(
-            self.oauth_access_token_env, self.oauth_access_token
+            self.oauth_access_token_env,
+            self.oauth_access_token,
         )
 
     def resolved_oauth_refresh_token(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
         return self._resolve_env_or_value(
-            self.oauth_refresh_token_env, self.oauth_refresh_token
+            self.oauth_refresh_token_env,
+            self.oauth_refresh_token,
         )
 
     def resolved_oauth_client_id(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
         return self._resolve_env_or_value(
-            self.oauth_client_id_env, self.oauth_client_id
+            self.oauth_client_id_env,
+            self.oauth_client_id,
         )
 
     def resolved_oauth_client_secret(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
         return self._resolve_env_or_value(
-            self.oauth_client_secret_env, self.oauth_client_secret
+            self.oauth_client_secret_env,
+            self.oauth_client_secret,
         )
 
     def resolved_oauth_account_id(self) -> str | None:
         if self.auth_mode != "oauth":
             return None
         return self._resolve_env_or_value(
-            self.oauth_account_id_env, self.oauth_account_id
+            self.oauth_account_id_env,
+            self.oauth_account_id,
         )
 
     def resolved_oauth_expires_at(self) -> int | None:
@@ -259,10 +271,10 @@ class RoutingConfig(BaseModel):
     retry_statuses: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
     classifier_calibration: ClassifierCalibrationConfig = Field(
-        default_factory=ClassifierCalibrationConfig
+        default_factory=ClassifierCalibrationConfig,
     )
     semantic_classifier: SemanticClassifierConfig = Field(
-        default_factory=SemanticClassifierConfig
+        default_factory=SemanticClassifierConfig,
     )
     route_reranker: RouteRerankerConfig = Field(default_factory=RouteRerankerConfig)
     learned_routing: LearnedRoutingConfig = Field(default_factory=LearnedRoutingConfig)
@@ -273,7 +285,9 @@ class RoutingConfig(BaseModel):
 
     @classmethod
     def _normalize_model_metadata(
-        cls, model_key: str, raw_metadata: dict[str, Any] | None
+        cls,
+        model_key: str,
+        raw_metadata: dict[str, Any] | None,
     ) -> dict[str, Any]:
         return normalize_model_metadata(model_key, raw_metadata)
 
@@ -329,7 +343,7 @@ class RoutingConfigLoader:
         if not self._path.exists():
             raise FileNotFoundError(
                 f"Routing config not found at '{self._config_path}'. "
-                "Create it or set ROUTING_CONFIG_PATH."
+                "Create it or set ROUTING_CONFIG_PATH.",
             )
         return load_yaml_dict(
             self._path,

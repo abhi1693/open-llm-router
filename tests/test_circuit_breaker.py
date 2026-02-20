@@ -13,7 +13,7 @@ def test_circuit_breaker_opens_after_threshold_and_recovers_to_half_open() -> No
             failure_threshold=2,
             recovery_timeout_seconds=0.0,
             half_open_max_requests=1,
-        )
+        ),
     )
     key = "acct-a:openai"
 
@@ -36,7 +36,7 @@ def test_circuit_breaker_half_open_success_closes_breaker() -> None:
             failure_threshold=1,
             recovery_timeout_seconds=0.0,
             half_open_max_requests=1,
-        )
+        ),
     )
     key = "acct-b:openai"
 
@@ -59,7 +59,7 @@ def test_circuit_breaker_half_open_failure_reopens_breaker() -> None:
             failure_threshold=1,
             recovery_timeout_seconds=0.0,
             half_open_max_requests=1,
-        )
+        ),
     )
     key = "acct-c:openai"
 

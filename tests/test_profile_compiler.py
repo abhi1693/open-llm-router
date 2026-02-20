@@ -20,7 +20,7 @@ def test_compile_profile_document_produces_effective_routing_config() -> None:
             "per_task": {
                 "coding": {
                     "max_failure_rate": 0.04,
-                }
+                },
             },
         },
         "accounts": [
@@ -30,7 +30,7 @@ def test_compile_profile_document_produces_effective_routing_config() -> None:
                 "auth_mode": "oauth",
                 "oauth_access_token_env": "CHATGPT_OAUTH_ACCESS_TOKEN",
                 "models": ["gpt-5.2", "gpt-5.2-codex"],
-            }
+            },
         ],
     }
 
@@ -54,7 +54,7 @@ def test_compile_profile_document_rejects_unknown_provider() -> None:
             {
                 "name": "bad",
                 "provider": "unknown-provider",
-            }
+            },
         ],
     }
 
@@ -77,7 +77,7 @@ def test_compile_profile_document_supports_nvidia_provider_models() -> None:
                 "auth_mode": "api_key",
                 "api_key_env": "NVIDIA_API_KEY",
                 "models": ["z-ai/glm5"],
-            }
+            },
         ],
         "raw_overrides": {
             "default_model": "nvidia/z-ai/glm5",
@@ -104,7 +104,7 @@ def test_compile_profile_document_supports_nvidia_nested_slash_model_id() -> Non
                 "auth_mode": "api_key",
                 "api_key_env": "NVIDIA_API_KEY",
                 "models": ["moonshotai/kimi-k2.5"],
-            }
+            },
         ],
         "raw_overrides": {
             "default_model": "nvidia/moonshotai/kimi-k2.5",
@@ -178,7 +178,7 @@ def test_compile_profile_document_defaults_account_models_to_provider_catalog() 
                 "auth_mode": "api_key",
                 "api_key_env": "NVIDIA_API_KEY",
                 # Intentionally omit models to use provider defaults.
-            }
+            },
         ],
     }
 

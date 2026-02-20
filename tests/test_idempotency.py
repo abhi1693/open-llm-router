@@ -192,7 +192,7 @@ def test_proxy_terminal_event_emitted_for_success(monkeypatch: Any) -> None:
     captured: list[dict[str, Any]] = []
     with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         previous_hook = app.state.audit_event_hook
-        app.state.audit_event_hook = lambda event: captured.append(event)
+        app.state.audit_event_hook = captured.append
         app.state.audit_payload_summary_enabled = False
         try:
             response = client.post(
@@ -232,7 +232,7 @@ def test_proxy_terminal_event_emitted_for_exhausted(monkeypatch: Any) -> None:
                 "error": {
                     "type": "routing_exhausted",
                     "message": "All model/account targets failed.",
-                }
+                },
             },
         )
 
@@ -245,7 +245,7 @@ def test_proxy_terminal_event_emitted_for_exhausted(monkeypatch: Any) -> None:
     captured: list[dict[str, Any]] = []
     with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         previous_hook = app.state.audit_event_hook
-        app.state.audit_event_hook = lambda event: captured.append(event)
+        app.state.audit_event_hook = captured.append
         app.state.audit_payload_summary_enabled = False
         try:
             response = client.post(
@@ -290,7 +290,7 @@ def test_proxy_terminal_event_emitted_for_unhandled_error(monkeypatch: Any) -> N
     captured: list[dict[str, Any]] = []
     with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         previous_hook = app.state.audit_event_hook
-        app.state.audit_event_hook = lambda event: captured.append(event)
+        app.state.audit_event_hook = captured.append
         app.state.audit_payload_summary_enabled = False
         try:
             with pytest.raises(RuntimeError):

@@ -150,13 +150,13 @@ def fetch_openrouter_models(
     )
     if response.status_code >= 400:
         raise RuntimeError(
-            f"Failed to fetch OpenRouter models ({response.status_code}): {response.text}"
+            f"Failed to fetch OpenRouter models ({response.status_code}): {response.text}",
         )
 
     body = response.json()
     if not isinstance(body, dict):
         raise RuntimeError(
-            "Invalid OpenRouter models response: expected top-level object."
+            "Invalid OpenRouter models response: expected top-level object.",
         )
 
     data = body.get("data")
@@ -283,7 +283,8 @@ def _extract_costs_per_1k(
 
     # Keep stable decimal output for YAML and comparisons.
     return round(prompt_per_token * 1000.0, 12), round(
-        completion_per_token * 1000.0, 12
+        completion_per_token * 1000.0,
+        12,
     )
 
 

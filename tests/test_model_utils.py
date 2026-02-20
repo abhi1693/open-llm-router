@@ -32,10 +32,10 @@ def test_normalize_model_metadata_sets_default_id_when_missing() -> None:
 
 def test_coerce_models_map_accepts_list_and_mapping_inputs() -> None:
     assert coerce_models_map(["openai/gpt-5.2"]) == {
-        "openai/gpt-5.2": {"id": "gpt-5.2"}
+        "openai/gpt-5.2": {"id": "gpt-5.2"},
     }
     assert coerce_models_map({"openai/gpt-5.2": {"tier": "balanced"}}) == {
-        "openai/gpt-5.2": {"tier": "balanced", "id": "gpt-5.2"}
+        "openai/gpt-5.2": {"tier": "balanced", "id": "gpt-5.2"},
     }
 
 

@@ -37,7 +37,10 @@ class TokenMetadataParser:
 
     @classmethod
     def extract_chatgpt_account_id(
-        cls, token: str | None, *, claim_path: str | None = None
+        cls,
+        token: str | None,
+        *,
+        claim_path: str | None = None,
     ) -> str | None:
         if not token:
             return None

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Literal, cast
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import status
@@ -180,7 +182,9 @@ def _json_response_with_routing_diagnostics(
         if name.lower() == "content-type":
             response_headers.pop(name, None)
     return JSONResponse(
-        status_code=status_code, content=parsed, headers=response_headers
+        status_code=status_code,
+        content=parsed,
+        headers=response_headers,
     )
 
 
@@ -216,7 +220,7 @@ class UpstreamHeaderBuilder:
             "openai-project",
             "traceparent",
             "tracestate",
-        }
+        },
     )
     SAFE_X_HEADERS: frozenset[str] = frozenset(
         {
@@ -232,7 +236,7 @@ class UpstreamHeaderBuilder:
             "x-stainless-retry-count",
             "x-stainless-runtime",
             "x-stainless-runtime-version",
-        }
+        },
     )
     CANONICAL_HEADER_NAMES: dict[str, str] = {
         "accept": "Accept",
@@ -389,7 +393,7 @@ def _extract_text_content(content: Any) -> str:
             if isinstance(image_url, str) and image_url.strip():
                 chunks.append(image_url)
     text = "\n".join(chunks).strip()
-    return text if text else _coerce_text(content)
+    return text or _coerce_text(content)
 
 
 def _to_codex_input_parts(content: Any, role: str) -> list[dict[str, Any]]:
@@ -451,7 +455,8 @@ def _to_codex_input_parts(content: Any, role: str) -> list[dict[str, Any]]:
 
 
 def _extract_codex_instructions(
-    payload: dict[str, Any], messages: list[dict[str, Any]]
+    payload: dict[str, Any],
+    messages: list[dict[str, Any]],
 ) -> str:
     explicit = payload.get("instructions")
     instructions: list[str] = []
@@ -518,7 +523,7 @@ def _normalize_responses_input_for_codex(input_value: Any) -> list[dict[str, Any
                 text = item.strip()
                 if text:
                     output.append(
-                        {"role": "user", "content": [_as_input_text_part(text)]}
+                        {"role": "user", "content": [_as_input_text_part(text)]},
                     )
                 continue
             if isinstance(item, dict):
@@ -612,18 +617,17 @@ def _prepare_codex_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]
             prompt = payload.get("prompt")
             if isinstance(prompt, str) and prompt.strip():
                 input_messages = [
-                    {"role": "user", "content": [_as_input_text_part(prompt.strip())]}
+                    {"role": "user", "content": [_as_input_text_part(prompt.strip())]},
                 ]
         codex_payload["input"] = input_messages
+    elif "input" in payload:
+        codex_payload["input"] = _normalize_responses_input_for_codex(
+            payload.get("input"),
+        )
+    elif messages:
+        codex_payload["input"] = _chat_messages_to_codex_input(messages)
     else:
-        if "input" in payload:
-            codex_payload["input"] = _normalize_responses_input_for_codex(
-                payload.get("input")
-            )
-        elif messages:
-            codex_payload["input"] = _chat_messages_to_codex_input(messages)
-        else:
-            codex_payload["input"] = []
+        codex_payload["input"] = []
 
     passthrough_fields = {
         "temperature",
@@ -651,7 +655,7 @@ def _prepare_codex_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]
 
     if "tool_choice" in payload:
         codex_payload["tool_choice"] = _normalize_codex_tool_choice(
-            payload.get("tool_choice")
+            payload.get("tool_choice"),
         )
     elif "function_call" in payload:
         function_call = payload.get("function_call")
@@ -689,7 +693,8 @@ def _drop_none_fields(value: Any) -> Any:
 
 
 def _prepare_gemini_chat_payload(
-    payload: dict[str, Any], stream: bool
+    payload: dict[str, Any],
+    stream: bool,
 ) -> dict[str, Any]:
     allowed_fields = {
         "model",
@@ -834,7 +839,7 @@ class ProxyResponseAdapter:
         response_headers["x-router-attempted-targets"] = ",".join(attempted_targets)
         if route_decision.ranked_models:
             response_headers["x-router-ranked-models"] = ",".join(
-                route_decision.ranked_models
+                route_decision.ranked_models,
             )
         if route_decision.candidate_scores:
             top = route_decision.candidate_scores[0]
@@ -856,7 +861,7 @@ class ProxyResponseAdapter:
             len(attempted_targets),
         )
         if audit_hook is not None:
-            try:
+            with contextlib.suppress(Exception):
                 audit_hook(
                     {
                         "event": "proxy_response",
@@ -871,10 +876,8 @@ class ProxyResponseAdapter:
                         "attempts": len(attempted_targets),
                         "attempted_targets": attempted_targets,
                         "attempted_upstream_models": attempted_upstream_models,
-                    }
+                    },
                 )
-            except Exception:
-                pass
 
         if adapter == "chat_completions":
             return await ChatCompletionsResponseAdapter.to_chat_completions_response(
@@ -976,7 +979,7 @@ class ProxyAttemptProcessor(_ProxyComponent):
                     "skipped_rate_limited": stats.skipped_rate_limited,
                     "skipped_circuit_open": stats.skipped_circuit_open,
                     "skipped_oauth_token_missing": stats.skipped_oauth_token_missing,
-                }
+                },
             },
         )
 
@@ -1020,7 +1023,7 @@ class ProxyAttemptProcessor(_ProxyComponent):
         stats: ProxyExecutionStats,
     ) -> bool:
         if not self._proxy.rate_limit_tracker.is_temporarily_rate_limited(
-            target.account_name
+            target.account_name,
         ):
             return False
 
@@ -1112,7 +1115,7 @@ class ProxyAttemptProcessor(_ProxyComponent):
                     ),
                     "attempted_targets": stats.attempted_targets,
                     "attempted_upstream_models": stats.attempted_upstream_models,
-                }
+                },
             },
         )
 
@@ -1138,7 +1141,8 @@ class ProxyAttemptProcessor(_ProxyComponent):
                 headers=headers,
             )
             upstream = await self._proxy.client.send(
-                request, stream=request_spec.stream
+                request,
+                stream=request_spec.stream,
             )
             connect_latency_ms = (time.perf_counter() - attempt_started) * 1000.0
             logger.info(
@@ -1187,7 +1191,8 @@ class ProxyAttemptProcessor(_ProxyComponent):
                 attempt=attempt,
                 total_attempts=total_attempts,
                 attempt_latency_ms=round(
-                    (time.perf_counter() - attempt_started) * 1000.0, 3
+                    (time.perf_counter() - attempt_started) * 1000.0,
+                    3,
                 ),
                 **error_details,
             )
@@ -1206,7 +1211,7 @@ class ProxyAttemptProcessor(_ProxyComponent):
                         "error_type": error_details["error_type"],
                         "attempted_targets": stats.attempted_targets,
                         "attempted_upstream_models": stats.attempted_upstream_models,
-                    }
+                    },
                 },
             )
 
@@ -1269,12 +1274,12 @@ class ProxyPreflightPlanner(_ProxyComponent):
         payload: dict[str, Any],
     ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
         candidate_targets = self._proxy.backend_target_planner.build_candidate_targets(
-            route_decision
+            route_decision,
         )
         parameter_rejections: dict[str, list[str]] = {}
         requested_parameters: list[str] = []
         if TargetSelectionPolicy.requires_parameter_compatibility(
-            route_decision.provider_preferences
+            route_decision.provider_preferences,
         ):
             (
                 candidate_targets,
@@ -1294,7 +1299,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
         request_id: str,
     ) -> list[BackendTarget]:
         allow_fallbacks = TargetSelectionPolicy.allows_fallbacks(
-            route_decision.provider_preferences
+            route_decision.provider_preferences,
         )
         if allow_fallbacks or len(candidate_targets) <= 1:
             return candidate_targets
@@ -1315,7 +1320,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
         route_decision: RouteDecision,
     ) -> tuple[str, list[str]]:
         effective_model_chain = _dedupe_preserving_order(
-            [target.model for target in candidate_targets]
+            [target.model for target in candidate_targets],
         )
         effective_selected_model = (
             effective_model_chain[0]
@@ -1391,7 +1396,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
             return None
 
         if TargetSelectionPolicy.requires_parameter_compatibility(
-            route_decision.provider_preferences
+            route_decision.provider_preferences,
         ):
             return self._require_parameters_unsatisfied_response(
                 request_id=request_id,
@@ -1400,7 +1405,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
             )
 
         if TargetSelectionPolicy.has_provider_filters(
-            route_decision.provider_preferences
+            route_decision.provider_preferences,
         ):
             return self._provider_filters_unsatisfied_response(
                 route_decision=route_decision,
@@ -1443,7 +1448,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
                         "requested_parameters": requested_parameters,
                         "rejections": parameter_rejections,
                     },
-                }
+                },
             },
         )
 
@@ -1454,10 +1459,10 @@ class ProxyPreflightPlanner(_ProxyComponent):
         request_id: str,
     ) -> JSONResponse:
         only = TargetSelectionPolicy.normalized_provider_filter_values(
-            route_decision.provider_preferences.get("only")
+            route_decision.provider_preferences.get("only"),
         )
         ignore = TargetSelectionPolicy.normalized_provider_filter_values(
-            route_decision.provider_preferences.get("ignore")
+            route_decision.provider_preferences.get("ignore"),
         )
         logger.warning(
             "proxy_provider_filters_no_target request_id=%s only=%s ignore=%s",
@@ -1486,7 +1491,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
                         "only": only,
                         "ignore": ignore,
                     },
-                }
+                },
             },
         )
 
@@ -1516,7 +1521,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
                     "message": "No backend account supports the selected model set.",
                     "selected_model": route_decision.selected_model,
                     "fallback_models": route_decision.fallback_models,
-                }
+                },
             },
         )
 
@@ -1554,7 +1559,7 @@ class ProxyRequestExecutor(_ProxyComponent):
                     "error": {
                         "type": "internal_error",
                         "message": "Missing execution context.",
-                    }
+                    },
                 },
             )
 
@@ -1753,7 +1758,7 @@ class ProxyRequestExecutor(_ProxyComponent):
             stream=context.stream,
         )
         bearer_token = await self._proxy.oauth_state_manager.resolve_bearer_token(
-            target.account
+            target.account,
         )
         skip_for_oauth, oauth_response = (
             self._attempt_processor.handle_missing_oauth_token(
@@ -1774,7 +1779,7 @@ class ProxyRequestExecutor(_ProxyComponent):
             bearer_token=bearer_token,
             provider=target.provider,
             oauth_account_id=self._proxy.oauth_state_manager.resolve_oauth_account_id(
-                target.account
+                target.account,
             ),
             organization=target.organization,
             project=target.project,
@@ -1815,7 +1820,8 @@ class ProxyRequestExecutor(_ProxyComponent):
             attempted_targets=stats.attempted_targets,
             attempted_upstream_models=stats.attempted_upstream_models,
             request_latency_ms=round(
-                (time.perf_counter() - context.request_started) * 1000.0, 3
+                (time.perf_counter() - context.request_started) * 1000.0,
+                3,
             ),
             route_decision=context.route_decision,
             request_id=context.request_id,
@@ -1829,7 +1835,9 @@ class ModelRegistryResolver:
         self._model_registry = model_registry
 
     def resolve_model_metadata(
-        self, account: BackendAccount, model: str
+        self,
+        account: BackendAccount,
+        model: str,
     ) -> dict[str, Any]:
         metadata = self._model_registry.get(model)
         if isinstance(metadata, dict):
@@ -1939,7 +1947,7 @@ class TargetSelectionPolicy:
     @staticmethod
     def has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
         return bool(provider_preferences.get("only")) or bool(
-            provider_preferences.get("ignore")
+            provider_preferences.get("ignore"),
         )
 
     def filter_targets_by_provider_preferences(
@@ -1949,10 +1957,10 @@ class TargetSelectionPolicy:
         provider_preferences: dict[str, Any],
     ) -> list[BackendTarget]:
         only = set(
-            self.normalized_provider_filter_values(provider_preferences.get("only"))
+            self.normalized_provider_filter_values(provider_preferences.get("only")),
         )
         ignore = set(
-            self.normalized_provider_filter_values(provider_preferences.get("ignore"))
+            self.normalized_provider_filter_values(provider_preferences.get("ignore")),
         )
         if not only and not ignore:
             return model_targets
@@ -2004,7 +2012,8 @@ class TargetSelectionPolicy:
             return float("inf")
         input_cost = self.as_non_negative_float(costs.get("input_per_1k"), default=0.0)
         output_cost = self.as_non_negative_float(
-            costs.get("output_per_1k"), default=0.0
+            costs.get("output_per_1k"),
+            default=0.0,
         )
         if input_cost <= 0.0 and output_cost <= 0.0:
             return float("inf")
@@ -2023,7 +2032,8 @@ class TargetSelectionPolicy:
         priors = metadata.get("priors")
         if isinstance(priors, dict):
             throughput = self.as_non_negative_float(
-                priors.get("throughput_tps"), default=0.0
+                priors.get("throughput_tps"),
+                default=0.0,
             )
             if throughput > 0.0:
                 return throughput
@@ -2133,7 +2143,7 @@ class TargetSelectionPolicy:
         metadata = self.target_metadata(target)
         supported = self.normalize_parameter_set(metadata.get("supported_parameters"))
         unsupported = self.normalize_parameter_set(
-            metadata.get("unsupported_parameters")
+            metadata.get("unsupported_parameters"),
         )
 
         reasons: list[str] = []
@@ -2177,7 +2187,8 @@ class TargetSelectionPolicy:
 
 class BackendTargetPlanner(_ProxyComponent):
     def build_candidate_targets(
-        self, route_decision: RouteDecision
+        self,
+        route_decision: RouteDecision,
     ) -> list[BackendTarget]:
         model_chain = self._candidate_model_chain(route_decision)
         provider_preferences = route_decision.provider_preferences or {}
@@ -2196,7 +2207,7 @@ class BackendTargetPlanner(_ProxyComponent):
         ):
             grouped_targets = (
                 self._proxy.target_rate_limit_prioritizer.prioritize_model_groups(
-                    grouped_targets
+                    grouped_targets,
                 )
             )
 
@@ -2211,7 +2222,7 @@ class BackendTargetPlanner(_ProxyComponent):
         if route_decision.source == "request":
             return [route_decision.selected_model]
         return _dedupe_preserving_order(
-            [route_decision.selected_model, *route_decision.fallback_models]
+            [route_decision.selected_model, *route_decision.fallback_models],
         )
 
     def _build_model_targets(
@@ -2224,7 +2235,8 @@ class BackendTargetPlanner(_ProxyComponent):
         for account in self._proxy.accounts:
             if account.enabled and account.supports_model(model):
                 metadata = self._proxy.model_registry_resolver.resolve_model_metadata(
-                    account, model
+                    account,
+                    model,
                 )
                 model_targets.append(
                     BackendTarget(
@@ -2242,7 +2254,7 @@ class BackendTargetPlanner(_ProxyComponent):
                         organization=account.organization,
                         project=account.project,
                         metadata=metadata,
-                    )
+                    ),
                 )
         return (
             self._proxy.target_selection_policy.filter_targets_by_provider_preferences(
@@ -2267,7 +2279,7 @@ class BackendTargetPlanner(_ProxyComponent):
                 provider_preferences=provider_preferences,
             )
             return self._proxy.target_rate_limit_prioritizer.prioritize_targets(
-                sorted_targets
+                sorted_targets,
             )
 
         targets: list[BackendTarget] = []
@@ -2278,8 +2290,8 @@ class BackendTargetPlanner(_ProxyComponent):
             )
             targets.extend(
                 self._proxy.target_rate_limit_prioritizer.prioritize_targets(
-                    sorted_targets
-                )
+                    sorted_targets,
+                ),
             )
         return targets
 
@@ -2351,7 +2363,8 @@ class TargetRateLimitPrioritizer:
         self._is_temporarily_rate_limited = is_temporarily_rate_limited
 
     def prioritize_model_groups(
-        self, grouped_targets: list[list[BackendTarget]]
+        self,
+        grouped_targets: list[list[BackendTarget]],
     ) -> list[list[BackendTarget]]:
         if len(grouped_targets) <= 1:
             return grouped_targets
@@ -2369,7 +2382,8 @@ class TargetRateLimitPrioritizer:
         return [*healthy_groups, *limited_groups]
 
     def prioritize_targets(
-        self, model_targets: list[BackendTarget]
+        self,
+        model_targets: list[BackendTarget],
     ) -> list[BackendTarget]:
         if len(model_targets) <= 1:
             return model_targets
@@ -2386,7 +2400,8 @@ class TargetRateLimitPrioritizer:
         )
 
     def partition_targets(
-        self, model_targets: list[BackendTarget]
+        self,
+        model_targets: list[BackendTarget],
     ) -> tuple[list[BackendTarget], list[BackendTarget]]:
         healthy_targets: list[BackendTarget] = []
         limited_targets: list[BackendTarget] = []
@@ -2433,11 +2448,11 @@ class OAuthStateManager:
             self._oauth_runtime[account.name] = state
 
         if state.access_token and not TokenMetadataParser.is_token_expiring(
-            state.expires_at
+            state.expires_at,
         ):
             if not state.account_id:
                 state.account_id = TokenMetadataParser.extract_chatgpt_account_id(
-                    state.access_token
+                    state.access_token,
                 )
             return state.access_token
 
@@ -2478,7 +2493,9 @@ class OAuthStateManager:
                 return current
 
             logger.info(
-                "oauth_refresh_start account=%s token_url=%s", account.name, token_url
+                "oauth_refresh_start account=%s token_url=%s",
+                account.name,
+                token_url,
             )
             payload: dict[str, str] = {
                 "grant_type": "refresh_token",
@@ -2499,7 +2516,8 @@ class OAuthStateManager:
                 )
             except httpx.RequestError:
                 logger.warning(
-                    "oauth_refresh_error account=%s reason=request_error", account.name
+                    "oauth_refresh_error account=%s reason=request_error",
+                    account.name,
                 )
                 return current
 
@@ -2515,7 +2533,8 @@ class OAuthStateManager:
                 body = response.json()
             except ValueError:
                 logger.warning(
-                    "oauth_refresh_error account=%s reason=invalid_json", account.name
+                    "oauth_refresh_error account=%s reason=invalid_json",
+                    account.name,
                 )
                 return current
 
@@ -2572,7 +2591,7 @@ class OAuthStateManager:
                 can_persist_refresh,
                 can_persist_expires,
                 can_persist_account_id,
-            )
+            ),
         ):
             return
 
@@ -2705,7 +2724,7 @@ class OAuthStateManager:
 
         if runtime_state and runtime_state.access_token:
             account_id = TokenMetadataParser.extract_chatgpt_account_id(
-                runtime_state.access_token
+                runtime_state.access_token,
             )
             runtime_state.account_id = account_id
             return account_id
@@ -2826,10 +2845,11 @@ class ChatCompletionsResponseAdapter:
                             matched_call_state: dict[str, Any] | None = None
                             if isinstance(item_id, str):
                                 matched_call_state = state["tool_calls_by_item_id"].get(
-                                    item_id
+                                    item_id,
                                 )
                             if matched_call_state is None and isinstance(
-                                output_index, int
+                                output_index,
+                                int,
                             ):
                                 matched_call_state = state[
                                     "tool_calls_by_output_index"
@@ -2875,7 +2895,8 @@ class ChatCompletionsResponseAdapter:
                                     "tool_calls_by_item_id"
                                 ].get(item_id)
                             if matched_done_call_state is None and isinstance(
-                                output_index, int
+                                output_index,
+                                int,
                             ):
                                 matched_done_call_state = state[
                                     "tool_calls_by_output_index"
@@ -2939,7 +2960,7 @@ class ChatCompletionsResponseAdapter:
                                 finish_reason,
                             )
                             if audit_hook is not None:
-                                try:
+                                with contextlib.suppress(Exception):
                                     audit_hook(
                                         {
                                             "event": "proxy_chat_result",
@@ -2947,20 +2968,18 @@ class ChatCompletionsResponseAdapter:
                                             "model": model,
                                             "stream": True,
                                             "text_chars": len(
-                                                "".join(state["text_parts"])
+                                                "".join(state["text_parts"]),
                                             ),
                                             "tool_calls": len(state["tool_calls"]),
                                             "finish_reason": finish_reason,
                                             "text_preview": "".join(
-                                                state["text_parts"]
+                                                state["text_parts"],
                                             )[:500],
                                             "tool_call_summary": BackendProxy._tool_call_debug_summary(
-                                                state["tool_calls"]
+                                                state["tool_calls"],
                                             ),
-                                        }
+                                        },
                                     )
-                                except Exception:
-                                    pass
                             yield b"data: [DONE]\n\n"
                             return
                 finally:
@@ -2995,7 +3014,7 @@ class ChatCompletionsResponseAdapter:
                     finish_reason,
                 )
                 if audit_hook is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         audit_hook(
                             {
                                 "event": "proxy_chat_result",
@@ -3007,12 +3026,10 @@ class ChatCompletionsResponseAdapter:
                                 "finish_reason": finish_reason,
                                 "text_preview": "".join(state["text_parts"])[:500],
                                 "tool_call_summary": BackendProxy._tool_call_debug_summary(
-                                    state["tool_calls"]
+                                    state["tool_calls"],
                                 ),
-                            }
+                            },
                         )
-                    except Exception:
-                        pass
                 yield b"data: [DONE]\n\n"
 
             return StreamingResponse(
@@ -3074,10 +3091,11 @@ class ChatCompletionsResponseAdapter:
                     matched_done_call_state: dict[str, Any] | None = None
                     if isinstance(item_id, str):
                         matched_done_call_state = state["tool_calls_by_item_id"].get(
-                            item_id
+                            item_id,
                         )
                     if matched_done_call_state is None and isinstance(
-                        output_index, int
+                        output_index,
+                        int,
                     ):
                         matched_done_call_state = state[
                             "tool_calls_by_output_index"
@@ -3102,7 +3120,7 @@ class ChatCompletionsResponseAdapter:
                         matched_call_state = state["tool_calls_by_item_id"].get(item_id)
                     if matched_call_state is None and isinstance(output_index, int):
                         matched_call_state = state["tool_calls_by_output_index"].get(
-                            output_index
+                            output_index,
                         )
                     if matched_call_state is None:
                         continue
@@ -3153,7 +3171,7 @@ class ChatCompletionsResponseAdapter:
                     "index": 0,
                     "message": message,
                     "finish_reason": finish_reason,
-                }
+                },
             ],
         }
         response_body["_router"] = routing_diagnostics
@@ -3167,7 +3185,7 @@ class ChatCompletionsResponseAdapter:
             finish_reason,
         )
         if audit_hook is not None:
-            try:
+            with contextlib.suppress(Exception):
                 audit_hook(
                     {
                         "event": "proxy_chat_result",
@@ -3179,12 +3197,10 @@ class ChatCompletionsResponseAdapter:
                         "finish_reason": finish_reason,
                         "text_preview": content[:500],
                         "tool_call_summary": BackendProxy._tool_call_debug_summary(
-                            state["tool_calls"]
+                            state["tool_calls"],
                         ),
-                    }
+                    },
                 )
-            except Exception:
-                pass
         response_headers.pop("content-type", None)
         return JSONResponse(
             status_code=upstream.status_code,
@@ -3261,11 +3277,11 @@ class BackendProxy:
         self.oauth_state_manager = self._oauth_state_manager
         self._model_registry = model_registry or {}
         self._model_registry_resolver = ModelRegistryResolver(
-            model_registry=self._model_registry
+            model_registry=self._model_registry,
         )
         self.model_registry_resolver = self._model_registry_resolver
         self._target_selection_policy = TargetSelectionPolicy(
-            target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata
+            target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata,
         )
         self.target_selection_policy = self._target_selection_policy
         self._backend_target_planner = BackendTargetPlanner(proxy=self)
@@ -3280,7 +3296,7 @@ class BackendProxy:
         )
         self.rate_limit_tracker = self._rate_limit_tracker
         self._target_rate_limit_prioritizer = TargetRateLimitPrioritizer(
-            is_temporarily_rate_limited=self._rate_limit_tracker.is_temporarily_rate_limited
+            is_temporarily_rate_limited=self._rate_limit_tracker.is_temporarily_rate_limited,
         )
         self.target_rate_limit_prioritizer = self._target_rate_limit_prioritizer
         self.accounts = self._initialize_accounts(
@@ -3321,7 +3337,7 @@ class BackendProxy:
             cls._default_account(
                 base_url=base_url,
                 backend_api_key=backend_api_key,
-            )
+            ),
         ]
 
     def _audit(self, event: str, **fields: Any) -> None:
@@ -3397,10 +3413,8 @@ class BackendProxy:
                     yield parsed
         except httpx.RequestError as exc:
             upstream_url = "<unknown>"
-            try:
+            with contextlib.suppress(Exception):
                 upstream_url = str(upstream.request.url)
-            except Exception:
-                pass
             logger.warning(
                 "proxy_upstream_stream_error url=%s error=%s",
                 upstream_url,
@@ -3425,10 +3439,10 @@ class BackendProxy:
                     "index": 0,
                     "delta": delta,
                     "finish_reason": finish_reason,
-                }
+                },
             ],
         }
-        return f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n".encode("utf-8")
+        return f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n".encode()
 
     @staticmethod
     def _chat_completion_tool_call_chunk(
@@ -3482,7 +3496,7 @@ class BackendProxy:
                     "id": call.get("id") if isinstance(call, dict) else None,
                     "name": function.get("name"),
                     "arguments_preview": arguments[:max_args_chars],
-                }
+                },
             )
         return summary
 
@@ -3526,7 +3540,8 @@ def _can_enable_http2() -> bool:
 
 
 def _parse_retry_after_seconds(
-    headers: httpx.Headers, default_seconds: float = 30.0
+    headers: httpx.Headers,
+    default_seconds: float = 30.0,
 ) -> float:
     raw = headers.get("retry-after")
     if not raw:
@@ -3546,8 +3561,8 @@ def _parse_retry_after_seconds(
     try:
         retry_dt = parsedate_to_datetime(value)
         if retry_dt.tzinfo is None:
-            retry_dt = retry_dt.replace(tzinfo=timezone.utc)
-        delta = (retry_dt - datetime.now(timezone.utc)).total_seconds()
+            retry_dt = retry_dt.replace(tzinfo=UTC)
+        delta = (retry_dt - datetime.now(UTC)).total_seconds()
         if delta > 0:
             return float(delta)
     except Exception:

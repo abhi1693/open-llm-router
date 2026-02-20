@@ -63,7 +63,7 @@ def _router() -> SmartModelRouter:
                     "failure_rate": 0.028,
                 },
             },
-        }
+        },
     )
     return SmartModelRouter(config)
 
@@ -96,7 +96,7 @@ def test_learned_router_prefers_stronger_model_for_hard_coding_prompt() -> None:
                 {
                     "role": "user",
                     "content": "Debug this Python function and optimize SQL performance with deep reasoning.",
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -167,7 +167,7 @@ def test_learned_router_keeps_candidates_within_rule_chain() -> None:
                     "failure_rate": 0.035,
                 },
             },
-        }
+        },
     )
 
     router = SmartModelRouter(config)
@@ -217,7 +217,7 @@ def test_learned_router_ucb_explores_underused_models() -> None:
                     "failure_rate": 0.01,
                 },
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {

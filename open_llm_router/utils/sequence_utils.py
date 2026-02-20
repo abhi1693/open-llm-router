@@ -6,7 +6,7 @@ from typing import TypeVar
 T = TypeVar("T", bound=Hashable)
 
 
-def dedupe_preserving_order(values: Iterable[T]) -> list[T]:
+def dedupe_preserving_order[T: Hashable](values: Iterable[T]) -> list[T]:
     seen: set[T] = set()
     output: list[T] = []
     for value in values:

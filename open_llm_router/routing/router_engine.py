@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from functools import lru_cache
 from math import log, sqrt
 from threading import Lock
-from typing import Any, Iterator
+from typing import Any
 
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.routing.classifier import (
@@ -36,13 +37,17 @@ class InvalidModelError(ValueError):
         self.available_models = available_models
         super().__init__(
             f"Requested model '{requested_model}' is not configured. "
-            "Use 'auto' or a configured model."
+            "Use 'auto' or a configured model.",
         )
 
 
 class RoutingConstraintError(ValueError):
     def __init__(
-        self, *, constraint: str, message: str, details: dict[str, Any] | None = None
+        self,
+        *,
+        constraint: str,
+        message: str,
+        details: dict[str, Any] | None = None,
     ):
         self.constraint = constraint
         self.details = details or {}
@@ -66,8 +71,8 @@ class RouteDecision:
 
 __all__ = [
     "InvalidModelError",
-    "RoutingConstraintError",
     "RouteDecision",
+    "RoutingConstraintError",
     "SmartModelRouter",
 ]
 
@@ -113,7 +118,7 @@ class SmartModelRouter:
             )
             routed_models = self.config.route_for(task=task, complexity=complexity)
             candidate_chain = _dedupe_preserving_order(
-                [*routed_models, *self.config.fallback_models]
+                [*routed_models, *self.config.fallback_models],
             )
             allowed_filtered_chain = _filter_models_by_patterns(
                 candidate_models=candidate_chain,
@@ -182,7 +187,7 @@ class SmartModelRouter:
             }
             if supplemented_models:
                 decision_trace["hard_constraint_supplemented_models"] = list(
-                    supplemented_models
+                    supplemented_models,
                 )
             use_factual_rule_chain_guardrail = (
                 self._should_pin_factual_general_query_to_rule_chain(
@@ -218,7 +223,7 @@ class SmartModelRouter:
                             candidate_scores[0] if candidate_scores else None
                         ),
                         "learned_trace": learned_trace,
-                    }
+                    },
                 )
             else:
                 rule_chain_reranker_trace: dict[str, Any] = {
@@ -264,7 +269,7 @@ class SmartModelRouter:
                     {
                         "selected_reason": selected_reason,
                         "rule_chain_reranker": rule_chain_reranker_trace,
-                    }
+                    },
                 )
             source = "auto"
         else:
@@ -345,7 +350,10 @@ class SmartModelRouter:
 
     @staticmethod
     def _should_pin_factual_general_query_to_rule_chain(
-        *, task: str, complexity: str, signals: dict[str, Any]
+        *,
+        task: str,
+        complexity: str,
+        signals: dict[str, Any],
     ) -> bool:
         if task != "general" or complexity != "low":
             return False
@@ -354,16 +362,14 @@ class SmartModelRouter:
         if bool(signals.get("latest_user_references_context")):
             return False
         latest_structural_code_score = float(
-            signals.get("latest_user_structural_code_score", 0.0)
+            signals.get("latest_user_structural_code_score", 0.0),
         )
         if latest_structural_code_score > 0.0:
             return False
         text_length = int(
-            signals.get("latest_user_text_length", signals.get("text_length", 0))
+            signals.get("latest_user_text_length", signals.get("text_length", 0)),
         )
-        if text_length > 220:
-            return False
-        return True
+        return not text_length > 220
 
     def _decide_learned(
         self,
@@ -375,7 +381,8 @@ class SmartModelRouter:
         provider_preferences: dict[str, Any],
     ) -> tuple[str, list[str], list[str], list[dict[str, Any]], dict[str, Any]]:
         configured_candidates = self.config.learned_routing.task_candidates.get(
-            task, []
+            task,
+            [],
         )
         if default_chain:
             # Keep learned routing inside the complexity-derived rule-chain by default.
@@ -416,11 +423,11 @@ class SmartModelRouter:
                     payload=payload,
                     signals=signals,
                     learned_cfg=self.config.learned_routing,
-                )
+                ),
             )
 
         provider_order_index = _provider_order_index_map(
-            provider_preferences.get("order")
+            provider_preferences.get("order"),
         )
         provider_order_bonus = {
             item.model: _provider_order_bonus_for_model(
@@ -572,7 +579,11 @@ class SmartModelRouter:
         task: str,
         complexity: str,
     ) -> tuple[
-        list[str], dict[str, float], dict[str, float], dict[str, float], dict[str, Any]
+        list[str],
+        dict[str, float],
+        dict[str, float],
+        dict[str, float],
+        dict[str, Any],
     ]:
         reranker_cfg = self.config.route_reranker
         base_chain = list(candidate_models)
@@ -667,7 +678,7 @@ class SmartModelRouter:
                 "embedded_model_count": len(reranker_similarity),
                 "similarity_weight": similarity_weight,
                 "min_similarity": min_similarity,
-            }
+            },
         )
         return (
             reranked_models,
@@ -781,10 +792,10 @@ class SmartModelRouter:
     ) -> tuple[list[str], dict[str, Any]]:
         normalized_only = _normalized_provider_values(provider_preferences.get("only"))
         normalized_ignore = _normalized_provider_values(
-            provider_preferences.get("ignore")
+            provider_preferences.get("ignore"),
         )
         provider_order_index = _provider_order_index_map(
-            provider_preferences.get("order")
+            provider_preferences.get("order"),
         )
 
         filtered: list[str] = []
@@ -855,7 +866,7 @@ class SmartModelRouter:
                 and requested_output_tokens > max_output
             ):
                 reasons.append(
-                    f"max_output_tokens_exceeded:{requested_output_tokens}>{max_output}"
+                    f"max_output_tokens_exceeded:{requested_output_tokens}>{max_output}",
                 )
 
             context_tokens = _as_positive_int(limits.get("context_tokens"))
@@ -864,14 +875,13 @@ class SmartModelRouter:
                 estimated_total_tokens = estimated_input_tokens + output_budget
                 if estimated_total_tokens > context_tokens:
                     overflow_ratio = (estimated_total_tokens - context_tokens) / max(
-                        1, context_tokens
+                        1,
+                        context_tokens,
                     )
                     if overflow_ratio > _CONTEXT_WINDOW_OVERFLOW_TOLERANCE:
                         reasons.append(
-                            (
-                                "context_window_exceeded:"
-                                f"{estimated_total_tokens}>{context_tokens}"
-                            )
+                            "context_window_exceeded:"
+                            f"{estimated_total_tokens}>{context_tokens}",
                         )
         return reasons
 
@@ -1044,7 +1054,7 @@ def _build_reranker_query_text(
     request_text = " ".join(piece.strip() for piece in pieces if piece.strip()).strip()
     if not request_text:
         preview = str(
-            signals.get("text_preview_total") or signals.get("text_preview") or ""
+            signals.get("text_preview_total") or signals.get("text_preview") or "",
         )
         request_text = preview.strip()
     if not request_text:
@@ -1077,7 +1087,7 @@ def _build_reranker_model_hint(
             ]
             if normalized_capabilities:
                 parts.append(
-                    "capabilities:" + " ".join(sorted(normalized_capabilities))
+                    "capabilities:" + " ".join(sorted(normalized_capabilities)),
                 )
         task_affinity = metadata.get("task_affinity")
         if isinstance(task_affinity, dict):
@@ -1107,7 +1117,7 @@ def _build_reranker_model_hint(
 def _vector_cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
     if len(left) != len(right) or not left:
         return 0.0
-    return float(sum(a * b for a, b in zip(left, right)))
+    return float(sum(a * b for a, b in zip(left, right, strict=False)))
 
 
 @lru_cache(maxsize=32)
@@ -1223,7 +1233,7 @@ def _extract_provider_preferences(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _provider_filters_enabled(provider_preferences: dict[str, Any]) -> bool:
     return bool(provider_preferences.get("only")) or bool(
-        provider_preferences.get("ignore")
+        provider_preferences.get("ignore"),
     )
 
 
@@ -1289,13 +1299,12 @@ def _model_satisfies_provider_filters(
         values=only,
     ):
         return False
-    if ignore and _model_matches_provider_values(
-        model=model,
-        routing_config=routing_config,
-        values=ignore,
-    ):
-        return False
-    return True
+    return not (
+        ignore
+        and _model_matches_provider_values(
+            model=model, routing_config=routing_config, values=ignore,
+        )
+    )
 
 
 def _provider_order_index_map(raw_order: Any) -> dict[str, int]:
@@ -1368,13 +1377,14 @@ def _sort_models_by_provider_order(
                 provider_order_index=provider_order_index,
             ),
             item[0],
-        )
+        ),
     )
     return [model for _, model in indexed_models]
 
 
 def _filter_models_by_patterns(
-    candidate_models: list[str], patterns: list[str]
+    candidate_models: list[str],
+    patterns: list[str],
 ) -> list[str]:
     if not patterns:
         return list(candidate_models)

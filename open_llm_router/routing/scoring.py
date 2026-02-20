@@ -92,7 +92,7 @@ def score_model(
     quality_probability = _sigmoid(z)
 
     input_char_count = float(
-        signals.get("text_length_total", signals.get("text_length", 0))
+        signals.get("text_length_total", signals.get("text_length", 0)),
     )
     input_tokens = max(1.0, input_char_count / 4.0)
     max_output_tokens = payload.get("max_output_tokens")

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any, Awaitable, Callable, cast
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -73,7 +73,8 @@ logger = logging.getLogger("uvicorn.error")
 
 @app.middleware("http")
 async def auth_middleware(
-    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
     if not request.url.path.startswith("/v1"):
         return await call_next(request)
@@ -126,10 +127,7 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
         parsed = float(value)
         if parsed <= 0:
             return "0"
-        if parsed >= 1:
-            text = f"{parsed:.6f}"
-        else:
-            text = f"{parsed:.12f}"
+        text = f"{parsed:.6f}" if parsed >= 1 else f"{parsed:.12f}"
         return text.rstrip("0").rstrip(".")
 
     def _provider_for_model(model_id: str, metadata: dict[str, Any]) -> str:
@@ -176,7 +174,9 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
         return sorted(supported)
 
     def _architecture(
-        model_id: str, metadata: dict[str, Any], supported_parameters: list[str]
+        model_id: str,
+        metadata: dict[str, Any],
+        supported_parameters: list[str],
     ) -> dict[str, Any]:
         raw = metadata.get("architecture")
         if isinstance(raw, dict):
@@ -366,7 +366,7 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
                 },
                 "hugging_face_id": "",
                 "expiration_date": None,
-            }
+            },
         ),
     )
 
@@ -501,16 +501,14 @@ def _emit_proxy_terminal_event(
                 "source": route_decision.source,
                 "task": route_decision.task,
                 "complexity": route_decision.complexity,
-            }
+            },
         )
     if error_type:
         event["error_type"] = error_type
     if note:
         event["note"] = note
-    try:
+    with suppress(Exception):
         audit_hook(event)
-    except Exception:
-        pass
 
 
 def _runtime_policy_snapshot(config: RoutingConfig) -> dict[str, dict[str, float]]:
@@ -544,7 +542,7 @@ def _append_prometheus_metric(
     name: str,
     metric_type: str,
     help_text: str,
-    value: float | int,
+    value: float,
     labels: dict[str, str] | None = None,
 ) -> None:
     if name not in declared:
@@ -639,7 +637,7 @@ def _render_prometheus_metrics(
             value=collector.proxy_attempt_latency_count,
         )
         for (provider, account), count in sorted(
-            collector.proxy_retries_by_target.items()
+            collector.proxy_retries_by_target.items(),
         ):
             _append_prometheus_metric(
                 lines,
@@ -651,7 +649,7 @@ def _render_prometheus_metrics(
                 labels={"provider": provider, "account": account},
             )
         for (provider, account), count in sorted(
-            collector.proxy_timeouts_by_target.items()
+            collector.proxy_timeouts_by_target.items(),
         ):
             _append_prometheus_metric(
                 lines,
@@ -663,7 +661,7 @@ def _render_prometheus_metrics(
                 labels={"provider": provider, "account": account},
             )
         for (provider, account, model), count in sorted(
-            collector.proxy_connect_latency_alerts_by_target.items()
+            collector.proxy_connect_latency_alerts_by_target.items(),
         ):
             _append_prometheus_metric(
                 lines,
@@ -682,7 +680,7 @@ def _render_prometheus_metrics(
                 },
             )
         for (provider, account, model), values in sorted(
-            collector.proxy_connect_latency_quantiles_by_target.items()
+            collector.proxy_connect_latency_quantiles_by_target.items(),
         ):
             count = int(values.get("count", 0))
             if count > 0:
@@ -731,7 +729,7 @@ def _render_prometheus_metrics(
                 labels={"error_type": error_type},
             )
         for status_class, count in sorted(
-            collector.proxy_responses_by_status_class.items()
+            collector.proxy_responses_by_status_class.items(),
         ):
             _append_prometheus_metric(
                 lines,
@@ -821,7 +819,7 @@ def _setup_optional_tracing(
         return
 
     service_name = str(
-        getattr(settings, "observability_service_name", "open-llm-router")
+        getattr(settings, "observability_service_name", "open-llm-router"),
     )
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     endpoint = getattr(settings, "observability_otlp_endpoint", None)
@@ -832,11 +830,12 @@ def _setup_optional_tracing(
             )
 
             provider.add_span_processor(
-                BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
+                BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)),
             )
         except Exception as exc:
             logger.warning(
-                "observability_otlp_exporter_unavailable reason=%s", str(exc)
+                "observability_otlp_exporter_unavailable reason=%s",
+                str(exc),
             )
     trace.set_tracer_provider(provider)
 
@@ -844,7 +843,8 @@ def _setup_optional_tracing(
         FastAPIInstrumentor.instrument_app(app_obj)
     except Exception as exc:
         logger.warning(
-            "observability_fastapi_instrumentation_failed reason=%s", str(exc)
+            "observability_fastapi_instrumentation_failed reason=%s",
+            str(exc),
         )
     try:
         HTTPXClientInstrumentor().instrument_client(proxy.client)
@@ -925,7 +925,7 @@ def _prefetch_local_route_reranker_model(routing_config: RoutingConfig) -> None:
 async def _startup(app_obj: FastAPI) -> None:
     settings = get_settings()
     routing_config, explain_metadata = RoutingConfigLoader(
-        settings.routing_config_path
+        settings.routing_config_path,
     ).load_with_metadata()
     apply_runtime_overrides(
         path=settings.router_runtime_overrides_path,
@@ -947,7 +947,7 @@ async def _startup(app_obj: FastAPI) -> None:
     app_obj.state.audit_logger = audit_logger
     app_obj.state.audit_payload_summary_enabled = bool(audit_logger.enabled)
     app_obj.state.audit_safe_logging_enabled = bool(
-        settings.router_audit_safe_logging_enabled
+        settings.router_audit_safe_logging_enabled,
     )
     live_metrics_store = build_live_metrics_store(
         redis_url=settings.redis_url,
@@ -978,12 +978,14 @@ async def _startup(app_obj: FastAPI) -> None:
             enabled=settings.circuit_breaker_enabled,
             failure_threshold=max(1, settings.circuit_breaker_failure_threshold),
             recovery_timeout_seconds=max(
-                1.0, settings.circuit_breaker_recovery_timeout_seconds
+                1.0,
+                settings.circuit_breaker_recovery_timeout_seconds,
             ),
             half_open_max_requests=max(
-                1, settings.circuit_breaker_half_open_max_requests
+                1,
+                settings.circuit_breaker_half_open_max_requests,
             ),
-        )
+        ),
     )
     app_obj.state.idempotency_store = build_idempotency_store(
         config=IdempotencyConfig(
@@ -1023,7 +1025,9 @@ async def _startup(app_obj: FastAPI) -> None:
     await policy_updater.start()
     app_obj.state.policy_updater = policy_updater
     _setup_optional_tracing(
-        app_obj=app_obj, proxy=app_obj.state.backend_proxy, settings=settings
+        app_obj=app_obj,
+        proxy=app_obj.state.backend_proxy,
+        settings=settings,
     )
     logger.info(
         (
@@ -1042,12 +1046,16 @@ async def _startup(app_obj: FastAPI) -> None:
 
 async def _shutdown(app_obj: FastAPI) -> None:
     policy_updater: RuntimePolicyUpdater | None = getattr(
-        app_obj.state, "policy_updater", None
+        app_obj.state,
+        "policy_updater",
+        None,
     )
     if policy_updater is not None:
         await policy_updater.stop()
     live_metrics_collector: LiveMetricsCollector | None = getattr(
-        app_obj.state, "live_metrics_collector", None
+        app_obj.state,
+        "live_metrics_collector",
+        None,
     )
     if live_metrics_collector is not None:
         await live_metrics_collector.close()
@@ -1074,11 +1082,14 @@ async def models() -> dict[str, Any]:
 @app.get("/v1/router/live-metrics")
 async def router_live_metrics() -> dict[str, Any]:
     collector: LiveMetricsCollector | None = getattr(
-        app.state, "live_metrics_collector", None
+        app.state,
+        "live_metrics_collector",
+        None,
     )
     if collector is None:
         raise HTTPException(
-            status_code=503, detail="Live metrics collector is unavailable."
+            status_code=503,
+            detail="Live metrics collector is unavailable.",
         )
     snapshot = await collector.snapshot()
     connect_latency_quantiles = [
@@ -1092,7 +1103,7 @@ async def router_live_metrics() -> dict[str, Any]:
             "p99_ms": float(values.get("p99", 0.0)),
         }
         for (provider, account, model), values in sorted(
-            collector.proxy_connect_latency_quantiles_by_target.items()
+            collector.proxy_connect_latency_quantiles_by_target.items(),
         )
     ]
     connect_latency_alerts = [
@@ -1103,7 +1114,7 @@ async def router_live_metrics() -> dict[str, Any]:
             "alerts": int(count),
         }
         for (provider, account, model), count in sorted(
-            collector.proxy_connect_latency_alerts_by_target.items()
+            collector.proxy_connect_latency_alerts_by_target.items(),
         )
     ]
     return {
@@ -1130,7 +1141,9 @@ async def router_live_metrics() -> dict[str, Any]:
 @app.get("/v1/router/policy")
 async def router_policy() -> dict[str, Any]:
     policy_updater: RuntimePolicyUpdater | None = getattr(
-        app.state, "policy_updater", None
+        app.state,
+        "policy_updater",
+        None,
     )
     config: RoutingConfig = app.state.routing_config
     status_payload: dict[str, Any] = {}
@@ -1178,12 +1191,14 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
         payload = await request.json()
     except Exception as exc:
         raise HTTPException(
-            status_code=400, detail=f"Expected JSON body: {exc}"
+            status_code=400,
+            detail=f"Expected JSON body: {exc}",
         ) from exc
 
     if not isinstance(payload, dict):
         raise HTTPException(
-            status_code=400, detail="Expected a JSON object request body."
+            status_code=400,
+            detail="Expected a JSON object request body.",
         )
 
     router: SmartModelRouter = app.state.smart_router
@@ -1196,7 +1211,9 @@ async def _proxy_json_request(request: Request, path: str) -> Response:
         or uuid4().hex[:12]
     )
     audit_hook: Callable[[dict[str, Any]], None] | None = getattr(
-        app.state, "audit_event_hook", None
+        app.state,
+        "audit_event_hook",
+        None,
     )
     is_stream = bool(payload.get("stream"))
     idempotency_key = request.headers.get("Idempotency-Key")
@@ -1480,7 +1497,9 @@ async def metrics() -> PlainTextResponse:
         raise HTTPException(status_code=404, detail="Metrics endpoint is disabled.")
 
     collector: LiveMetricsCollector | None = getattr(
-        app.state, "live_metrics_collector", None
+        app.state,
+        "live_metrics_collector",
+        None,
     )
     models_snapshot: dict[str, Any] = {}
     if collector is not None:
@@ -1509,7 +1528,10 @@ def run() -> None:
     import uvicorn
 
     uvicorn.run(
-        "open_llm_router.server.main:app", host="0.0.0.0", port=8000, reload=False
+        "open_llm_router.server.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
     )
 
 

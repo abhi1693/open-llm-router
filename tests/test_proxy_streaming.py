@@ -48,9 +48,9 @@ def test_iter_sse_data_json_filters_non_json_and_done_events() -> None:
                     "data: [DONE]",
                     'data: {"type":"response.output_text.delta","delta":"hello"}',
                     "data: [1,2,3]",
-                ]
-            )
-        )
+                ],
+            ),
+        ),
     )
 
     assert events == [{"type": "response.output_text.delta", "delta": "hello"}]

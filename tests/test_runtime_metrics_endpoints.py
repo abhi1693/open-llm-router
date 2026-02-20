@@ -12,7 +12,7 @@ def _base_prefetch_config() -> dict[str, Any]:
         "task_routes": {
             "general": {
                 "default": ["openai-codex/gpt-5.2-codex"],
-            }
+            },
         },
     }
 
@@ -57,7 +57,8 @@ def test_metrics_endpoint_returns_prometheus_payload(monkeypatch: Any) -> None:
 
 
 def test_startup_prefetches_local_semantic_model_when_enabled(
-    monkeypatch: Any, tmp_path: Any
+    monkeypatch: Any,
+    tmp_path: Any,
 ) -> None:
     config_path = tmp_path / "router.yaml"
     config = _base_prefetch_config()
@@ -74,7 +75,9 @@ def test_startup_prefetches_local_semantic_model_when_enabled(
     calls: list[tuple[str, bool]] = []
 
     def _fake_load_local_embedding_runtime(
-        *, model_name: str, local_files_only: bool
+        *,
+        model_name: str,
+        local_files_only: bool,
     ) -> tuple[str, str, str] | None:
         calls.append((model_name, local_files_only))
         return ("tokenizer", "model", "torch")
@@ -96,7 +99,8 @@ def test_startup_prefetches_local_semantic_model_when_enabled(
 
 
 def test_startup_prefetches_local_route_reranker_model_when_enabled(
-    monkeypatch: Any, tmp_path: Any
+    monkeypatch: Any,
+    tmp_path: Any,
 ) -> None:
     config_path = tmp_path / "router.yaml"
     config = _base_prefetch_config()
@@ -115,7 +119,9 @@ def test_startup_prefetches_local_route_reranker_model_when_enabled(
     calls: list[tuple[str, bool]] = []
 
     def _fake_load_local_embedding_runtime(
-        *, model_name: str, local_files_only: bool
+        *,
+        model_name: str,
+        local_files_only: bool,
     ) -> tuple[str, str, str] | None:
         calls.append((model_name, local_files_only))
         return ("tokenizer", "model", "torch")

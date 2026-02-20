@@ -8,7 +8,10 @@ from open_llm_router.cli.log_analysis_cli import main, summarize_log
 
 
 def _write_log(
-    path: Path, objects: list[dict[str, Any]], *, pretty_first: bool = True
+    path: Path,
+    objects: list[dict[str, Any]],
+    *,
+    pretty_first: bool = True,
 ) -> None:
     parts: list[str] = []
     for idx, obj in enumerate(objects):
@@ -144,13 +147,13 @@ def test_summarize_log_aggregates_performance_metrics(tmp_path: Path) -> None:
     assert summary["retries_and_errors"]["responses_with_attempts_gt_1"] == 1
     assert summary["retries_and_errors"]["proxy_request_errors"]["total"] == 1
     assert summary["retries_and_errors"]["proxy_request_errors"]["by_error_type"] == {
-        "ConnectTimeout": 1
+        "ConnectTimeout": 1,
     }
     assert summary["retries_and_errors"]["proxy_request_errors"]["timeouts"] == {
-        "true": 1
+        "true": 1,
     }
     assert summary["retries_and_errors"]["proxy_request_errors"]["by_target"] == {
-        "acct-b:gpt-5.2-codex": 1
+        "acct-b:gpt-5.2-codex": 1,
     }
 
     selected_vs_used = summary["consistency"]["selected_vs_used_model"]
@@ -162,7 +165,7 @@ def test_summarize_log_aggregates_performance_metrics(tmp_path: Path) -> None:
     assert selected_vs_target["rough_match"] == 1
     assert selected_vs_target["rough_mismatch"] == 1
     assert selected_vs_target["top_rough_mismatched_pairs"] == {
-        "selected=gemini/gemini-2.5-flash-lite first_target=acct-b:gpt-5.2-codex": 1
+        "selected=gemini/gemini-2.5-flash-lite first_target=acct-b:gpt-5.2-codex": 1,
     }
 
 
@@ -178,7 +181,7 @@ def test_main_writes_json_report(tmp_path: Path) -> None:
                 "selected_model": "gemini/gemini-2.5-flash-lite",
                 "task": "general",
                 "complexity": "low",
-            }
+            },
         ],
     )
 
@@ -191,7 +194,7 @@ def test_main_writes_json_report(tmp_path: Path) -> None:
             "json",
             "--output",
             str(output_path),
-        ]
+        ],
     )
     assert rc == 0
 

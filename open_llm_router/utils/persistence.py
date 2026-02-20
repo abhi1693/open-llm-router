@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -44,10 +45,8 @@ class YamlFileStore:
                 yaml.safe_dump(payload, handle, sort_keys=sort_keys)
             temp_path.replace(self.path)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
             raise
 
     def _temp_path(self) -> Path:

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from collections import OrderedDict, deque
 from collections.abc import ItemsView
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 K = TypeVar("K")
 V = TypeVar("V")
 T = TypeVar("T")
 
 
-class _BoundedMap(Generic[K, V]):
+class _BoundedMap[K, V]:
     def __init__(self, max_keys: int):
         self._max_keys = max(1, int(max_keys))
         self._data: OrderedDict[K, V] = OrderedDict()
@@ -36,7 +36,7 @@ class _BoundedMap(Generic[K, V]):
         return dict(self._data)
 
 
-class _BoundedMapViewMixin(Generic[K, V]):
+class _BoundedMapViewMixin[K, V]:
     _map: _BoundedMap[K, V]
 
     def items(self) -> ItemsView[K, V]:
@@ -46,7 +46,7 @@ class _BoundedMapViewMixin(Generic[K, V]):
         return self._map.to_dict()
 
 
-class BoundedCounterMap(_BoundedMapViewMixin[K, int], Generic[K]):
+class BoundedCounterMap[K](_BoundedMapViewMixin[K, int]):
     def __init__(self, max_keys: int):
         self._map: _BoundedMap[K, int] = _BoundedMap(max_keys=max_keys)
 
@@ -61,7 +61,7 @@ class BoundedCounterMap(_BoundedMapViewMixin[K, int], Generic[K]):
         return int(value or 0)
 
 
-class BoundedValueMap(_BoundedMapViewMixin[K, V], Generic[K, V]):
+class BoundedValueMap[K, V](_BoundedMapViewMixin[K, V]):
     def __init__(self, max_keys: int):
         self._map: _BoundedMap[K, V] = _BoundedMap(max_keys=max_keys)
 
@@ -73,7 +73,7 @@ class BoundedValueMap(_BoundedMapViewMixin[K, V], Generic[K, V]):
         return value if value is not None else default
 
 
-class BoundedDequeMap(_BoundedMapViewMixin[K, deque[T]], Generic[K, T]):
+class BoundedDequeMap[K, T](_BoundedMapViewMixin[K, deque[T]]):
     def __init__(self, *, max_keys: int, window_size: int):
         self._window_size = max(1, int(window_size))
         self._map: _BoundedMap[K, deque[T]] = _BoundedMap(max_keys=max_keys)

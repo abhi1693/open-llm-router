@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from open_llm_router.utils.cli_output import write_cli_report
 from open_llm_router.utils.numeric_utils import (
@@ -43,17 +44,17 @@ class AggregationState:
     routing_stream_counts: Counter[str] = field(default_factory=Counter)
     routing_tools_counts: Counter[str] = field(default_factory=Counter)
     routing_selected_by_task: dict[str, Counter[str]] = field(
-        default_factory=lambda: defaultdict(Counter)
+        default_factory=lambda: defaultdict(Counter),
     )
     routing_selected_by_complexity: dict[str, Counter[str]] = field(
-        default_factory=lambda: defaultdict(Counter)
+        default_factory=lambda: defaultdict(Counter),
     )
 
     utility_margin_values: list[float] = field(default_factory=list)
 
     connect_ms_values: list[float] = field(default_factory=list)
     connect_ms_by_target: dict[str, list[float]] = field(
-        default_factory=lambda: defaultdict(list)
+        default_factory=lambda: defaultdict(list),
     )
 
     attempt_number_counts: Counter[str] = field(default_factory=Counter)
@@ -203,7 +204,9 @@ def _iter_objects(path: Path, parse_state: ParseState) -> Iterator[dict[str, Any
 
 
 def _update_latency_maps(
-    state: AggregationState, event: dict[str, Any], event_name: str
+    state: AggregationState,
+    event: dict[str, Any],
+    event_name: str,
 ) -> None:
     request_id = event.get("request_id")
     if not isinstance(request_id, str) or not request_id.strip():
@@ -387,7 +390,9 @@ def _build_duration_stats(
 
 
 def _build_consistency_summary(
-    state: AggregationState, *, top_n: int
+    state: AggregationState,
+    *,
+    top_n: int,
 ) -> dict[str, Any]:
     matched = 0
     mismatched = 0
@@ -451,11 +456,16 @@ def _build_consistency_summary(
 
 
 def _build_summary(
-    path: Path, state: AggregationState, *, top_n: int
+    path: Path,
+    state: AggregationState,
+    *,
+    top_n: int,
 ) -> dict[str, Any]:
     connect_by_target: dict[str, dict[str, float | int | None]] = {}
     for target, values in sorted(
-        state.connect_ms_by_target.items(), key=lambda item: len(item[1]), reverse=True
+        state.connect_ms_by_target.items(),
+        key=lambda item: len(item[1]),
+        reverse=True,
     ):
         connect_by_target[target] = _summary_stats(values)
 
@@ -525,7 +535,7 @@ def _build_summary(
                 "by_target": {
                     key: int(count)
                     for key, count in state.request_error_target_counts.most_common(
-                        top_n
+                        top_n,
                     )
                 },
             },
@@ -543,7 +553,7 @@ def summarize_log(path: Path, *, top_n: int = 8) -> dict[str, Any]:
     return _build_summary(path=path, state=state, top_n=max(1, top_n))
 
 
-def _format_value(value: float | int | None, digits: int = 2) -> str:
+def _format_value(value: float | None, digits: int = 2) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, int):
@@ -561,13 +571,13 @@ def _render_text(summary: dict[str, Any]) -> str:
     lines.append(f"Log file: {summary['file']}")
     lines.append(
         "Window: "
-        f"{summary['time_range']['start_utc'] or 'n/a'} -> {summary['time_range']['end_utc'] or 'n/a'}"
+        f"{summary['time_range']['start_utc'] or 'n/a'} -> {summary['time_range']['end_utc'] or 'n/a'}",
     )
 
     parse = summary["parse"]
     lines.append(
         "Parsed objects: "
-        f"{parse['total_objects']} (errors={parse['parse_errors']}, non_dict={parse['non_dict_objects']})"
+        f"{parse['total_objects']} (errors={parse['parse_errors']}, non_dict={parse['non_dict_objects']})",
     )
 
     lines.append("")
@@ -592,7 +602,7 @@ def _render_text(summary: dict[str, Any]) -> str:
         f"p50={_format_value(utility_margin['p50'], 4)} "
         f"p95={_format_value(utility_margin['p95'], 4)} "
         f"min={_format_value(utility_margin['min'], 4)} "
-        f"max={_format_value(utility_margin['max'], 4)}"
+        f"max={_format_value(utility_margin['max'], 4)}",
     )
 
     latency = summary["latency"]
@@ -604,7 +614,7 @@ def _render_text(summary: dict[str, Any]) -> str:
         f"p50={_format_value(connect['p50'])} "
         f"p95={_format_value(connect['p95'])} "
         f"p99={_format_value(connect['p99'])} "
-        f"max={_format_value(connect['max'])}"
+        f"max={_format_value(connect['max'])}",
     )
 
     durations = latency["request_durations"]
@@ -614,13 +624,13 @@ def _render_text(summary: dict[str, Any]) -> str:
         "Proxy start->response (s): "
         f"n={start_to_resp['count']} p50={_format_value(start_to_resp['p50'])} "
         f"p95={_format_value(start_to_resp['p95'])} p99={_format_value(start_to_resp['p99'])} "
-        f"max={_format_value(start_to_resp['max'])}"
+        f"max={_format_value(start_to_resp['max'])}",
     )
     lines.append(
         "Proxy response->chat_result (s): "
         f"n={resp_to_result['count']} p50={_format_value(resp_to_result['p50'])} "
         f"p95={_format_value(resp_to_result['p95'])} p99={_format_value(resp_to_result['p99'])} "
-        f"max={_format_value(resp_to_result['max'])}"
+        f"max={_format_value(resp_to_result['max'])}",
     )
 
     retries = summary["retries_and_errors"]
@@ -629,12 +639,12 @@ def _render_text(summary: dict[str, Any]) -> str:
     lines.append(f"Response status counts: {retries['response_status_counts']}")
     lines.append(f"Response attempts counts: {retries['response_attempts_counts']}")
     lines.append(
-        f"Responses with retries (>1 attempt): {retries['responses_with_attempts_gt_1']}"
+        f"Responses with retries (>1 attempt): {retries['responses_with_attempts_gt_1']}",
     )
     lines.append(f"Finish reasons: {retries['finish_reason_counts']}")
     proxy_errors = retries["proxy_request_errors"]
     lines.append(
-        f"Proxy request errors: total={proxy_errors['total']} timeouts={proxy_errors['timeouts']}"
+        f"Proxy request errors: total={proxy_errors['total']} timeouts={proxy_errors['timeouts']}",
     )
     if proxy_errors["by_error_type"]:
         lines.append("Top error types:")

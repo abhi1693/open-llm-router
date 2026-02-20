@@ -29,7 +29,7 @@ def test_cli_add_account_and_route(tmp_path: Any) -> None:
                 "--models",
                 "gpt-5.2",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )
@@ -46,7 +46,7 @@ def test_cli_add_account_and_route(tmp_path: Any) -> None:
                 "xhigh",
                 "--model",
                 "gpt-5.2",
-            ]
+            ],
         )
         == 0
     )
@@ -80,7 +80,7 @@ def test_cli_set_route_accepts_multiple_models(tmp_path: Any) -> None:
                 "--models",
                 "m-1,m-2",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )
@@ -97,7 +97,7 @@ def test_cli_set_route_accepts_multiple_models(tmp_path: Any) -> None:
                 "medium",
                 "--model",
                 "m-1,m-2,m-3",
-            ]
+            ],
         )
         == 0
     )
@@ -121,7 +121,7 @@ def test_cli_set_route_accepts_provider_qualified_models(tmp_path: Any) -> None:
                 "xhigh",
                 "--model",
                 "openai/gpt-5.2,openai-codex/gpt-5.2-codex",
-            ]
+            ],
         )
         == 0
     )
@@ -149,7 +149,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path: Any) -> None:
                 "--model",
                 "gpt-5.2",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )
@@ -174,7 +174,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path: Any) -> None:
                 "1450",
                 "--failure-rate",
                 "0.028",
-            ]
+            ],
         )
         == 0
     )
@@ -190,7 +190,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path: Any) -> None:
                 "--models",
                 "openai-codex/gpt-5.2-codex,gemini/gemini-2.5-flash,openai/gpt-5.2",
                 "--enable",
-            ]
+            ],
         )
         == 0
     )
@@ -213,7 +213,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path: Any) -> None:
                 "complexity_score=1.4",
                 "--set-feature",
                 "task_coding=1.0",
-            ]
+            ],
         )
         == 0
     )
@@ -255,7 +255,7 @@ def test_cli_add_oauth_account(tmp_path: Any) -> None:
                 "--models",
                 "gpt-5.2-codex,gpt-5.2",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )
@@ -290,7 +290,7 @@ def test_cli_add_gemini_api_key_account(tmp_path: Any) -> None:
                 "--models",
                 "gemini-2.5-pro,gemini-2.5-flash",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )
@@ -341,7 +341,7 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path: Any, monkeypatch: Any) -
                 "--models",
                 "gpt-5.2-codex,gpt-5.2",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )
@@ -368,7 +368,8 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path: Any, monkeypatch: Any) -
 
 
 def test_cli_login_chatgpt_normalizes_existing_default_model(
-    tmp_path: Any, monkeypatch: Any
+    tmp_path: Any,
+    monkeypatch: Any,
 ) -> None:
     config_path = tmp_path / "router.yaml"
     save_yaml_file(
@@ -407,7 +408,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(
                 "openai-codex",
                 "--models",
                 "gpt-5.2-codex,gpt-5.2",
-            ]
+            ],
         )
         == 0
     )
@@ -432,14 +433,14 @@ def test_cli_login_chatgpt_rejects_non_openai_codex_provider(tmp_path: Any) -> N
                 "openai",
                 "--models",
                 "gpt-5.2",
-            ]
+            ],
         )
 
 
 def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
     monkeypatch: Any,
 ) -> None:
-    import open_llm_router.cli.config_cli as config_cli
+    from open_llm_router.cli import config_cli
 
     class _DummyServer:
         def __init__(self) -> None:
@@ -471,7 +472,9 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
             }
 
     monkeypatch.setattr(
-        config_cli, "_generate_pkce", lambda: ("verifier-1", "challenge-1")
+        config_cli,
+        "_generate_pkce",
+        lambda: ("verifier-1", "challenge-1"),
     )
     monkeypatch.setattr(config_cli.secrets, "token_hex", lambda _size: "state-123")
     monkeypatch.setattr(
@@ -488,7 +491,9 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
         ),
     )
     monkeypatch.setattr(
-        config_cli.httpx, "post", lambda *_args, **_kwargs: _DummyResponse()
+        config_cli.httpx,
+        "post",
+        lambda *_args, **_kwargs: _DummyResponse(),
     )
 
     args = argparse.Namespace(
@@ -514,7 +519,7 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
 def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(
     monkeypatch: Any,
 ) -> None:
-    import open_llm_router.cli.config_cli as config_cli
+    from open_llm_router.cli import config_cli
 
     class _DummyServer:
         def __init__(self) -> None:
@@ -551,7 +556,9 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(
             }
 
     monkeypatch.setattr(
-        config_cli, "_generate_pkce", lambda: ("verifier-1", "challenge-1")
+        config_cli,
+        "_generate_pkce",
+        lambda: ("verifier-1", "challenge-1"),
     )
     monkeypatch.setattr(config_cli.secrets, "token_hex", lambda _size: "state-123")
     monkeypatch.setattr(
@@ -568,7 +575,9 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(
         ),
     )
     monkeypatch.setattr(
-        config_cli.httpx, "post", lambda *_args, **_kwargs: _DummyResponse()
+        config_cli.httpx,
+        "post",
+        lambda *_args, **_kwargs: _DummyResponse(),
     )
 
     args = argparse.Namespace(
@@ -604,7 +613,7 @@ def test_cli_show_outputs_summary(tmp_path: Any, capsys: Any) -> None:
                 "--model",
                 "gpt-5.2",
                 "--set-default",
-            ]
+            ],
         )
         == 0
     )

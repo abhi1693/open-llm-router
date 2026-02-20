@@ -19,7 +19,7 @@ help:
 lint:
 	@echo "Running lint checks..."
 	@$(UV) run python -m compileall -q $(LINT_DIRS)
-	@$(UV) run ruff check .
+	@$(UV) run ruff check --select ALL .
 	@$(UV) run flake8 $(LINT_DIRS)
 	@$(UV) run isort --check-only $(LINT_DIRS)
 	@$(UV) run mypy --strict $(SRC_DIRS)

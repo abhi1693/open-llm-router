@@ -4,7 +4,7 @@ from typing import Any
 
 import yaml
 
-import open_llm_router.cli.router_cli as router_cli
+from open_llm_router.cli import router_cli
 from open_llm_router.cli.router_cli import main
 from tests.yaml_test_utils import load_yaml_file, save_yaml_file
 
@@ -21,7 +21,7 @@ def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
             "name": "codex-main",
             "provider": "openai-codex",
             "auth_mode": "passthrough",
-        }
+        },
     ]
     save_yaml_file(profile_path, profile_payload)
 
@@ -33,7 +33,7 @@ def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
                 str(profile_path),
                 "--output",
                 str(effective_path),
-            ]
+            ],
         )
         == 0
     )
@@ -71,7 +71,7 @@ def test_router_cli_profile_commands_and_explain(tmp_path: Any, capsys: Any) -> 
                 "--complexity",
                 "high",
                 "--debug",
-            ]
+            ],
         )
         == 0
     )
@@ -90,7 +90,8 @@ def test_router_cli_show_reads_profile_config(tmp_path: Any, capsys: Any) -> Non
 
 
 def test_router_cli_calibration_report_without_overrides(
-    tmp_path: Any, capsys: Any
+    tmp_path: Any,
+    capsys: Any,
 ) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     assert main(["init", "--profile", "auto", "--path", str(profile_path)]) == 0
@@ -103,7 +104,7 @@ def test_router_cli_calibration_report_without_overrides(
                 str(profile_path),
                 "--overrides-path",
                 str(tmp_path / "missing.overrides.yaml"),
-            ]
+            ],
         )
         == 0
     )
@@ -114,7 +115,8 @@ def test_router_cli_calibration_report_without_overrides(
 
 
 def test_router_cli_calibration_report_uses_runtime_history_and_drift(
-    tmp_path: Any, capsys: Any
+    tmp_path: Any,
+    capsys: Any,
 ) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     overrides_path = tmp_path / "router.runtime.overrides.yaml"
@@ -147,7 +149,7 @@ def test_router_cli_calibration_report_uses_runtime_history_and_drift(
                         "threshold_mixed_after": 0.46,
                     },
                 ],
-            }
+            },
         },
     )
 
@@ -161,7 +163,7 @@ def test_router_cli_calibration_report_uses_runtime_history_and_drift(
                 str(overrides_path),
                 "--history-limit",
                 "1",
-            ]
+            ],
         )
         == 0
     )
@@ -178,7 +180,8 @@ def test_router_cli_calibration_report_uses_runtime_history_and_drift(
 
 
 def test_router_provider_login_openai_chatgpt_writes_profile(
-    monkeypatch: Any, tmp_path: Any
+    monkeypatch: Any,
+    tmp_path: Any,
 ) -> None:
     profile_path = tmp_path / "router.profile.yaml"
     fake_oauth = {
@@ -206,7 +209,7 @@ def test_router_provider_login_openai_chatgpt_writes_profile(
                 "openai-codex-work",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -234,7 +237,7 @@ def test_router_provider_login_openai_apikey_writes_profile(tmp_path: Any) -> No
                 "openai-work",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -257,7 +260,7 @@ def test_router_provider_login_gemini_defaults_to_apikey(tmp_path: Any) -> None:
                 "gemini-work",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -280,7 +283,7 @@ def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path: Any) -> None:
                 "nvidia-work",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -305,7 +308,7 @@ def test_router_provider_login_github_defaults_to_apikey(tmp_path: Any) -> None:
                 "github-work",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -334,7 +337,7 @@ def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path: Any) -> Non
                 "sk-inline-secret",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -359,7 +362,7 @@ def test_router_provider_login_accepts_apikey_env_alias(tmp_path: Any) -> None:
                 "MY_GEMINI_KEY",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -380,7 +383,7 @@ def test_router_provider_login_accepts_gemeni_alias(tmp_path: Any) -> None:
                 "gemini-work-2",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -401,7 +404,7 @@ def test_router_provider_login_accepts_nim_alias(tmp_path: Any) -> None:
                 "nvidia-work-2",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -422,7 +425,7 @@ def test_router_provider_login_accepts_github_models_alias(tmp_path: Any) -> Non
                 "github-work-2",
                 "--path",
                 str(profile_path),
-            ]
+            ],
         )
         == 0
     )
@@ -450,13 +453,13 @@ def test_provider_login_rejects_raw_schema_path(tmp_path: Any) -> None:
                 "gemini-work",
                 "--path",
                 str(raw_path),
-            ]
+            ],
         )
     except SystemExit as exc:
         assert exc.code == 2
     else:  # pragma: no cover
         raise AssertionError(
-            "Expected failure when provider login is pointed at raw schema file"
+            "Expected failure when provider login is pointed at raw schema file",
         )
 
 
@@ -467,7 +470,7 @@ def test_removed_old_top_level_login_commands() -> None:
         assert exc.code == 2
     else:  # pragma: no cover
         raise AssertionError(
-            "Expected parser failure for removed command login-chatgpt"
+            "Expected parser failure for removed command login-chatgpt",
         )
 
     try:
@@ -500,18 +503,20 @@ def test_provider_login_rejects_apikey_and_api_key_env_together() -> None:
                 "secret-1",
                 "--api-key-env",
                 "GEMINI_API_KEY",
-            ]
+            ],
         )
     except SystemExit as exc:
         assert exc.code == 2
     else:  # pragma: no cover
         raise AssertionError(
-            "Expected failure when both --apikey and --api-key-env are set"
+            "Expected failure when both --apikey and --api-key-env are set",
         )
 
 
 def test_catalog_sync_dry_run_does_not_write_catalog(
-    monkeypatch: Any, tmp_path: Any, capsys: Any
+    monkeypatch: Any,
+    tmp_path: Any,
+    capsys: Any,
 ) -> None:
     catalog_path = tmp_path / "models.yaml"
     initial_payload = {
@@ -522,7 +527,7 @@ def test_catalog_sync_dry_run_does_not_write_catalog(
                 "provider": "openai-codex",
                 "aliases": [],
                 "costs": {"input_per_1k": 1.23, "output_per_1k": 4.56},
-            }
+            },
         ],
     }
     save_yaml_file(catalog_path, initial_payload)
@@ -534,7 +539,7 @@ def test_catalog_sync_dry_run_does_not_write_catalog(
             {
                 "id": "openai/gpt-5.2",
                 "pricing": {"prompt": "0.0000019", "completion": "0.0000067"},
-            }
+            },
         ],
     )
 
@@ -546,7 +551,7 @@ def test_catalog_sync_dry_run_does_not_write_catalog(
                 "--catalog-path",
                 str(catalog_path),
                 "--dry-run",
-            ]
+            ],
         )
         == 0
     )
@@ -572,7 +577,7 @@ def test_catalog_sync_writes_catalog(monkeypatch: Any, tmp_path: Any) -> None:
                     "provider": "openai-codex",
                     "aliases": [],
                     "costs": {"input_per_1k": 0.0, "output_per_1k": 0.0},
-                }
+                },
             ],
         },
     )
@@ -584,7 +589,7 @@ def test_catalog_sync_writes_catalog(monkeypatch: Any, tmp_path: Any) -> None:
             {
                 "id": "openai/gpt-5.2",
                 "pricing": {"prompt": "0.0000019", "completion": "0.0000067"},
-            }
+            },
         ],
     )
 

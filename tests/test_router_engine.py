@@ -40,7 +40,7 @@ def _router() -> SmartModelRouter:
                 "instruction_following": {"default": "general-7b"},
             },
             "fallback_models": ["general-14b", "general-32b"],
-        }
+        },
     )
     return SmartModelRouter(config)
 
@@ -81,7 +81,7 @@ def test_respects_explicit_provider_qualified_model() -> None:
             },
             "task_routes": {},
             "fallback_models": ["general-14b", "general-32b"],
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -119,7 +119,7 @@ def test_allowed_models_filters_auto_route_candidates() -> None:
                 "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -141,7 +141,7 @@ def test_allowed_models_rejects_explicit_model_when_disallowed() -> None:
                 "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -169,7 +169,7 @@ def test_allowed_models_raises_when_no_auto_candidates_match() -> None:
                 "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -219,7 +219,7 @@ def test_provider_preferences_only_filters_route_candidates() -> None:
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -244,7 +244,7 @@ def test_provider_preferences_ignore_filters_route_candidates() -> None:
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -269,7 +269,7 @@ def test_provider_preferences_order_reorders_rule_chain_head() -> None:
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -297,7 +297,7 @@ def test_provider_preferences_raise_when_filters_exclude_all_candidates() -> Non
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -347,7 +347,7 @@ def test_provider_order_bias_applies_in_learned_routing() -> None:
                 "openai/gpt-5.2": {"capabilities": ["chat"]},
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -369,7 +369,7 @@ def test_routes_auto_coding_request() -> None:
             {
                 "role": "user",
                 "content": "Debug this Python function and fix the bug in my SQL query.",
-            }
+            },
         ],
     }
     decision = router.decide(payload, "/v1/chat/completions")
@@ -396,7 +396,7 @@ def test_routes_auto_coding_request_prefers_multi_model_route_order() -> None:
                 },
             },
             "fallback_models": ["general-14b", "general-32b"],
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -405,7 +405,7 @@ def test_routes_auto_coding_request_prefers_multi_model_route_order() -> None:
             {
                 "role": "user",
                 "content": "Debug this Python function and fix the bug in my SQL query.",
-            }
+            },
         ],
     }
     decision = router.decide(payload, "/v1/chat/completions")
@@ -446,7 +446,7 @@ def test_routes_auto_image_request() -> None:
                     {"type": "input_text", "text": "Describe this image"},
                     {"type": "input_image", "image_url": "https://example.com/cat.png"},
                 ],
-            }
+            },
         ],
     }
     decision = router.decide(payload, "/v1/chat/completions")
@@ -471,7 +471,7 @@ def test_routes_xhigh_for_reasoning_effort_high() -> None:
             {
                 "role": "user",
                 "content": "Design a compiler architecture and reason about tradeoffs in depth.",
-            }
+            },
         ],
     }
     decision = router.decide(payload, "/v1/chat/completions")
@@ -493,7 +493,7 @@ def test_hard_constraints_filter_models_without_required_tool_capability() -> No
                 "text-model": {"capabilities": ["chat", "streaming"]},
                 "tool-model": {"capabilities": ["chat", "streaming", "tool_use"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -503,7 +503,7 @@ def test_hard_constraints_filter_models_without_required_tool_capability() -> No
             {
                 "type": "function",
                 "function": {"name": "get_weather", "parameters": {"type": "object"}},
-            }
+            },
         ],
     }
 
@@ -530,7 +530,7 @@ def test_hard_constraints_filter_models_that_exceed_output_token_limit() -> None
                     "limits": {"max_output_tokens": 2048, "context_tokens": 32768},
                 },
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
@@ -564,7 +564,7 @@ def test_hard_constraints_allow_small_context_overflow_with_tolerance(
                     "limits": {"context_tokens": 1000},
                 },
             },
-        }
+        },
     )
     monkeypatch.setattr(
         "open_llm_router.routing.router_engine._estimate_payload_tokens",
@@ -611,7 +611,7 @@ def test_hard_constraints_supplement_large_context_single_candidate_chain(
                     "limits": {"context_tokens": 500000},
                 },
             },
-        }
+        },
     )
     monkeypatch.setattr(
         "open_llm_router.routing.router_engine._estimate_payload_tokens",
@@ -625,7 +625,7 @@ def test_hard_constraints_supplement_large_context_single_candidate_chain(
             {
                 "type": "function",
                 "function": {"name": "noop", "parameters": {"type": "object"}},
-            }
+            },
         ],
         "messages": [{"role": "user", "content": "hello"}],
     }
@@ -634,7 +634,7 @@ def test_hard_constraints_supplement_large_context_single_candidate_chain(
     assert decision.selected_model == "primary-model"
     assert "backup-model" in decision.fallback_models
     assert decision.decision_trace["hard_constraint_supplemented_models"] == [
-        "backup-model"
+        "backup-model",
     ]
 
 
@@ -669,9 +669,9 @@ def test_hard_constraints_filter_models_without_enabled_account_support() -> Non
                     "auth_mode": "passthrough",
                     "models": ["supported-model"],
                     "enabled": True,
-                }
+                },
             ],
-        }
+        },
     )
     router = SmartModelRouter(config)
     decision = router.decide(
@@ -711,7 +711,7 @@ def test_routes_single_hint_coding_intent_prompt() -> None:
                 {
                     "role": "user",
                     "content": "Write a Python script that validates CSV rows.",
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -731,7 +731,7 @@ def test_secondary_classifier_disambiguates_instruction_vs_coding() -> None:
                 {
                     "role": "user",
                     "content": "Reword this paragraph about Python so it sounds professional.",
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -754,7 +754,7 @@ def test_semantic_classifier_routes_coding_intent_without_code_keywords() -> Non
                         "Can you craft a helper that iterates through rows in a "
                         "comma-separated file and flags malformed records?"
                     ),
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -778,7 +778,7 @@ def test_semantic_classifier_routes_thinking_intent_from_tradeoff_language() -> 
                         "Walk through competing approaches and justify which "
                         "direction we should take."
                     ),
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -807,7 +807,7 @@ def test_semantic_classifier_routes_rewrite_style_instruction_intent() -> None:
                         "Tighten this paragraph so it reads professionally without "
                         "changing the meaning."
                     ),
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -855,7 +855,7 @@ def test_local_embedding_semantic_classifier_can_be_used_when_enabled(
                 "local_files_only": True,
                 "min_confidence": 0.1,
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     decision = router.decide(
@@ -897,7 +897,7 @@ def test_local_embedding_semantic_classifier_falls_back_to_prototype_when_unavai
                 "local_model_name": "/models/local-embed",
                 "local_files_only": True,
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     decision = router.decide(
@@ -910,7 +910,7 @@ def test_local_embedding_semantic_classifier_falls_back_to_prototype_when_unavai
                         "Tighten this paragraph so it reads professionally without "
                         "changing the meaning."
                     ),
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -925,7 +925,11 @@ def test_local_embedding_semantic_classifier_falls_back_to_prototype_when_unavai
 
 def test_route_reranker_can_reorder_rule_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_embedding_for_text(
-        *, model_name: str, local_files_only: bool, max_length: int, text: str
+        *,
+        model_name: str,
+        local_files_only: bool,
+        max_length: int,
+        text: str,
     ) -> tuple[float, float] | None:
         _ = (model_name, local_files_only, max_length)
         normalized = text.lower()
@@ -966,14 +970,14 @@ def test_route_reranker_can_reorder_rule_chain(monkeypatch: pytest.MonkeyPatch) 
                     "code-7b": "write code debug compile",
                 },
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     decision = router.decide(
         payload={
             "model": "auto",
             "messages": [
-                {"role": "user", "content": "Write code to parse CSV rows safely."}
+                {"role": "user", "content": "Write code to parse CSV rows safely."},
             ],
         },
         endpoint="/v1/chat/completions",
@@ -989,7 +993,11 @@ def test_route_reranker_can_shift_learned_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _fake_embedding_for_text(
-        *, model_name: str, local_files_only: bool, max_length: int, text: str
+        *,
+        model_name: str,
+        local_files_only: bool,
+        max_length: int,
+        text: str,
     ) -> tuple[float, float] | None:
         _ = (model_name, local_files_only, max_length)
         normalized = text.lower()
@@ -1026,14 +1034,14 @@ def test_route_reranker_can_shift_learned_selection(
                 "task_candidates": {"coding": ["general-7b", "code-7b"]},
                 "utility_weights": {"cost": 0.0, "latency": 0.0, "failure": 0.0},
             },
-        }
+        },
     )
     baseline_router = SmartModelRouter(base_config)
     baseline_decision = baseline_router.decide(
         payload={
             "model": "auto",
             "messages": [
-                {"role": "user", "content": "Write code to parse CSV rows safely."}
+                {"role": "user", "content": "Write code to parse CSV rows safely."},
             ],
         },
         endpoint="/v1/chat/completions",
@@ -1052,7 +1060,7 @@ def test_route_reranker_can_shift_learned_selection(
         payload={
             "model": "auto",
             "messages": [
-                {"role": "user", "content": "Write code to parse CSV rows safely."}
+                {"role": "user", "content": "Write code to parse CSV rows safely."},
             ],
         },
         endpoint="/v1/chat/completions",
@@ -1081,7 +1089,7 @@ def test_routes_coding_without_language_name_using_structural_signals() -> None:
                         "$ make test\n"
                         "for (i = 0; i < n; i++) { total += values[i]; }"
                     ),
-                }
+                },
             ],
         },
         endpoint="/v1/chat/completions",
@@ -1190,13 +1198,13 @@ def test_factual_general_query_pins_rule_chain_head_over_learned_reorder() -> No
                 "gemini/gemini-2.5-flash": {"capabilities": ["chat"]},
                 "openai-codex/gpt-5.2-codex": {"capabilities": ["chat"]},
             },
-        }
+        },
     )
     router = SmartModelRouter(config)
     payload = {
         "model": "auto",
         "messages": [
-            {"role": "user", "content": "Question: who is the president of india"}
+            {"role": "user", "content": "Question: who is the president of india"},
         ],
     }
 

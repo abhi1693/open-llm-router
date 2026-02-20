@@ -44,7 +44,7 @@ def test_sanitize_audit_event_redacts_text_previews() -> None:
             {
                 "name": "search",
                 "arguments_preview": '{"q":"secret term"}',
-            }
+            },
         ],
     }
 

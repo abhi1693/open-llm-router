@@ -45,7 +45,7 @@ class OAuthVerifier:
             raise AuthConfigurationError(
                 "OAuth is enabled but no JWT verification source is configured. "
                 "Set OAUTH_JWKS_URL, or set both OAUTH_ISSUER and OAUTH_JWKS_URL, "
-                "or use OAUTH_JWT_SECRET for shared-secret tokens."
+                "or use OAUTH_JWT_SECRET for shared-secret tokens.",
             )
 
         self.jwks_client = PyJWKClient(jwks_url)
@@ -78,10 +78,13 @@ class OAuthVerifier:
             claims.get("sub")
             or claims.get("email")
             or claims.get("client_id")
-            or "oauth-user"
+            or "oauth-user",
         )
         return AuthResult(
-            method="oauth", principal=principal, scopes=scopes, claims=claims
+            method="oauth",
+            principal=principal,
+            scopes=scopes,
+            claims=claims,
         )
 
 
@@ -96,7 +99,7 @@ class Authenticator:
 
         if self.required and not self.api_keys and not self.oauth_verifier:
             raise AuthConfigurationError(
-                "Ingress auth is required, but no API keys or OAuth verifier are configured."
+                "Ingress auth is required, but no API keys or OAuth verifier are configured.",
             )
 
     async def authenticate_request(self, request: Request) -> JSONResponse | None:
@@ -151,6 +154,6 @@ def _unauthorized(message: str) -> JSONResponse:
                 "type": "authentication_error",
                 "param": None,
                 "code": "invalid_api_key",
-            }
+            },
         },
     )

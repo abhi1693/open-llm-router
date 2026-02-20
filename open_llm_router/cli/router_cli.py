@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from open_llm_router.catalogs.core import (
     load_internal_catalog,
@@ -98,7 +99,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     output_path = Path(args.path)
     if output_path.exists() and not args.force:
         raise ValueError(
-            f"Refusing to overwrite existing file: {output_path}. Use --force to overwrite."
+            f"Refusing to overwrite existing file: {output_path}. Use --force to overwrite.",
         )
 
     write_yaml_dict(output_path, template)
@@ -199,7 +200,7 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
         )
 
         candidates = _dedupe(
-            [*config.learned_routing.task_candidates.get(task, []), *default_chain]
+            [*config.learned_routing.task_candidates.get(task, []), *default_chain],
         )
         scored: list[dict[str, Any]] = []
         for model in candidates:
@@ -214,7 +215,7 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
                     payload=payload,
                     signals=signals,
                     learned_cfg=config.learned_routing,
-                ).as_dict()
+                ).as_dict(),
             )
 
         scored.sort(key=lambda item: float(item.get("utility") or 0.0), reverse=True)
@@ -274,12 +275,12 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
 
     target = float(cfg.target_secondary_success_rate)
     observed_success_rate = coerce_optional_float(
-        calibration_runtime.get("secondary_success_rate")
+        calibration_runtime.get("secondary_success_rate"),
     )
     secondary_samples = coerce_optional_int(calibration_runtime.get("secondary_total"))
     if secondary_samples is None:
         secondary_samples = coerce_optional_int(
-            calibration_runtime.get("secondary_samples")
+            calibration_runtime.get("secondary_samples"),
         )
 
     drift = (
@@ -377,14 +378,15 @@ def _load_or_init_profile_payload(path: Path) -> dict[str, Any]:
     raw = load_yaml_dict(path, error_message=f"Expected YAML object in '{path}'.")
     if raw and not is_profile_document(raw):
         raise ValueError(
-            f"Expected profile document at '{path}', but found raw routing schema."
+            f"Expected profile document at '{path}', but found raw routing schema.",
         )
     profile = RouterProfileConfig.model_validate(raw)
     return profile.model_dump(mode="python")
 
 
 def _upsert_profile_account(
-    profile_payload: dict[str, Any], account_payload: dict[str, Any]
+    profile_payload: dict[str, Any],
+    account_payload: dict[str, Any],
 ) -> None:
     accounts = profile_payload.setdefault("accounts", [])
     if not isinstance(accounts, list):
@@ -405,7 +407,7 @@ def _upsert_profile_account(
             merged_models = merged.get("models", [])
             if isinstance(merged_models, list):
                 merged["models"] = _dedupe(
-                    [str(m).strip() for m in merged_models if str(m).strip()]
+                    [str(m).strip() for m in merged_models if str(m).strip()],
                 )
             accounts[idx] = without_none_fields(merged)
             return
@@ -414,7 +416,10 @@ def _upsert_profile_account(
 
 
 def _save_profile_payload(
-    path: Path, payload: dict[str, Any], *, dry_run: bool
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    dry_run: bool,
 ) -> None:
     # Compile once as validation gate before writing invalid profile docs.
     compile_profile_document(payload)
@@ -452,7 +457,7 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
         kind = kind or "apikey"
         if kind != "apikey":
             raise ValueError(
-                f"Provider '{provider}' currently supports only --kind apikey."
+                f"Provider '{provider}' currently supports only --kind apikey.",
             )
 
     if kind == "chatgpt":
@@ -502,7 +507,7 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
         if provider_defaults is None:
             raise ValueError(
                 "Unsupported provider "
-                f"'{provider}'. Supported: openai, gemini, nvidia, github."
+                f"'{provider}'. Supported: openai, gemini, nvidia, github.",
             )
         account = args.name
         models_csv = args.models or provider_defaults["models_csv"]
@@ -564,7 +569,7 @@ def cmd_catalog_sync(args: argparse.Namespace) -> int:
             "source_url": args.source_url,
             "catalog_path": str(catalog_path),
             "dry_run": bool(args.dry_run),
-        }
+        },
     )
     return 0
 
@@ -634,25 +639,30 @@ def build_parser() -> argparse.ArgumentParser:
     calibration_cmd.set_defaults(handler=cmd_calibration_report)
 
     profile_cmd = subparsers.add_parser(
-        "profile", help="Inspect built-in profile templates."
+        "profile",
+        help="Inspect built-in profile templates.",
     )
     profile_subparsers = profile_cmd.add_subparsers(
-        dest="profile_command", required=True
+        dest="profile_command",
+        required=True,
     )
 
     profile_list_cmd = profile_subparsers.add_parser(
-        "list", help="List built-in profiles."
+        "list",
+        help="List built-in profiles.",
     )
     profile_list_cmd.set_defaults(handler=cmd_profile_list)
 
     profile_show_cmd = profile_subparsers.add_parser(
-        "show", help="Show one profile template."
+        "show",
+        help="Show one profile template.",
     )
     profile_show_cmd.add_argument("name")
     profile_show_cmd.set_defaults(handler=cmd_profile_show)
 
     show_cmd = subparsers.add_parser(
-        "show", help="Show concise summary for router config."
+        "show",
+        help="Show concise summary for router config.",
     )
     _add_profile_path_argument(show_cmd)
     show_cmd.set_defaults(handler=cmd_config_show)
@@ -662,7 +672,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Provider-level setup/login workflow.",
     )
     provider_subparsers = provider_cmd.add_subparsers(
-        dest="provider_command", required=True
+        dest="provider_command",
+        required=True,
     )
 
     provider_login_cmd = provider_subparsers.add_parser(
@@ -697,33 +708,44 @@ def build_parser() -> argparse.ArgumentParser:
     _add_profile_path_argument(provider_login_cmd)
     provider_login_cmd.add_argument("--dry-run", action="store_true")
     provider_login_cmd.add_argument(
-        "--name", required=True, help="Account name (required)."
+        "--name",
+        required=True,
+        help="Account name (required).",
     )
     provider_login_cmd.add_argument("--models")
     provider_login_cmd.add_argument("--apikey", dest="api_key")
     provider_login_cmd.add_argument("--api-key-env", dest="api_key_env")
     provider_login_cmd.add_argument("--apikey-env", dest="api_key_env")
     provider_login_cmd.add_argument(
-        "--set-default", dest="set_default", action="store_true"
+        "--set-default",
+        dest="set_default",
+        action="store_true",
     )
     provider_login_cmd.add_argument(
-        "--no-set-default", dest="set_default", action="store_false"
+        "--no-set-default",
+        dest="set_default",
+        action="store_false",
     )
     provider_login_cmd.set_defaults(set_default=True)
     provider_login_cmd.add_argument(
-        "--client-id", default="app_EMoamEEZ73f0CkXaXp7hrann"
+        "--client-id",
+        default="app_EMoamEEZ73f0CkXaXp7hrann",
     )
     provider_login_cmd.add_argument(
-        "--authorize-url", default="https://auth.openai.com/oauth/authorize"
+        "--authorize-url",
+        default="https://auth.openai.com/oauth/authorize",
     )
     provider_login_cmd.add_argument(
-        "--token-url", default="https://auth.openai.com/oauth/token"
+        "--token-url",
+        default="https://auth.openai.com/oauth/token",
     )
     provider_login_cmd.add_argument(
-        "--redirect-uri", default="http://localhost:1455/auth/callback"
+        "--redirect-uri",
+        default="http://localhost:1455/auth/callback",
     )
     provider_login_cmd.add_argument(
-        "--scope", default="openid profile email offline_access"
+        "--scope",
+        default="openid profile email offline_access",
     )
     provider_login_cmd.add_argument("--originator", default="pi")
     provider_login_cmd.add_argument("--manual-code")
@@ -737,7 +759,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Catalog maintenance commands.",
     )
     catalog_subparsers = catalog_cmd.add_subparsers(
-        dest="catalog_command", required=True
+        dest="catalog_command",
+        required=True,
     )
 
     catalog_sync_cmd = catalog_subparsers.add_parser(

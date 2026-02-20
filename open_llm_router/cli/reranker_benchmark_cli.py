@@ -62,7 +62,7 @@ def _evaluate(
                 "selected_model": decision.selected_model,
                 "task": decision.task,
                 "complexity": decision.complexity,
-            }
+            },
         )
     return results
 
@@ -84,7 +84,7 @@ def _summarize(
     expected_task_reranked_hits = 0
     examples: list[dict[str, Any]] = []
 
-    for base, rerank in zip(baseline, reranked):
+    for base, rerank in zip(baseline, reranked, strict=False):
         if base["selected_model"] != rerank["selected_model"]:
             changed += 1
             if len(examples) < 20:
@@ -96,7 +96,7 @@ def _summarize(
                         "reranked_model": rerank["selected_model"],
                         "task": rerank["task"],
                         "complexity": rerank["complexity"],
-                    }
+                    },
                 )
 
         expected_model = base.get("expected_model")
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     config, _ = RoutingConfigLoader(args.config).load_with_metadata()
     if not config.route_reranker.enabled:
         raise ValueError(
-            "route_reranker is disabled in config. Enable it before benchmarking."
+            "route_reranker is disabled in config. Enable it before benchmarking.",
         )
 
     dataset_path = Path(args.dataset)

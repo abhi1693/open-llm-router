@@ -25,7 +25,9 @@ class JsonlAuditLogger:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._queue = Queue(maxsize=max_queue_size)
             self._worker = Thread(
-                target=self._drain_queue, name="router-audit-writer", daemon=True
+                target=self._drain_queue,
+                name="router-audit-writer",
+                daemon=True,
             )
             self._worker.start()
 
@@ -46,14 +48,14 @@ class JsonlAuditLogger:
 
     def close(self) -> None:
         if not self.enabled:
-            return None
+            return
         queue = self._queue
         worker = self._worker
         if queue is None or worker is None:
-            return None
+            return
         queue.put(None)
         worker.join(timeout=2.0)
-        return None
+        return
 
     def _drain_queue(self) -> None:
         queue = self._queue
@@ -85,6 +87,6 @@ class JsonlAuditLogger:
                         separators=(",", ":"),
                         default=str,
                     )
-                    + "\n"
+                    + "\n",
                 )
                 handle.flush()

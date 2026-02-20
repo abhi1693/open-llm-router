@@ -19,7 +19,8 @@ class ProxyMetricsAccumulator:
     ) -> None:
         self._connect_latency_window_size = max(10, int(connect_latency_window_size))
         self._connect_latency_alert_threshold_ms = max(
-            0.0, float(connect_latency_alert_threshold_ms)
+            0.0,
+            float(connect_latency_alert_threshold_ms),
         )
         max_target_keys = max(1, int(target_dimension_max_keys))
         max_error_type_keys = max(1, int(error_type_max_keys))
@@ -41,16 +42,18 @@ class ProxyMetricsAccumulator:
             tuple[str, str, str]
         ] = BoundedCounterMap(max_keys=max_target_keys)
         self._proxy_connect_latency_alert_active_by_target: BoundedValueMap[
-            tuple[str, str, str], bool
+            tuple[str, str, str],
+            bool,
         ] = BoundedValueMap(max_keys=max_target_keys)
         self._proxy_connect_latency_samples_by_target: BoundedDequeMap[
-            tuple[str, str, str], float
+            tuple[str, str, str],
+            float,
         ] = BoundedDequeMap(
             max_keys=max_target_keys,
             window_size=self._connect_latency_window_size,
         )
         self._proxy_errors_by_type: BoundedCounterMap[str] = BoundedCounterMap(
-            max_keys=max_error_type_keys
+            max_keys=max_error_type_keys,
         )
         self._proxy_responses_by_status_class: BoundedCounterMap[str] = (
             BoundedCounterMap(max_keys=16)
@@ -126,10 +129,13 @@ class ProxyMetricsAccumulator:
         return output
 
     def record_connect(
-        self, target_key: tuple[str, str, str], connect_ms: float
+        self,
+        target_key: tuple[str, str, str],
+        connect_ms: float,
     ) -> None:
         samples = self._proxy_connect_latency_samples_by_target.append(
-            target_key, connect_ms
+            target_key,
+            connect_ms,
         )
         if self._connect_latency_alert_threshold_ms <= 0.0:
             return
@@ -140,7 +146,8 @@ class ProxyMetricsAccumulator:
             and p95_value > self._connect_latency_alert_threshold_ms
         )
         was_alerting = self._proxy_connect_latency_alert_active_by_target.get(
-            target_key, False
+            target_key,
+            False,
         )
         if is_alerting and not was_alerting:
             self._proxy_connect_latency_alerts_total += 1

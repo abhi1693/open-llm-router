@@ -19,7 +19,7 @@ def test_proxy_metrics_accumulator_records_core_metrics() -> None:
 
     assert metrics.proxy_connect_latency_alerts_total == 1
     assert metrics.proxy_connect_latency_alerts_by_target == {
-        ("openai", "acct-a", "m1"): 1
+        ("openai", "acct-a", "m1"): 1,
     }
     assert metrics.proxy_connect_latency_quantiles_by_target[
         ("openai", "acct-a", "m1")

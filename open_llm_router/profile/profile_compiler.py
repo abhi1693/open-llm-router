@@ -82,7 +82,7 @@ class BuiltinProfileCatalog:
         if template is None:
             available = ", ".join(sorted(cls._profiles()))
             raise ValueError(
-                f"Unknown profile '{name}'. Available profiles: {available}"
+                f"Unknown profile '{name}'. Available profiles: {available}",
             )
         if not isinstance(template, dict):
             raise ValueError(f"Invalid template for profile '{name}'.")
@@ -94,9 +94,7 @@ def is_profile_document(raw: dict[str, Any]) -> bool:
         return False
     if "profile" in raw:
         return True
-    if "accounts" in raw and "raw_overrides" in raw:
-        return True
-    return False
+    return bool("accounts" in raw and "raw_overrides" in raw)
 
 
 def load_profile_document(path: str | Path) -> RouterProfileConfig:
@@ -220,16 +218,14 @@ def _compile_accounts(
                 )
             except CatalogLookupError as exc:
                 errors.append(
-                    exc.format_for_path(f"accounts[{idx}].models[{model_idx}]")
+                    exc.format_for_path(f"accounts[{idx}].models[{model_idx}]"),
                 )
                 continue
 
             if not canonical_model.startswith(f"{provider_id}/"):
                 errors.append(
-                    (
-                        f"Model at accounts[{idx}].models[{model_idx}] belongs to provider "
-                        f"'{canonical_model.split('/', 1)[0]}', expected '{provider_id}'."
-                    )
+                    f"Model at accounts[{idx}].models[{model_idx}] belongs to provider "
+                    f"'{canonical_model.split('/', 1)[0]}', expected '{provider_id}'.",
                 )
                 continue
 
@@ -248,7 +244,7 @@ def _compile_accounts(
                 "provider": provider_id,
                 "base_url_source": "catalog.providers",
                 "models": list(account_payload.get("models", [])),
-            }
+            },
         )
 
     if errors:
@@ -413,14 +409,14 @@ def _align_routing_to_enabled_accounts(
                             "context": f"task_routes.{task}.{tier}",
                             "from": configured,
                             "to": suggested,
-                        }
+                        },
                     )
                 else:
                     alignment_notes.append(
                         {
                             "context": f"task_routes.{task}.{tier}",
                             "to": suggested,
-                        }
+                        },
                     )
 
     default_model_raw = str(effective.get("default_model") or "").strip()
@@ -441,11 +437,11 @@ def _align_routing_to_enabled_accounts(
                     "context": "default_model",
                     "from": old_default,
                     "to": candidates[0],
-                }
+                },
             )
 
     fallback_models = planner.filter_to_available(
-        _coerce_model_list(effective.get("fallback_models"))
+        _coerce_model_list(effective.get("fallback_models")),
     )
     if not fallback_models:
         fallback_models = planner.suggest(
@@ -465,7 +461,7 @@ def _align_routing_to_enabled_accounts(
             learned["task_candidates"] = task_candidates
         for task in TASKS:
             filtered = planner.filter_to_available(
-                _coerce_model_list(task_candidates.get(task))
+                _coerce_model_list(task_candidates.get(task)),
             )
             if not filtered:
                 filtered = planner.suggest(
@@ -702,8 +698,8 @@ def _apply_guardrails(
                 (
                     "Guardrails removed the default model and no eligible replacement remains. "
                     f"default_model={default_model}"
-                )
-            ]
+                ),
+            ],
         )
 
     explain.setdefault("guardrail_pruned", []).append(
@@ -711,7 +707,7 @@ def _apply_guardrails(
             "context": "default_model",
             "model": default_model,
             "reasons": default_reasons,
-        }
+        },
     )
     explain["default_model_replaced"] = {
         "from": default_model,
@@ -754,7 +750,7 @@ def _prune_models(
                     "context": context,
                     "model": canonical,
                     "reasons": reasons,
-                }
+                },
             )
             continue
         filtered.append(canonical)
@@ -905,7 +901,7 @@ def _apply_per_task_profile_layer(
                 effective.setdefault("learned_routing", {})
                 effective["learned_routing"].setdefault("task_candidates", {})
                 effective["learned_routing"]["task_candidates"][task] = deepcopy(
-                    override_candidates
+                    override_candidates,
                 )
 
     explain["profile_layers"].append(layer_name)

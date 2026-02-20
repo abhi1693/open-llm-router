@@ -35,7 +35,8 @@ def test_v1_models_accepts_valid_api_key(monkeypatch: Any) -> None:
         INGRESS_API_KEYS="router-key-1,router-key-2",
     ) as client:
         response = client.get(
-            "/v1/models", headers={"Authorization": "Bearer router-key-2"}
+            "/v1/models",
+            headers={"Authorization": "Bearer router-key-2"},
         )
         assert response.status_code == 200
 
@@ -67,7 +68,8 @@ def test_v1_models_accepts_valid_oauth_token(monkeypatch: Any) -> None:
         OAUTH_JWT_SECRET=secret,
     ) as client:
         response = client.get(
-            "/v1/models", headers={"Authorization": f"Bearer {token}"}
+            "/v1/models",
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
 
@@ -99,7 +101,8 @@ def test_v1_models_oauth_errors_do_not_leak_details(monkeypatch: Any) -> None:
         OAUTH_JWT_SECRET=secret,
     ) as client:
         response = client.get(
-            "/v1/models", headers={"Authorization": "Bearer not-a-valid-jwt"}
+            "/v1/models",
+            headers={"Authorization": "Bearer not-a-valid-jwt"},
         )
         assert response.status_code == 401
         assert response.json()["error"]["message"] == "Invalid OAuth token."

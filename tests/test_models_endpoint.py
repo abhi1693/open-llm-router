@@ -37,9 +37,9 @@ def _config_with_models() -> RoutingConfig:
                     "base_url": "http://provider-openai",
                     "api_key": "test-key",
                     "models": ["openai/m1", "plain-model"],
-                }
+                },
             ],
-        }
+        },
     )
 
 

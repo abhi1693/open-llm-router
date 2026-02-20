@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import secrets
 import threading
@@ -9,7 +10,7 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -42,7 +43,7 @@ CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_REDIRECT_URI = "http://localhost:1455/auth/callback"
 CHATGPT_SCOPE = "openid profile email offline_access"
 CHATGPT_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth"
-__all__ = ["main", "run_chatgpt_oauth_login_flow", "httpx", "secrets", "webbrowser"]
+__all__ = ["httpx", "main", "run_chatgpt_oauth_login_flow", "secrets", "webbrowser"]
 
 
 def _parse_bool(value: str) -> bool:
@@ -96,7 +97,10 @@ class AccountConfigMutator:
 
     @classmethod
     def apply_from_args(
-        cls, *, account: dict[str, Any], args: argparse.Namespace
+        cls,
+        *,
+        account: dict[str, Any],
+        args: argparse.Namespace,
     ) -> None:
         for arg_name, config_key in cls._NORMALIZED_OPTIONAL_FIELDS.items():
             value = getattr(args, arg_name, None)
@@ -145,12 +149,13 @@ class AccountEntryManager:
         raw_models: list[str],
     ) -> tuple[list[str], dict[str, str]]:
         account_models = qualify_models(provider, raw_models)
-        raw_to_qualified = {
-            raw_model: qualified_model
-            for raw_model, qualified_model in zip(
-                raw_models, account_models, strict=False
-            )
-        }
+        raw_to_qualified = dict(
+            zip(
+                raw_models,
+                account_models,
+                strict=False,
+            ),
+        )
         if not account_models:
             return account_models, raw_to_qualified
 
@@ -207,11 +212,11 @@ def _first_query_param(params: dict[str, list[str]], key: str) -> str | None:
 
 
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+    def log_message(self, format: str, *args: object) -> None:
         return
 
-    def do_GET(self) -> None:  # noqa: N802
-        server = self.server
+    def do_GET(self) -> None:
+        server = cast("_OAuthCallbackServer", self.server)
         parsed = urlparse(self.path)
         if parsed.path != "/auth/callback":
             self.send_response(404)
@@ -233,25 +238,32 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"State mismatch")
             return
 
-        setattr(server, "auth_code", code)
+        server.auth_code = code
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(
-            b"<!doctype html><html><body><p>Authentication successful. Return to your terminal.</p></body></html>"
+            b"<!doctype html><html><body><p>Authentication successful. Return to your terminal.</p></body></html>",
         )
 
 
+class _OAuthCallbackServer(ThreadingHTTPServer):
+    expected_state: str | None
+    auth_code: str | None
+
+
 def _start_callback_server(
-    host: str, port: int, expected_state: str
-) -> tuple[ThreadingHTTPServer | None, threading.Thread | None]:
+    host: str,
+    port: int,
+    expected_state: str,
+) -> tuple[_OAuthCallbackServer | None, threading.Thread | None]:
     try:
-        server = ThreadingHTTPServer((host, port), _OAuthCallbackHandler)
+        server = _OAuthCallbackServer((host, port), _OAuthCallbackHandler)
     except OSError:
         return None, None
 
-    setattr(server, "expected_state", expected_state)
-    setattr(server, "auth_code", None)
+    server.expected_state = expected_state
+    server.auth_code = None
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -259,7 +271,8 @@ def _start_callback_server(
 
 
 def _wait_for_callback_code(
-    server: ThreadingHTTPServer, timeout_seconds: int
+    server: _OAuthCallbackServer,
+    timeout_seconds: int,
 ) -> str | None:
     deadline = time.time() + max(1, timeout_seconds)
     while time.time() < deadline:
@@ -288,14 +301,16 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
     }
     auth_url = f"{args.authorize_url}?{urlencode(auth_params)}"
 
-    server: ThreadingHTTPServer | None = None
+    server: _OAuthCallbackServer | None = None
     if not args.no_local_callback:
         parsed_redirect = urlparse(args.redirect_uri)
         host = parsed_redirect.hostname or "127.0.0.1"
         port = parsed_redirect.port or 1455
         if host in {"localhost", "127.0.0.1"}:
             server, _thread = _start_callback_server(
-                host="127.0.0.1", port=port, expected_state=state
+                host="127.0.0.1",
+                port=port,
+                expected_state=state,
             )
 
     print(f"\nOpen this URL in your browser and complete sign-in:\n{auth_url}\n")
@@ -323,7 +338,7 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
             print("Callback not received in time.")
     elif server is not None:
         print(
-            "Browser auto-open is unavailable. Complete login manually and paste the full redirect URL or code."
+            "Browser auto-open is unavailable. Complete login manually and paste the full redirect URL or code.",
         )
 
     if not code:
@@ -333,14 +348,10 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("State mismatch in pasted code/URL.")
 
     if server is not None:
-        try:
+        with contextlib.suppress(Exception):
             server.shutdown()
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             server.server_close()
-        except Exception:
-            pass
 
     if not code:
         raise ValueError("Missing authorization code.")
@@ -359,7 +370,7 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
     )
     if response.status_code >= 400:
         raise RuntimeError(
-            f"OAuth token exchange failed ({response.status_code}): {response.text}"
+            f"OAuth token exchange failed ({response.status_code}): {response.text}",
         )
 
     body = response.json()
@@ -373,7 +384,7 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
         or not isinstance(expires_in, (int, float))
     ):
         raise RuntimeError(
-            "OAuth response missing required fields: access_token/refresh_token/expires_in."
+            "OAuth response missing required fields: access_token/refresh_token/expires_in.",
         )
 
     expires_at = int(time.time()) + int(expires_in)
@@ -544,7 +555,7 @@ def cmd_add_model(args: argparse.Namespace, data: dict[str, Any]) -> str:
         account = _find_account(data["accounts"], args.account)
         if account is None:
             raise ValueError(
-                f"Account '{args.account}' not found. Add it first with add-account."
+                f"Account '{args.account}' not found. Add it first with add-account.",
             )
         account["models"] = _dedupe([*account.get("models", []), args.model])
 
@@ -652,10 +663,14 @@ class RouterConfigCliParserBuilder:
             description="Manage open-llm-router router.yaml entries from CLI.",
         )
         self._parser.add_argument(
-            "--path", default="router.yaml", help="Path to router YAML config."
+            "--path",
+            default="router.yaml",
+            help="Path to router YAML config.",
         )
         self._parser.add_argument(
-            "--dry-run", action="store_true", help="Print changes without writing file."
+            "--dry-run",
+            action="store_true",
+            help="Print changes without writing file.",
         )
         self._subparsers = self._parser.add_subparsers(dest="command", required=True)
 
@@ -692,7 +707,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_add_account(self) -> None:
         parser = self._subparsers.add_parser(
-            "add-account", help="Add or update a backend account/provider."
+            "add-account",
+            help="Add or update a backend account/provider.",
         )
         parser.add_argument("--name", required=True)
         parser.add_argument("--provider", required=True)
@@ -756,7 +772,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_add_model(self) -> None:
         parser = self._subparsers.add_parser(
-            "add-model", help="Add model globally and optionally to one account."
+            "add-model",
+            help="Add model globally and optionally to one account.",
         )
         parser.add_argument(
             "--model",
@@ -769,7 +786,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_set_route(self) -> None:
         parser = self._subparsers.add_parser(
-            "set-route", help="Set task routing tier model."
+            "set-route",
+            help="Set task routing tier model.",
         )
         parser.add_argument("--task", required=True)
         parser.add_argument(
@@ -789,7 +807,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_set_fallbacks(self) -> None:
         parser = self._subparsers.add_parser(
-            "set-fallbacks", help="Set or append fallback models."
+            "set-fallbacks",
+            help="Set or append fallback models.",
         )
         self._add_models_argument(
             parser,
@@ -802,7 +821,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_set_profile(self) -> None:
         parser = self._subparsers.add_parser(
-            "set-profile", help="Set model profile fields."
+            "set-profile",
+            help="Set model profile fields.",
         )
         parser.add_argument(
             "--model",
@@ -819,7 +839,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_set_candidates(self) -> None:
         parser = self._subparsers.add_parser(
-            "set-candidates", help="Set learned-routing candidate models for a task."
+            "set-candidates",
+            help="Set learned-routing candidate models for a task.",
         )
         parser.add_argument("--task", required=True)
         self._add_models_argument(
@@ -833,7 +854,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_set_learned(self) -> None:
         parser = self._subparsers.add_parser(
-            "set-learned", help="Set learned-routing options and weights."
+            "set-learned",
+            help="Set learned-routing options and weights.",
         )
         parser.add_argument("--enabled", help="true/false")
         parser.add_argument("--bias", type=float)
@@ -851,7 +873,8 @@ class RouterConfigCliParserBuilder:
 
     def _build_show(self) -> None:
         parser = self._subparsers.add_parser(
-            "show", help="Show a short config summary."
+            "show",
+            help="Show a short config summary.",
         )
         parser.set_defaults(handler=cmd_show, mutates=False)
 
@@ -873,7 +896,8 @@ def main(argv: list[str] | None = None) -> int:
             payload=data,
             dry_run=bool(args.dry_run),
             persist=lambda resolved_payload: _save_config(
-                config_path, resolved_payload
+                config_path,
+                resolved_payload,
             ),
         )
 

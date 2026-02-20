@@ -30,14 +30,14 @@ def test_live_metrics_collector_records_events() -> None:
                 "selected_model": "m1",
                 "task": "coding",
                 "complexity": "high",
-            }
+            },
         )
         collector.ingest(
             {
                 "event": "proxy_upstream_connected",
                 "model": "m1",
                 "connect_ms": 1000.0,
-            }
+            },
         )
         collector.ingest(
             {
@@ -45,7 +45,7 @@ def test_live_metrics_collector_records_events() -> None:
                 "model": "m1",
                 "status": 200,
                 "request_latency_ms": 1200.0,
-            }
+            },
         )
         collector.ingest(
             {
@@ -54,7 +54,7 @@ def test_live_metrics_collector_records_events() -> None:
                 "account": "acct-a",
                 "model": "m1",
                 "status": 503,
-            }
+            },
         )
         collector.ingest(
             {
@@ -65,7 +65,7 @@ def test_live_metrics_collector_records_events() -> None:
                 "provider": "openai",
                 "account": "acct-a",
                 "attempt_latency_ms": 15.5,
-            }
+            },
         )
 
         await asyncio.sleep(0)
@@ -99,9 +99,9 @@ def test_runtime_policy_updater_applies_bounded_adjustments() -> None:
                     "m1": {
                         "latency_ms": 1000.0,
                         "failure_rate": 0.10,
-                    }
+                    },
                 },
-            }
+            },
         )
         store = InMemoryLiveMetricsStore(alpha=1.0)
 
@@ -148,9 +148,9 @@ def test_runtime_policy_updater_adapts_feature_weights_for_unstable_runtime() ->
                     "m1": {
                         "latency_ms": 1000.0,
                         "failure_rate": 0.02,
-                    }
+                    },
                 },
-            }
+            },
         )
         store = InMemoryLiveMetricsStore(alpha=1.0)
 
@@ -197,9 +197,9 @@ def test_runtime_policy_updater_restores_feature_weights_toward_baseline() -> No
                     "m1": {
                         "latency_ms": 1000.0,
                         "failure_rate": 0.02,
-                    }
+                    },
                 },
-            }
+            },
         )
         store = InMemoryLiveMetricsStore(alpha=1.0)
 
@@ -246,7 +246,7 @@ def test_live_metrics_collector_tracks_target_dimension_metrics() -> None:
                 "account": "acct-a",
                 "status": 200,
                 "request_latency_ms": 220.0,
-            }
+            },
         )
 
         await asyncio.sleep(0)
@@ -285,7 +285,7 @@ def test_live_metrics_collector_tracks_connect_latency_quantiles_and_alerts() ->
                 "provider": "openai",
                 "account": "acct-a",
                 "connect_ms": 50.0,
-            }
+            },
         )
         collector.ingest(
             {
@@ -294,7 +294,7 @@ def test_live_metrics_collector_tracks_connect_latency_quantiles_and_alerts() ->
                 "provider": "openai",
                 "account": "acct-a",
                 "connect_ms": 120.0,
-            }
+            },
         )
         collector.ingest(
             {
@@ -303,7 +303,7 @@ def test_live_metrics_collector_tracks_connect_latency_quantiles_and_alerts() ->
                 "provider": "openai",
                 "account": "acct-a",
                 "connect_ms": 130.0,
-            }
+            },
         )
 
         await asyncio.sleep(0)
@@ -342,7 +342,7 @@ def test_live_metrics_collector_tracks_secondary_classifier_outcomes() -> None:
                     "signals": {
                         "secondary_classifier_used": True,
                     },
-                }
+                },
             )
             collector.ingest(
                 {
@@ -350,7 +350,7 @@ def test_live_metrics_collector_tracks_secondary_classifier_outcomes() -> None:
                     "request_id": request_id,
                     "outcome": outcome,
                     "status": 200 if outcome == "success" else 500,
-                }
+                },
             )
 
         await asyncio.sleep(0)
@@ -375,9 +375,9 @@ def test_runtime_policy_updater_ignores_target_dimension_keys() -> None:
                     "m1": {
                         "latency_ms": 1000.0,
                         "failure_rate": 0.10,
-                    }
+                    },
                 },
-            }
+            },
         )
         store = InMemoryLiveMetricsStore(alpha=1.0)
 
@@ -424,7 +424,7 @@ def test_runtime_policy_updater_adjusts_classifier_thresholds_from_feedback() ->
                     "min_threshold": 0.05,
                     "max_threshold": 0.95,
                 },
-            }
+            },
         )
         store = InMemoryLiveMetricsStore(alpha=0.5)
         collector = LiveMetricsCollector(store=store, enabled=True)
@@ -442,7 +442,7 @@ def test_runtime_policy_updater_adjusts_classifier_thresholds_from_feedback() ->
                     "task": "general",
                     "complexity": "low",
                     "signals": {"secondary_classifier_used": True},
-                }
+                },
             )
             collector.ingest(
                 {
@@ -450,7 +450,7 @@ def test_runtime_policy_updater_adjusts_classifier_thresholds_from_feedback() ->
                     "request_id": request_id,
                     "status": 200 if outcome == "success" else 500,
                     "outcome": outcome,
-                }
+                },
             )
 
         await asyncio.sleep(0)
@@ -500,7 +500,7 @@ def test_apply_runtime_overrides_updates_classifier_calibration_thresholds(
                 "min_threshold": 0.05,
                 "max_threshold": 0.9,
             },
-        }
+        },
     )
 
     overrides_path = tmp_path / "router.runtime.overrides.yaml"
@@ -508,7 +508,7 @@ def test_apply_runtime_overrides_updates_classifier_calibration_thresholds(
         "classifier_calibration": {
             "secondary_low_confidence_min_confidence": 0.31,
             "secondary_mixed_signal_min_confidence": 0.52,
-        }
+        },
     }
     save_yaml_file(overrides_path, payload)
 
@@ -537,9 +537,9 @@ def test_apply_runtime_overrides_updates_model_profiles(tmp_path: Path) -> None:
                 "m1": {
                     "latency_ms": 1000.0,
                     "failure_rate": 0.10,
-                }
+                },
             },
-        }
+        },
     )
 
     overrides_path = tmp_path / "router.runtime.overrides.yaml"
@@ -547,7 +547,7 @@ def test_apply_runtime_overrides_updates_model_profiles(tmp_path: Path) -> None:
         "model_profiles": {
             "m1": {"latency_ms": 850.0, "failure_rate": 0.03},
             "m2": {"latency_ms": 400.0, "failure_rate": 0.02},
-        }
+        },
     }
     save_yaml_file(overrides_path, payload)
 
@@ -577,7 +577,7 @@ def test_apply_runtime_overrides_updates_learned_feature_weights(
                     "reasoning_effort_high": 1.0,
                 },
             },
-        }
+        },
     )
 
     overrides_path = tmp_path / "router.runtime.overrides.yaml"
@@ -586,8 +586,8 @@ def test_apply_runtime_overrides_updates_learned_feature_weights(
             "feature_weights": {
                 "complexity_score": 0.95,
                 "reasoning_effort_high": 0.72,
-            }
-        }
+            },
+        },
     }
     save_yaml_file(overrides_path, payload)
 
@@ -598,7 +598,7 @@ def test_apply_runtime_overrides_updates_learned_feature_weights(
 
     assert applied == 0
     assert config.learned_routing.feature_weights["complexity_score"] == pytest.approx(
-        0.95
+        0.95,
     )
     assert config.learned_routing.feature_weights[
         "reasoning_effort_high"
@@ -627,7 +627,7 @@ def test_live_metrics_collector_bounds_high_cardinality_maps() -> None:
                     "provider": "openai",
                     "account": account,
                     "model": "m1",
-                }
+                },
             )
             collector.ingest(
                 {
@@ -637,7 +637,7 @@ def test_live_metrics_collector_bounds_high_cardinality_maps() -> None:
                     "model": "m1",
                     "error_type": error_type,
                     "is_timeout": True,
-                }
+                },
             )
 
         await asyncio.sleep(0)

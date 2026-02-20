@@ -6,8 +6,9 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from fastapi.responses import Response
 
@@ -100,7 +101,7 @@ class IdempotencyStore:
                 result.waiter.wait(),
                 timeout=self._config.wait_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         async with self._lock:
             cached = self._cache.get(result.key)
@@ -278,7 +279,10 @@ def build_idempotency_cache_key(
 ) -> str:
     # Use a fixed-size fingerprint to avoid oversized cache keys and reduce key serialization overhead.
     canonical_payload = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), default=str
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     )
     payload_fingerprint = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
     return f"{tenant_id}|{path}|{idempotency_key}|sha256:{payload_fingerprint}"

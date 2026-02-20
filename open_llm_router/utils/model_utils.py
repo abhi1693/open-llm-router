@@ -25,7 +25,8 @@ def split_model_ref(model: str) -> tuple[str | None, str]:
 
 
 def normalize_model_metadata(
-    model_key: str, raw_metadata: dict[str, Any] | None
+    model_key: str,
+    raw_metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     metadata = dict(raw_metadata or {})
     raw_id = metadata.get("id")
@@ -62,7 +63,8 @@ def coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
             if not isinstance(raw_metadata, dict):
                 raise ValueError(f"Model metadata for '{model_key}' must be an object.")
             normalized_models[model_key] = normalize_model_metadata(
-                model_key, raw_metadata
+                model_key,
+                raw_metadata,
             )
         return normalized_models
     raise ValueError("Expected 'models' to be either a list or a mapping.")

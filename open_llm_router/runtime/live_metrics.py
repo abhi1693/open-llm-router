@@ -136,7 +136,9 @@ class _ModelMetricsUpdater:
         state.samples += 1
         failure_flag = 1.0 if _is_failure_status(int(status)) else 0.0
         state.ewma_failure_rate = _ewma(
-            state.ewma_failure_rate, failure_flag, self._alpha
+            state.ewma_failure_rate,
+            failure_flag,
+            self._alpha,
         )
         if failure_flag > 0:
             state.errors += 1
@@ -419,7 +421,7 @@ class RedisLiveMetricsStore:
         rows = await pipeline.execute()
 
         output: dict[str, _ModelMetricsState] = {}
-        for model, raw in zip(unique_models, rows):
+        for model, raw in zip(unique_models, rows, strict=False):
             state = self._parse_state(self._decode_hash(raw))
             if state is None:
                 state = _ModelMetricsState(model=model)
@@ -536,7 +538,9 @@ class RedisLiveMetricsStore:
         pattern = f"{self._key_prefix}*"
         while True:
             cursor, keys = await self._redis.scan(
-                cursor=cursor, match=pattern, count=200
+                cursor=cursor,
+                match=pattern,
+                count=200,
             )
             if keys:
                 pipeline = self._redis.pipeline(transaction=False)
@@ -566,7 +570,8 @@ def build_live_metrics_store(
     except Exception as exc:  # pragma: no cover - fallback behavior tested via builder.
         if logger is not None:
             logger.warning(
-                "live_metrics_redis_unavailable reason=%s fallback=in_memory", str(exc)
+                "live_metrics_redis_unavailable reason=%s fallback=in_memory",
+                str(exc),
             )
         return InMemoryLiveMetricsStore(alpha=alpha)
 
@@ -599,7 +604,7 @@ class LiveMetricsCollector:
         self._logger = logger
         self._enabled = enabled
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(
-            maxsize=max(1, queue_size)
+            maxsize=max(1, queue_size),
         )
         self._worker_task: asyncio.Task[None] | None = None
         self._dropped_events = 0
@@ -694,7 +699,8 @@ class LiveMetricsCollector:
         if not self._enabled or self._worker_task is not None:
             return
         self._worker_task = asyncio.create_task(
-            self._run(), name="live-metrics-collector"
+            self._run(),
+            name="live-metrics-collector",
         )
 
     async def close(self) -> None:
