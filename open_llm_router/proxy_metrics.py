@@ -1,21 +1,11 @@
 from __future__ import annotations
 
-from math import ceil
-
 from open_llm_router.bounded_maps import (
     BoundedCounterMap,
     BoundedDequeMap,
     BoundedValueMap,
 )
-
-
-def _percentile(values: list[float], percentile: float) -> float | None:
-    if not values:
-        return None
-    sorted_values = sorted(values)
-    rank = max(1, ceil(percentile * len(sorted_values)))
-    idx = min(len(sorted_values) - 1, rank - 1)
-    return float(sorted_values[idx])
+from open_llm_router.stats_utils import percentile
 
 
 class ProxyMetricsAccumulator:
@@ -129,9 +119,9 @@ class ProxyMetricsAccumulator:
                 continue
             output[key] = {
                 "count": len(values),
-                "p50": _percentile(values, 0.50) or 0.0,
-                "p95": _percentile(values, 0.95) or 0.0,
-                "p99": _percentile(values, 0.99) or 0.0,
+                "p50": percentile(values, 0.50) or 0.0,
+                "p95": percentile(values, 0.95) or 0.0,
+                "p99": percentile(values, 0.99) or 0.0,
             }
         return output
 
@@ -144,7 +134,7 @@ class ProxyMetricsAccumulator:
         if self._connect_latency_alert_threshold_ms <= 0.0:
             return
 
-        p95_value = _percentile(list(samples), 0.95)
+        p95_value = percentile(list(samples), 0.95)
         is_alerting = (
             p95_value is not None
             and p95_value > self._connect_latency_alert_threshold_ms

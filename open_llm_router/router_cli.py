@@ -27,6 +27,11 @@ from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
 )
+from open_llm_router.numeric_utils import (
+    coerce_float,
+    coerce_optional_float,
+    coerce_optional_int,
+)
 from open_llm_router.persistence import YamlFileStore
 from open_llm_router.profile_compiler import (
     compile_profile_document,
@@ -258,23 +263,23 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
 
     config_low = float(cfg.secondary_low_confidence_min_confidence)
     config_mixed = float(cfg.secondary_mixed_signal_min_confidence)
-    active_low = _coerce_float(
+    active_low = coerce_float(
         calibration_runtime.get("secondary_low_confidence_min_confidence"),
         config_low,
     )
-    active_mixed = _coerce_float(
+    active_mixed = coerce_float(
         calibration_runtime.get("secondary_mixed_signal_min_confidence"),
         config_mixed,
     )
     active_mixed = max(active_mixed, active_low)
 
     target = float(cfg.target_secondary_success_rate)
-    observed_success_rate = _coerce_optional_float(
+    observed_success_rate = coerce_optional_float(
         calibration_runtime.get("secondary_success_rate")
     )
-    secondary_samples = _coerce_optional_int(calibration_runtime.get("secondary_total"))
+    secondary_samples = coerce_optional_int(calibration_runtime.get("secondary_total"))
     if secondary_samples is None:
-        secondary_samples = _coerce_optional_int(
+        secondary_samples = coerce_optional_int(
             calibration_runtime.get("secondary_samples")
         )
 
@@ -319,30 +324,6 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
     }
     print_yaml(payload)
     return 0
-
-
-def _coerce_float(value: Any, default: float) -> float:
-    if isinstance(value, bool):
-        return float(default)
-    if isinstance(value, (int, float)):
-        return float(value)
-    return float(default)
-
-
-def _coerce_optional_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
-
-
-def _coerce_optional_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    return None
 
 
 def _synthetic_signals(task: str, input_chars: int) -> dict[str, Any]:

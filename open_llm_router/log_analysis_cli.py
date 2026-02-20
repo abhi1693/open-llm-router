@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -10,6 +9,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from open_llm_router.cli_output import write_cli_report
+from open_llm_router.numeric_utils import coerce_optional_float, coerce_optional_int
+from open_llm_router.stats_utils import percentile
 
 
 @dataclass(slots=True)
@@ -75,33 +76,6 @@ def _format_utc(epoch: float | None) -> str | None:
     return datetime.fromtimestamp(epoch, UTC).isoformat().replace("+00:00", "Z")
 
 
-def _safe_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return None
-
-
-def _safe_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
-
-
-def _percentile(values: list[float], percentile: float) -> float | None:
-    if not values:
-        return None
-    sorted_values = sorted(values)
-    rank = max(1, math.ceil(percentile * len(sorted_values)))
-    idx = min(len(sorted_values) - 1, rank - 1)
-    return sorted_values[idx]
-
-
 def _summary_stats(values: list[float]) -> dict[str, float | int | None]:
     if not values:
         return {
@@ -115,9 +89,9 @@ def _summary_stats(values: list[float]) -> dict[str, float | int | None]:
         }
     return {
         "count": len(values),
-        "p50": _percentile(values, 0.50),
-        "p95": _percentile(values, 0.95),
-        "p99": _percentile(values, 0.99),
+        "p50": percentile(values, 0.50),
+        "p95": percentile(values, 0.95),
+        "p99": percentile(values, 0.99),
         "min": min(values),
         "max": max(values),
         "avg": sum(values) / len(values),
@@ -232,7 +206,7 @@ def _update_latency_maps(
     if not isinstance(request_id, str) or not request_id.strip():
         return
 
-    ts = _safe_float(event.get("ts"))
+    ts = coerce_optional_float(event.get("ts"))
     if ts is None:
         return
 
@@ -248,7 +222,7 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
     event_name = str(event.get("event") or "unknown")
     state.event_counts[event_name] += 1
 
-    ts = _safe_float(event.get("ts"))
+    ts = coerce_optional_float(event.get("ts"))
     if ts is not None:
         if state.min_ts is None or ts < state.min_ts:
             state.min_ts = ts
@@ -288,7 +262,7 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         candidate_scores = event.get("candidate_scores")
         if isinstance(candidate_scores, list):
             utilities = [
-                _safe_float(item.get("utility"))
+                coerce_optional_float(item.get("utility"))
                 for item in candidate_scores
                 if isinstance(item, dict)
             ]
@@ -299,7 +273,7 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         return
 
     if event_name == "proxy_upstream_connected":
-        connect_ms = _safe_float(event.get("connect_ms"))
+        connect_ms = coerce_optional_float(event.get("connect_ms"))
         if connect_ms is not None:
             state.connect_ms_values.append(connect_ms)
             target = str(event.get("target") or "unknown")
@@ -307,7 +281,7 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         return
 
     if event_name == "proxy_attempt":
-        attempt = _safe_int(event.get("attempt"))
+        attempt = coerce_optional_int(event.get("attempt"))
         if attempt is None:
             state.attempt_number_counts["unknown"] += 1
         else:
@@ -336,11 +310,11 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
         return
 
     if event_name == "proxy_response":
-        status_code = _safe_int(event.get("status"))
+        status_code = coerce_optional_int(event.get("status"))
         status_key = "unknown" if status_code is None else str(status_code)
         state.response_status_counts[status_key] += 1
 
-        attempts = _safe_int(event.get("attempts"))
+        attempts = coerce_optional_int(event.get("attempts"))
         attempts_key = "unknown" if attempts is None else str(attempts)
         state.response_attempts_counts[attempts_key] += 1
         if attempts is not None and attempts > 1:
@@ -358,7 +332,7 @@ def _process_event(state: AggregationState, event: dict[str, Any]) -> None:
     if event_name == "proxy_request_error":
         target = str(event.get("target") or "unknown")
         upstream_model = str(event.get("upstream_model") or "unknown")
-        status_code = _safe_int(event.get("status_code"))
+        status_code = coerce_optional_int(event.get("status_code"))
         status = "none" if status_code is None else str(status_code)
         error_type = str(event.get("error_type") or "unknown")
         is_timeout = bool(event.get("is_timeout"))
