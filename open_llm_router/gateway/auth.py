@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from jwt import InvalidTokenError, PyJWKClient
 from jwt.types import Options
 
-from open_llm_router.settings import Settings
+from open_llm_router.config.settings import Settings
 
 
 class AuthConfigurationError(RuntimeError):

@@ -11,7 +11,7 @@ from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_CATALOG_MODELS_PATH = (
-    Path(__file__).resolve().parent / "catalog" / "models.yaml"
+    Path(__file__).resolve().parents[1] / "catalog" / "models.yaml"
 )
 
 # Internal provider ids do not always match OpenRouter's model id prefixes.

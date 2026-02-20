@@ -4,11 +4,11 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from open_llm_router.catalog import (
+from open_llm_router.catalogs.core import (
     load_internal_catalog,
     validate_routing_document_against_catalog,
 )
-from open_llm_router.catalog_sync import (
+from open_llm_router.catalogs.sync import (
     DEFAULT_CATALOG_MODELS_PATH,
     OPENROUTER_MODELS_URL,
     fetch_openrouter_models,

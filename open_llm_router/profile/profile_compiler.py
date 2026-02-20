@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from open_llm_router.catalog import (
+from open_llm_router.catalogs.core import (
     CatalogLookupError,
     CatalogValidationError,
     ModelCatalogEntry,

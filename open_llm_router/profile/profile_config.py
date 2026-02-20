@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from open_llm_router.account_fields import AccountCommonFields
+from open_llm_router.config.account_fields import AccountCommonFields
 
 
 class ProfileSelection(BaseModel):

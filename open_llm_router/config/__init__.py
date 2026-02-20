@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from open_llm_router.account_fields import AccountCommonFields
+from open_llm_router.config.account_fields import AccountCommonFields
 from open_llm_router.utils.model_utils import (
     coerce_models_map,
     default_model_id,
@@ -331,7 +331,7 @@ def load_routing_config_with_metadata(
         error_message=f"Expected YAML object in '{config_path}'.",
     )
 
-    from open_llm_router.catalog import (
+    from open_llm_router.catalogs.core import (
         load_internal_catalog,
         validate_routing_document_against_catalog,
     )

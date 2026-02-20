@@ -253,7 +253,7 @@ def _split_model_ref(model_ref: str) -> tuple[str | None, str]:
 
 
 def _catalog_dir() -> Path:
-    return Path(__file__).resolve().parent / "catalog"
+    return Path(__file__).resolve().parents[1] / "catalog"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
