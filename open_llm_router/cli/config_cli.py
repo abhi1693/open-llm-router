@@ -42,7 +42,7 @@ CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_REDIRECT_URI = "http://localhost:1455/auth/callback"
 CHATGPT_SCOPE = "openid profile email offline_access"
 CHATGPT_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth"
-__all__ = ["main", "httpx", "secrets", "webbrowser"]
+__all__ = ["main", "run_chatgpt_oauth_login_flow", "httpx", "secrets", "webbrowser"]
 
 
 def _parse_bool(value: str) -> bool:
@@ -270,7 +270,7 @@ def _wait_for_callback_code(
     return None
 
 
-def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
+def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
     verifier, challenge = _generate_pkce()
     state = secrets.token_hex(16)
 
@@ -507,7 +507,7 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
         auth_mode="oauth",
     )
 
-    oauth_data = _run_chatgpt_oauth_login_flow(args)
+    oauth_data = run_chatgpt_oauth_login_flow(args)
     account.update(oauth_data)
 
     raw_account_models = parse_comma_separated_values(args.models)

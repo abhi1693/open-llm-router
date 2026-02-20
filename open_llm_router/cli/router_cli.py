@@ -369,12 +369,6 @@ def _normalize_provider_alias(provider: str) -> str:
     return normalized
 
 
-def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
-    from open_llm_router.cli import config_cli
-
-    return config_cli._run_chatgpt_oauth_login_flow(args)
-
-
 def _load_or_init_profile_payload(path: Path) -> dict[str, Any]:
     if not path.exists():
         profile = RouterProfileConfig()
@@ -482,7 +476,9 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
             no_browser=args.no_browser,
             no_local_callback=args.no_local_callback,
         )
-        oauth_payload = _run_chatgpt_oauth_login_flow(oauth_args)
+        from open_llm_router.cli import config_cli
+
+        oauth_payload = config_cli.run_chatgpt_oauth_login_flow(oauth_args)
         account_payload = {
             "name": args.name,
             "provider": LOGIN_CHATGPT_DEFAULT_PROVIDER,

@@ -110,9 +110,8 @@ class RuntimePolicyUpdater:
         ) = self._apply_learned_feature_weight_adaptation(snapshot)
         classifier_adjusted = self._apply_classifier_calibration()
         if self._overrides_path:
-            _write_runtime_overrides(
+            RuntimeOverridesManager(routing_config=self._routing_config).write(
                 path=self._overrides_path,
-                routing_config=self._routing_config,
                 snapshot=snapshot,
                 classifier_calibration=self._classifier_calibration_overrides_payload(),
             )
@@ -639,37 +638,3 @@ def apply_runtime_overrides(
         routing_config=routing_config,
         logger=logger,
     ).apply_from_path(path=path)
-
-
-def _write_runtime_overrides(
-    *,
-    path: Path,
-    routing_config: RoutingConfig,
-    snapshot: dict[str, ModelMetricsSnapshot],
-    classifier_calibration: dict[str, Any] | None = None,
-) -> None:
-    RuntimeOverridesManager(routing_config=routing_config).write(
-        path=path,
-        snapshot=snapshot,
-        classifier_calibration=classifier_calibration,
-    )
-
-
-def _apply_classifier_calibration_overrides(
-    *,
-    raw: dict[str, Any],
-    routing_config: RoutingConfig,
-) -> None:
-    RuntimeOverridesManager(
-        routing_config=routing_config
-    ).apply_classifier_calibration_overrides(raw=raw)
-
-
-def _apply_learned_feature_weight_overrides(
-    *,
-    raw: dict[str, Any],
-    routing_config: RoutingConfig,
-) -> None:
-    RuntimeOverridesManager(
-        routing_config=routing_config
-    ).apply_learned_feature_weight_overrides(raw=raw)

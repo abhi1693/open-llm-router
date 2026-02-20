@@ -324,7 +324,7 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path: Any, monkeypatch: Any) -
         }
 
     monkeypatch.setattr(
-        "open_llm_router.cli.config_cli._run_chatgpt_oauth_login_flow",
+        "open_llm_router.cli.config_cli.run_chatgpt_oauth_login_flow",
         _fake_login,
     )
 
@@ -391,7 +391,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(
         }
 
     monkeypatch.setattr(
-        "open_llm_router.cli.config_cli._run_chatgpt_oauth_login_flow",
+        "open_llm_router.cli.config_cli.run_chatgpt_oauth_login_flow",
         _fake_login,
     )
 
@@ -504,7 +504,7 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
         no_local_callback=False,
     )
 
-    result = config_cli._run_chatgpt_oauth_login_flow(args)
+    result = config_cli.run_chatgpt_oauth_login_flow(args)
     assert wait_called["value"] is False
     assert result["oauth_refresh_token"] == "refresh-1"
     assert result["oauth_client_id"] == "client-1"
@@ -585,7 +585,7 @@ def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(
         no_local_callback=False,
     )
 
-    result = config_cli._run_chatgpt_oauth_login_flow(args)
+    result = config_cli.run_chatgpt_oauth_login_flow(args)
     assert browser_called["value"] is False
     assert wait_called["value"] is False
     assert result["oauth_refresh_token"] == "refresh-2"

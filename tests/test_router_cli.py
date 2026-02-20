@@ -190,7 +190,8 @@ def test_router_provider_login_openai_chatgpt_writes_profile(
         "oauth_token_url": "https://auth.openai.com/oauth/token",
     }
     monkeypatch.setattr(
-        router_cli, "_run_chatgpt_oauth_login_flow", lambda _args: fake_oauth
+        "open_llm_router.cli.config_cli.run_chatgpt_oauth_login_flow",
+        lambda _args: fake_oauth,
     )
 
     assert (
