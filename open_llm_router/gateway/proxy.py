@@ -193,53 +193,47 @@ def _build_upstream_headers(
     stream: bool = False,
     allow_passthrough_auth: bool = False,
 ) -> dict[str, str]:
-    headers = _extract_passthrough_headers(incoming_headers)
-    _apply_authorization_header(
-        headers=headers,
-        incoming_headers=incoming_headers,
+    return UpstreamHeaderBuilder(incoming_headers).build(
         bearer_token=bearer_token,
-        allow_passthrough_auth=allow_passthrough_auth,
-    )
-    _apply_openai_context_headers(
-        headers=headers,
-        organization=organization,
-        project=project,
-    )
-    _apply_provider_headers(
-        headers=headers,
         provider=provider,
         oauth_account_id=oauth_account_id,
+        organization=organization,
+        project=project,
+        stream=stream,
+        allow_passthrough_auth=allow_passthrough_auth,
     )
-    _ensure_default_content_negotiation(headers=headers, stream=stream)
-    return headers
 
 
-def _extract_passthrough_headers(incoming_headers: Headers) -> dict[str, str]:
-    passthrough = {
-        "accept",
-        "baggage",
-        "content-type",
-        "idempotency-key",
-        "openai-organization",
-        "openai-project",
-        "traceparent",
-        "tracestate",
-    }
-    safe_x_headers = {
-        "x-openai-client-source",
-        "x-openai-client-user-agent",
-        "x-request-id",
-        "x-stainless-arch",
-        "x-stainless-async",
-        "x-stainless-lang",
-        "x-stainless-os",
-        "x-stainless-package-version",
-        "x-stainless-read-timeout",
-        "x-stainless-retry-count",
-        "x-stainless-runtime",
-        "x-stainless-runtime-version",
-    }
-    canonical_names = {
+class UpstreamHeaderBuilder:
+    PASSTHROUGH_HEADERS: frozenset[str] = frozenset(
+        {
+            "accept",
+            "baggage",
+            "content-type",
+            "idempotency-key",
+            "openai-organization",
+            "openai-project",
+            "traceparent",
+            "tracestate",
+        }
+    )
+    SAFE_X_HEADERS: frozenset[str] = frozenset(
+        {
+            "x-openai-client-source",
+            "x-openai-client-user-agent",
+            "x-request-id",
+            "x-stainless-arch",
+            "x-stainless-async",
+            "x-stainless-lang",
+            "x-stainless-os",
+            "x-stainless-package-version",
+            "x-stainless-read-timeout",
+            "x-stainless-retry-count",
+            "x-stainless-runtime",
+            "x-stainless-runtime-version",
+        }
+    )
+    CANONICAL_HEADER_NAMES: dict[str, str] = {
         "accept": "Accept",
         "baggage": "baggage",
         "content-type": "Content-Type",
@@ -249,69 +243,94 @@ def _extract_passthrough_headers(incoming_headers: Headers) -> dict[str, str]:
         "traceparent": "traceparent",
         "tracestate": "tracestate",
     }
-    headers: dict[str, str] = {}
-    for name, value in incoming_headers.items():
-        lower = name.lower()
-        if lower in {"host", "content-length", "connection", "authorization"}:
-            continue
-        if lower in passthrough or lower in safe_x_headers:
-            headers[canonical_names.get(lower, name)] = value
-    return headers
 
+    def __init__(self, incoming_headers: Headers):
+        self._incoming_headers = incoming_headers
+        self._headers = self._extract_passthrough_headers()
 
-def _apply_authorization_header(
-    *,
-    headers: dict[str, str],
-    incoming_headers: Headers,
-    bearer_token: str | None,
-    allow_passthrough_auth: bool,
-) -> None:
-    if bearer_token:
-        headers["Authorization"] = f"Bearer {bearer_token}"
-        return
-    if not allow_passthrough_auth:
-        return
-    incoming_auth = incoming_headers.get("authorization", "").strip()
-    if incoming_auth.lower().startswith("bearer "):
-        headers["Authorization"] = incoming_auth
+    def build(
+        self,
+        *,
+        bearer_token: str | None,
+        provider: str,
+        oauth_account_id: str | None,
+        organization: str | None,
+        project: str | None,
+        stream: bool,
+        allow_passthrough_auth: bool,
+    ) -> dict[str, str]:
+        self._apply_authorization_header(
+            bearer_token=bearer_token,
+            allow_passthrough_auth=allow_passthrough_auth,
+        )
+        self._apply_openai_context_headers(
+            organization=organization,
+            project=project,
+        )
+        self._apply_provider_headers(
+            provider=provider,
+            oauth_account_id=oauth_account_id,
+        )
+        self._ensure_default_content_negotiation(stream=stream)
+        return self._headers
 
+    def _extract_passthrough_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        for name, value in self._incoming_headers.items():
+            lower = name.lower()
+            if lower in {"host", "content-length", "connection", "authorization"}:
+                continue
+            if lower in self.PASSTHROUGH_HEADERS or lower in self.SAFE_X_HEADERS:
+                headers[self.CANONICAL_HEADER_NAMES.get(lower, name)] = value
+        return headers
 
-def _apply_openai_context_headers(
-    *,
-    headers: dict[str, str],
-    organization: str | None,
-    project: str | None,
-) -> None:
-    if organization:
-        headers["OpenAI-Organization"] = organization
-    if project:
-        headers["OpenAI-Project"] = project
+    def _apply_authorization_header(
+        self,
+        *,
+        bearer_token: str | None,
+        allow_passthrough_auth: bool,
+    ) -> None:
+        if bearer_token:
+            self._headers["Authorization"] = f"Bearer {bearer_token}"
+            return
+        if not allow_passthrough_auth:
+            return
+        incoming_auth = self._incoming_headers.get("authorization", "").strip()
+        if incoming_auth.lower().startswith("bearer "):
+            self._headers["Authorization"] = incoming_auth
 
+    def _apply_openai_context_headers(
+        self,
+        *,
+        organization: str | None,
+        project: str | None,
+    ) -> None:
+        if organization:
+            self._headers["OpenAI-Organization"] = organization
+        if project:
+            self._headers["OpenAI-Project"] = project
 
-def _apply_provider_headers(
-    *,
-    headers: dict[str, str],
-    provider: str,
-    oauth_account_id: str | None,
-) -> None:
-    if provider.strip().lower() != "openai-codex":
-        return
-    if oauth_account_id:
-        headers["chatgpt-account-id"] = oauth_account_id
-    headers.setdefault("OpenAI-Beta", "responses=experimental")
-    headers.setdefault("originator", "pi")
-    headers["Accept"] = "text/event-stream"
+    def _apply_provider_headers(
+        self,
+        *,
+        provider: str,
+        oauth_account_id: str | None,
+    ) -> None:
+        if provider.strip().lower() != "openai-codex":
+            return
+        if oauth_account_id:
+            self._headers["chatgpt-account-id"] = oauth_account_id
+        self._headers.setdefault("OpenAI-Beta", "responses=experimental")
+        self._headers.setdefault("originator", "pi")
+        self._headers["Accept"] = "text/event-stream"
 
-
-def _ensure_default_content_negotiation(
-    *,
-    headers: dict[str, str],
-    stream: bool,
-) -> None:
-    if not any(key.lower() == "content-type" for key in headers):
-        headers["Content-Type"] = "application/json"
-    if not any(key.lower() == "accept" for key in headers):
-        headers["Accept"] = "text/event-stream" if stream else "application/json"
+    def _ensure_default_content_negotiation(self, *, stream: bool) -> None:
+        if not any(key.lower() == "content-type" for key in self._headers):
+            self._headers["Content-Type"] = "application/json"
+        if not any(key.lower() == "accept" for key in self._headers):
+            self._headers["Accept"] = (
+                "text/event-stream" if stream else "application/json"
+            )
 
 
 def _as_input_text_part(value: str) -> dict[str, str]:
