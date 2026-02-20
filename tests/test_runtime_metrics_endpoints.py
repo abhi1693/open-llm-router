@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-import yaml
-
 from tests.client_test_utils import build_test_client
+from tests.yaml_test_utils import save_yaml_file
+
+
+def _base_prefetch_config() -> dict[str, Any]:
+    return {
+        "default_model": "openai-codex/gpt-5.2-codex",
+        "task_routes": {
+            "general": {
+                "default": ["openai-codex/gpt-5.2-codex"],
+            }
+        },
+    }
 
 
 def test_router_live_metrics_endpoint_returns_snapshot(monkeypatch: Any) -> None:
@@ -50,28 +60,16 @@ def test_startup_prefetches_local_semantic_model_when_enabled(
     monkeypatch: Any, tmp_path: Any
 ) -> None:
     config_path = tmp_path / "router.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "default_model": "openai-codex/gpt-5.2-codex",
-                "task_routes": {
-                    "general": {
-                        "default": ["openai-codex/gpt-5.2-codex"],
-                    }
-                },
-                "semantic_classifier": {
-                    "enabled": True,
-                    "backend": "local_embedding",
-                    "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-                    "local_files_only": False,
-                    "local_max_length": 256,
-                    "min_confidence": 0.2,
-                },
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
+    config = _base_prefetch_config()
+    config["semantic_classifier"] = {
+        "enabled": True,
+        "backend": "local_embedding",
+        "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+        "local_files_only": False,
+        "local_max_length": 256,
+        "min_confidence": 0.2,
+    }
+    save_yaml_file(config_path, config)
 
     calls: list[tuple[str, bool]] = []
 
@@ -101,30 +99,18 @@ def test_startup_prefetches_local_route_reranker_model_when_enabled(
     monkeypatch: Any, tmp_path: Any
 ) -> None:
     config_path = tmp_path / "router.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "default_model": "openai-codex/gpt-5.2-codex",
-                "task_routes": {
-                    "general": {
-                        "default": ["openai-codex/gpt-5.2-codex"],
-                    }
-                },
-                "route_reranker": {
-                    "enabled": True,
-                    "backend": "local_embedding",
-                    "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-                    "local_files_only": False,
-                    "local_max_length": 256,
-                    "similarity_weight": 0.35,
-                    "min_similarity": 0.0,
-                    "model_hints": {},
-                },
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
+    config = _base_prefetch_config()
+    config["route_reranker"] = {
+        "enabled": True,
+        "backend": "local_embedding",
+        "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+        "local_files_only": False,
+        "local_max_length": 256,
+        "similarity_weight": 0.35,
+        "min_similarity": 0.0,
+        "model_hints": {},
+    }
+    save_yaml_file(config_path, config)
 
     calls: list[tuple[str, bool]] = []
 

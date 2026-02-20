@@ -61,6 +61,10 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
         yaml.safe_dump(payload, handle, sort_keys=False)
 
 
+def _print_yaml(payload: dict[str, Any]) -> None:
+    print(yaml.safe_dump(payload, sort_keys=False).rstrip())
+
+
 def _add_profile_path_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--path", default=DEFAULT_PROFILE_CONFIG_PATH)
 
@@ -93,14 +97,14 @@ def cmd_compile_config(args: argparse.Namespace) -> int:
     result = compile_profile_file(profile_path)
 
     if args.stdout:
-        print(yaml.safe_dump(result.effective_config, sort_keys=False).rstrip())
+        _print_yaml(result.effective_config)
     else:
         output_path = Path(args.output)
         _write_yaml(output_path, result.effective_config)
         print(f"Wrote effective config: {output_path}")
 
     if args.explain:
-        print(yaml.safe_dump(result.explain, sort_keys=False).rstrip())
+        _print_yaml(result.explain)
 
     return 0
 
@@ -132,7 +136,7 @@ def cmd_profile_list(_: argparse.Namespace) -> int:
 def cmd_profile_show(args: argparse.Namespace) -> int:
     template = get_builtin_profile_template(args.name)
     payload = {"name": args.name, **template}
-    print(yaml.safe_dump(payload, sort_keys=False).rstrip())
+    _print_yaml(payload)
     return 0
 
 
@@ -216,7 +220,7 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
     result["final_selection"] = selected_model
     result["fallback_chain"] = fallback_chain
 
-    print(yaml.safe_dump(result, sort_keys=False).rstrip())
+    _print_yaml(result)
     return 0
 
 
@@ -294,7 +298,7 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
         },
         "history": normalized_history,
     }
-    print(yaml.safe_dump(payload, sort_keys=False).rstrip())
+    _print_yaml(payload)
     return 0
 
 
@@ -443,7 +447,7 @@ def _save_profile_payload(
     # Compile once as validation gate before writing invalid profile docs.
     compile_profile_document(payload)
     if dry_run:
-        print(yaml.safe_dump(payload, sort_keys=False).rstrip())
+        _print_yaml(payload)
         return
     _write_yaml(path, payload)
 
@@ -457,7 +461,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
         "tasks": sorted(config.task_routes.keys()),
         "learned_enabled": bool(config.learned_routing.enabled),
     }
-    print(yaml.safe_dump(summary, sort_keys=False).rstrip())
+    _print_yaml(summary)
     return 0
 
 

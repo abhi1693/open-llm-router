@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-import yaml
 
 from open_llm_router.config import RoutingConfig
 from open_llm_router.live_metrics import (
@@ -13,6 +12,7 @@ from open_llm_router.live_metrics import (
     build_target_metrics_key,
 )
 from open_llm_router.policy_updater import RuntimePolicyUpdater, apply_runtime_overrides
+from tests.yaml_test_utils import save_yaml_file
 
 
 def test_live_metrics_collector_records_events() -> None:
@@ -507,8 +507,7 @@ def test_apply_runtime_overrides_updates_classifier_calibration_thresholds(
             "secondary_mixed_signal_min_confidence": 0.52,
         }
     }
-    with overrides_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
+    save_yaml_file(overrides_path, payload)
 
     applied = apply_runtime_overrides(
         path=str(overrides_path),
@@ -547,8 +546,7 @@ def test_apply_runtime_overrides_updates_model_profiles(tmp_path: Path) -> None:
             "m2": {"latency_ms": 400.0, "failure_rate": 0.02},
         }
     }
-    with overrides_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
+    save_yaml_file(overrides_path, payload)
 
     applied = apply_runtime_overrides(
         path=str(overrides_path),
@@ -588,8 +586,7 @@ def test_apply_runtime_overrides_updates_learned_feature_weights(
             }
         }
     }
-    with overrides_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
+    save_yaml_file(overrides_path, payload)
 
     applied = apply_runtime_overrides(
         path=str(overrides_path),

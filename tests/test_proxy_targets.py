@@ -21,6 +21,7 @@ from open_llm_router.proxy import (
     _request_error_details,
 )
 from open_llm_router.router_engine import RouteDecision
+from tests.yaml_test_utils import save_yaml_file
 
 
 def _decision(
@@ -54,6 +55,15 @@ def _jwt_with_account_id(account_id: str) -> str:
         .rstrip("=")
     )
     return f"{header}.{payload}.sig"
+
+
+def _oauth_profile_payload(account_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "profile": {"default": "auto", "per_task": {}},
+        "guardrails": {"per_task": {}},
+        "accounts": [account_payload],
+    }
 
 
 def test_build_targets_across_accounts_and_fallback_models() -> None:
@@ -1241,26 +1251,18 @@ def test_oauth_account_refresh_persists_rotated_tokens_to_config(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "router.profile.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
+    save_yaml_file(
+        config_path,
+        _oauth_profile_payload(
             {
-                "schema_version": 1,
-                "profile": {"default": "auto", "per_task": {}},
-                "guardrails": {"per_task": {}},
-                "accounts": [
-                    {
-                        "name": "acct-oauth",
-                        "provider": "openai-codex",
-                        "auth_mode": "oauth",
-                        "oauth_access_token": "expired-token",
-                        "oauth_refresh_token": "refresh-token-1",
-                        "oauth_expires_at": int(time.time()) - 120,
-                    }
-                ],
-            },
-            sort_keys=False,
+                "name": "acct-oauth",
+                "provider": "openai-codex",
+                "auth_mode": "oauth",
+                "oauth_access_token": "expired-token",
+                "oauth_refresh_token": "refresh-token-1",
+                "oauth_expires_at": int(time.time()) - 120,
+            }
         ),
-        encoding="utf-8",
     )
 
     proxy = BackendProxy(
@@ -1320,29 +1322,21 @@ def test_oauth_account_refresh_persistence_skips_env_backed_fields(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     config_path = tmp_path / "router.profile.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
+    save_yaml_file(
+        config_path,
+        _oauth_profile_payload(
             {
-                "schema_version": 1,
-                "profile": {"default": "auto", "per_task": {}},
-                "guardrails": {"per_task": {}},
-                "accounts": [
-                    {
-                        "name": "acct-oauth",
-                        "provider": "openai-codex",
-                        "auth_mode": "oauth",
-                        "oauth_access_token_env": "ACCESS_ENV",
-                        "oauth_access_token": "access-from-file",
-                        "oauth_refresh_token_env": "REFRESH_ENV",
-                        "oauth_refresh_token": "refresh-from-file",
-                        "oauth_expires_at_env": "EXPIRES_ENV",
-                        "oauth_expires_at": 1,
-                    }
-                ],
-            },
-            sort_keys=False,
+                "name": "acct-oauth",
+                "provider": "openai-codex",
+                "auth_mode": "oauth",
+                "oauth_access_token_env": "ACCESS_ENV",
+                "oauth_access_token": "access-from-file",
+                "oauth_refresh_token_env": "REFRESH_ENV",
+                "oauth_refresh_token": "refresh-from-file",
+                "oauth_expires_at_env": "EXPIRES_ENV",
+                "oauth_expires_at": 1,
+            }
         ),
-        encoding="utf-8",
     )
 
     monkeypatch.setenv("REFRESH_ENV", "refresh-token-1")
