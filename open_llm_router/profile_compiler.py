@@ -6,8 +6,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from open_llm_router.catalog import (
     CatalogLookupError,
     CatalogValidationError,
@@ -21,6 +19,7 @@ from open_llm_router.profile_config import (
     RouterProfileConfig,
 )
 from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
+from open_llm_router.yaml_utils import load_yaml_dict
 
 DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
 DEFAULT_COMPLEXITY = {
@@ -85,10 +84,10 @@ class CompileResult:
 @lru_cache
 def _load_profiles_file() -> dict[str, Any]:
     profiles_path = Path(__file__).resolve().parent / "catalog" / "profiles.yaml"
-    with profiles_path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-    if not isinstance(raw, dict):
-        raise ValueError("Expected profiles catalog to be an object.")
+    raw = load_yaml_dict(
+        profiles_path,
+        error_message="Expected profiles catalog to be an object.",
+    )
     profiles = raw.get("profiles") or {}
     if not isinstance(profiles, dict):
         raise ValueError("Expected 'profiles' mapping in profile catalog.")
@@ -130,10 +129,10 @@ def is_profile_document(raw: dict[str, Any]) -> bool:
 
 def load_profile_document(path: str | Path) -> RouterProfileConfig:
     profile_path = Path(path)
-    with profile_path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"Expected YAML object in {profile_path}")
+    raw = load_yaml_dict(
+        profile_path,
+        error_message=f"Expected YAML object in {profile_path}",
+    )
     return RouterProfileConfig.model_validate(raw)
 
 

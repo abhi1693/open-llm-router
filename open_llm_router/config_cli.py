@@ -14,8 +14,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
-import yaml
 
+from open_llm_router.cli_output import emit_or_persist_yaml, render_yaml
 from open_llm_router.model_utils import coerce_models_map as _coerce_models_map
 from open_llm_router.model_utils import (
     normalize_model_metadata as _normalize_model_metadata,
@@ -692,7 +692,7 @@ def cmd_show(_: argparse.Namespace, data: dict[str, Any]) -> str:
         "tasks": sorted(data.get("task_routes", {}).keys()),
         "learned_enabled": bool(data.get("learned_routing", {}).get("enabled", False)),
     }
-    return yaml.safe_dump(summary, sort_keys=False).rstrip()
+    return render_yaml(summary)
 
 
 class RouterConfigCliParserBuilder:
@@ -926,10 +926,13 @@ def main(argv: list[str] | None = None) -> int:
     result = args.handler(args, data)
     if getattr(args, "mutates", False):
         _ensure_default_model(data)
-        if args.dry_run:
-            print(yaml.safe_dump(data, sort_keys=False).rstrip())
-        else:
-            _save_config(config_path, data)
+        emit_or_persist_yaml(
+            payload=data,
+            dry_run=bool(args.dry_run),
+            persist=lambda resolved_payload: _save_config(
+                config_path, resolved_payload
+            ),
+        )
 
     print(result)
     return 0

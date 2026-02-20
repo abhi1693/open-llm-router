@@ -7,8 +7,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+from open_llm_router.yaml_utils import load_yaml_dict
 
 
 class CatalogValidationError(ValueError):
@@ -256,11 +257,7 @@ def _catalog_dir() -> Path:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected YAML object in {path}")
-    return data
+    return load_yaml_dict(path, error_message=f"Expected YAML object in {path}")
 
 
 def _build_alias_index(models: dict[str, ModelCatalogEntry]) -> dict[str, set[str]]:

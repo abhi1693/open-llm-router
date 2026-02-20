@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from open_llm_router.account_fields import AccountCommonFields
@@ -14,6 +13,7 @@ from open_llm_router.model_utils import (
     normalize_model_metadata,
     split_model_ref,
 )
+from open_llm_router.yaml_utils import load_yaml_dict
 
 
 class ComplexityConfig(BaseModel):
@@ -326,11 +326,10 @@ def load_routing_config_with_metadata(
             "Create it or set ROUTING_CONFIG_PATH."
         )
 
-    with path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-
-    if not isinstance(raw, dict):
-        raise ValueError(f"Expected YAML object in '{config_path}'.")
+    raw = load_yaml_dict(
+        path,
+        error_message=f"Expected YAML object in '{config_path}'.",
+    )
 
     from open_llm_router.catalog import (
         load_internal_catalog,

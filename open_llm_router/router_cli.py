@@ -4,8 +4,6 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable, cast
 
-import yaml
-
 from open_llm_router.catalog import (
     load_internal_catalog,
     validate_routing_document_against_catalog,
@@ -18,10 +16,12 @@ from open_llm_router.catalog_sync import (
     sync_catalog_models_pricing,
     write_catalog_models_document,
 )
+from open_llm_router.cli_output import emit_or_persist_yaml, print_yaml
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
 )
+from open_llm_router.persistence import YamlFileStore
 from open_llm_router.profile_compiler import (
     compile_profile_document,
     compile_profile_file,
@@ -32,6 +32,7 @@ from open_llm_router.profile_compiler import (
 from open_llm_router.profile_config import RouterProfileConfig
 from open_llm_router.scoring import build_routing_features, score_model
 from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
+from open_llm_router.yaml_utils import load_yaml_dict
 
 LOGIN_CHATGPT_DEFAULT_PROVIDER = "openai-codex"
 LOGIN_CHATGPT_DEFAULT_MODELS = "gpt-5.2,gpt-5.2-codex"
@@ -48,21 +49,11 @@ DEFAULT_PROFILE_CONFIG_PATH = "router.profile.yaml"
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected YAML object in '{path}'.")
-    return data
+    return load_yaml_dict(path, error_message=f"Expected YAML object in '{path}'.")
 
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
-
-
-def _print_yaml(payload: dict[str, Any]) -> None:
-    print(yaml.safe_dump(payload, sort_keys=False).rstrip())
+    YamlFileStore(path).write(payload, sort_keys=False)
 
 
 def _add_profile_path_argument(parser: argparse.ArgumentParser) -> None:
@@ -97,14 +88,14 @@ def cmd_compile_config(args: argparse.Namespace) -> int:
     result = compile_profile_file(profile_path)
 
     if args.stdout:
-        _print_yaml(result.effective_config)
+        print_yaml(result.effective_config)
     else:
         output_path = Path(args.output)
         _write_yaml(output_path, result.effective_config)
         print(f"Wrote effective config: {output_path}")
 
     if args.explain:
-        _print_yaml(result.explain)
+        print_yaml(result.explain)
 
     return 0
 
@@ -136,7 +127,7 @@ def cmd_profile_list(_: argparse.Namespace) -> int:
 def cmd_profile_show(args: argparse.Namespace) -> int:
     template = get_builtin_profile_template(args.name)
     payload = {"name": args.name, **template}
-    _print_yaml(payload)
+    print_yaml(payload)
     return 0
 
 
@@ -220,7 +211,7 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
     result["final_selection"] = selected_model
     result["fallback_chain"] = fallback_chain
 
-    _print_yaml(result)
+    print_yaml(result)
     return 0
 
 
@@ -298,7 +289,7 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
         },
         "history": normalized_history,
     }
-    _print_yaml(payload)
+    print_yaml(payload)
     return 0
 
 
@@ -446,10 +437,11 @@ def _save_profile_payload(
 ) -> None:
     # Compile once as validation gate before writing invalid profile docs.
     compile_profile_document(payload)
-    if dry_run:
-        _print_yaml(payload)
-        return
-    _write_yaml(path, payload)
+    emit_or_persist_yaml(
+        payload=payload,
+        dry_run=dry_run,
+        persist=lambda resolved_payload: _write_yaml(path, resolved_payload),
+    )
 
 
 def cmd_config_show(args: argparse.Namespace) -> int:
@@ -461,7 +453,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
         "tasks": sorted(config.task_routes.keys()),
         "learned_enabled": bool(config.learned_routing.enabled),
     }
-    _print_yaml(summary)
+    print_yaml(summary)
     return 0
 
 
@@ -589,20 +581,17 @@ def cmd_catalog_sync(args: argparse.Namespace) -> int:
         write_catalog_models_document(catalog_path, catalog_document)
         print(f"Wrote catalog: {catalog_path}")
 
-    print(
-        yaml.safe_dump(
-            {
-                "total_local_models": stats.total_local_models,
-                "updated": stats.updated,
-                "unchanged": stats.unchanged,
-                "missing_remote": stats.missing_remote,
-                "missing_pricing": stats.missing_pricing,
-                "source_url": args.source_url,
-                "catalog_path": str(catalog_path),
-                "dry_run": bool(args.dry_run),
-            },
-            sort_keys=False,
-        ).rstrip()
+    print_yaml(
+        {
+            "total_local_models": stats.total_local_models,
+            "updated": stats.updated,
+            "unchanged": stats.unchanged,
+            "missing_remote": stats.missing_remote,
+            "missing_pricing": stats.missing_pricing,
+            "source_url": args.source_url,
+            "catalog_path": str(catalog_path),
+            "dry_run": bool(args.dry_run),
+        }
     )
     return 0
 
