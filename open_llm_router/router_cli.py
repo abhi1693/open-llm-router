@@ -17,6 +17,12 @@ from open_llm_router.catalog_sync import (
     write_catalog_models_document,
 )
 from open_llm_router.cli_output import emit_or_persist_yaml, print_yaml
+from open_llm_router.cli_utils import (
+    build_router_summary,
+    parse_comma_separated_values,
+    qualify_models,
+    without_none_fields,
+)
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
@@ -46,6 +52,28 @@ GITHUB_APIKEY_DEFAULT_MODELS = "github/openai/gpt-4.1,github/openai/gpt-4.1-mini
 GITHUB_APIKEY_DEFAULT_KEY_ENV = "GITHUB_TOKEN"
 DEFAULT_RUNTIME_OVERRIDES_PATH = "logs/router.runtime.overrides.yaml"
 DEFAULT_PROFILE_CONFIG_PATH = "router.profile.yaml"
+APIKEY_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "openai": {
+        "models_csv": OPENAI_APIKEY_DEFAULT_MODELS,
+        "api_key_env": OPENAI_APIKEY_DEFAULT_KEY_ENV,
+        "mapped_provider": "openai",
+    },
+    "gemini": {
+        "models_csv": GEMINI_APIKEY_DEFAULT_MODELS,
+        "api_key_env": GEMINI_APIKEY_DEFAULT_KEY_ENV,
+        "mapped_provider": "gemini",
+    },
+    "nvidia": {
+        "models_csv": NVIDIA_APIKEY_DEFAULT_MODELS,
+        "api_key_env": NVIDIA_APIKEY_DEFAULT_KEY_ENV,
+        "mapped_provider": "nvidia",
+    },
+    "github": {
+        "models_csv": GITHUB_APIKEY_DEFAULT_MODELS,
+        "api_key_env": GITHUB_APIKEY_DEFAULT_KEY_ENV,
+        "mapped_provider": "github",
+    },
+}
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -350,10 +378,6 @@ def _extract_guardrail_entries(
     return output
 
 
-def _without_none_values(data: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in data.items() if value is not None}
-
-
 def _normalize_provider_alias(provider: str) -> str:
     normalized = provider.strip().lower()
     if normalized == "gemeni":
@@ -363,23 +387,6 @@ def _normalize_provider_alias(provider: str) -> str:
     if normalized in {"github-models", "githubmodels", "gh-models", "ghmodels", "gh"}:
         return "github"
     return normalized
-
-
-def _parse_models_csv(models_csv: str | None) -> list[str]:
-    if not models_csv:
-        return []
-    return [item.strip() for item in models_csv.split(",") if item.strip()]
-
-
-def _qualify_models(provider: str, models: list[str]) -> list[str]:
-    output: list[str] = []
-    normalized_provider = provider.strip()
-    for model in models:
-        if "/" in model:
-            output.append(model)
-        else:
-            output.append(f"{normalized_provider}/{model}")
-    return _dedupe(output)
 
 
 def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
@@ -413,7 +420,7 @@ def _upsert_profile_account(
     if not target_name:
         raise ValueError("Account payload missing required 'name'.")
 
-    clean_payload = _without_none_values(account_payload)
+    clean_payload = without_none_fields(account_payload)
 
     for idx, entry in enumerate(accounts):
         if not isinstance(entry, dict):
@@ -426,7 +433,7 @@ def _upsert_profile_account(
                 merged["models"] = _dedupe(
                     [str(m).strip() for m in merged_models if str(m).strip()]
                 )
-            accounts[idx] = _without_none_values(merged)
+            accounts[idx] = without_none_fields(merged)
             return
 
     accounts.append(clean_payload)
@@ -446,13 +453,13 @@ def _save_profile_payload(
 
 def cmd_config_show(args: argparse.Namespace) -> int:
     config, _ = load_routing_config_with_metadata(args.path)
-    summary = {
-        "default_model": config.default_model,
-        "models_count": len(config.models),
-        "accounts": [account.name for account in config.accounts],
-        "tasks": sorted(config.task_routes.keys()),
-        "learned_enabled": bool(config.learned_routing.enabled),
-    }
+    summary = build_router_summary(
+        default_model=config.default_model,
+        models_count=len(config.models),
+        account_names=[account.name for account in config.accounts],
+        tasks=sorted(config.task_routes.keys()),
+        learned_enabled=bool(config.learned_routing.enabled),
+    )
     print_yaml(summary)
     return 0
 
@@ -477,9 +484,10 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
     if kind == "chatgpt":
         if provider != "openai":
             raise ValueError("--kind chatgpt is only valid for provider 'openai'.")
-        models = _qualify_models(
+        models = qualify_models(
             LOGIN_CHATGPT_DEFAULT_PROVIDER,
-            _parse_models_csv(args.models or LOGIN_CHATGPT_DEFAULT_MODELS),
+            parse_comma_separated_values(args.models or LOGIN_CHATGPT_DEFAULT_MODELS),
+            dedupe=True,
         )
         oauth_args = argparse.Namespace(
             client_id=args.client_id,
@@ -514,33 +522,22 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
         if args.api_key and args.api_key_env:
             raise ValueError("Use only one of --apikey or --api-key-env.")
 
-        if provider == "openai":
-            account = args.name
-            models_csv = args.models or OPENAI_APIKEY_DEFAULT_MODELS
-            api_key_env = args.api_key_env or OPENAI_APIKEY_DEFAULT_KEY_ENV
-            mapped_provider = "openai"
-        elif provider == "gemini":
-            account = args.name
-            models_csv = args.models or GEMINI_APIKEY_DEFAULT_MODELS
-            api_key_env = args.api_key_env or GEMINI_APIKEY_DEFAULT_KEY_ENV
-            mapped_provider = "gemini"
-        elif provider == "nvidia":
-            account = args.name
-            models_csv = args.models or NVIDIA_APIKEY_DEFAULT_MODELS
-            api_key_env = args.api_key_env or NVIDIA_APIKEY_DEFAULT_KEY_ENV
-            mapped_provider = "nvidia"
-        elif provider == "github":
-            account = args.name
-            models_csv = args.models or GITHUB_APIKEY_DEFAULT_MODELS
-            api_key_env = args.api_key_env or GITHUB_APIKEY_DEFAULT_KEY_ENV
-            mapped_provider = "github"
-        else:
+        provider_defaults = APIKEY_PROVIDER_DEFAULTS.get(provider)
+        if provider_defaults is None:
             raise ValueError(
                 "Unsupported provider "
                 f"'{provider}'. Supported: openai, gemini, nvidia, github."
             )
+        account = args.name
+        models_csv = args.models or provider_defaults["models_csv"]
+        api_key_env = args.api_key_env or provider_defaults["api_key_env"]
+        mapped_provider = provider_defaults["mapped_provider"]
 
-        models = _qualify_models(mapped_provider, _parse_models_csv(models_csv))
+        models = qualify_models(
+            mapped_provider,
+            parse_comma_separated_values(models_csv),
+            dedupe=True,
+        )
         api_key = (args.api_key or "").strip()
         account_payload = {
             "name": account,

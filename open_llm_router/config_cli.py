@@ -16,40 +16,26 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 
 from open_llm_router.cli_output import emit_or_persist_yaml, render_yaml
+from open_llm_router.cli_utils import (
+    build_router_summary,
+    drop_none_fields,
+    parse_comma_separated_values,
+    qualify_model,
+    qualify_models,
+)
 from open_llm_router.model_utils import coerce_models_map as _coerce_models_map
 from open_llm_router.model_utils import (
     normalize_model_metadata as _normalize_model_metadata,
 )
 from open_llm_router.persistence import YamlFileStore
+from open_llm_router.routing_defaults import (
+    DEFAULT_CLASSIFIER_CALIBRATION,
+    DEFAULT_COMPLEXITY,
+    DEFAULT_RETRY_STATUSES,
+    DEFAULT_ROUTE_RERANKER,
+)
 from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
 
-DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
-DEFAULT_COMPLEXITY = {
-    "low_max_chars": 1200,
-    "medium_max_chars": 6000,
-    "high_max_chars": 16000,
-}
-DEFAULT_CLASSIFIER_CALIBRATION = {
-    "enabled": False,
-    "min_samples": 30,
-    "target_secondary_success_rate": 0.8,
-    "secondary_low_confidence_min_confidence": 0.18,
-    "secondary_mixed_signal_min_confidence": 0.35,
-    "adjustment_step": 0.03,
-    "deadband": 0.05,
-    "min_threshold": 0.05,
-    "max_threshold": 0.9,
-}
-DEFAULT_ROUTE_RERANKER = {
-    "enabled": False,
-    "backend": "local_embedding",
-    "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-    "local_files_only": True,
-    "local_max_length": 256,
-    "similarity_weight": 0.35,
-    "min_similarity": 0.0,
-    "model_hints": {},
-}
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -57,24 +43,6 @@ CHATGPT_REDIRECT_URI = "http://localhost:1455/auth/callback"
 CHATGPT_SCOPE = "openid profile email offline_access"
 CHATGPT_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth"
 __all__ = ["main", "httpx", "secrets", "webbrowser"]
-
-
-def _parse_csv(value: str | None) -> list[str]:
-    if not value:
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _qualify_model(provider: str, model: str) -> str:
-    normalized_provider = provider.strip()
-    normalized_model = model.strip()
-    if not normalized_provider or "/" in normalized_model:
-        return normalized_model
-    return f"{normalized_provider}/{normalized_model}"
-
-
-def _qualify_models(provider: str, models: list[str]) -> list[str]:
-    return [_qualify_model(provider, model) for model in models]
 
 
 def _parse_bool(value: str) -> bool:
@@ -176,7 +144,7 @@ class AccountEntryManager:
         provider: str,
         raw_models: list[str],
     ) -> tuple[list[str], dict[str, str]]:
-        account_models = _qualify_models(provider, raw_models)
+        account_models = qualify_models(provider, raw_models)
         raw_to_qualified = {
             raw_model: qualified_model
             for raw_model, qualified_model in zip(
@@ -186,15 +154,10 @@ class AccountEntryManager:
         if not account_models:
             return account_models, raw_to_qualified
 
-        existing = _qualify_models(provider, account.get("models", []))
+        existing = qualify_models(provider, account.get("models", []))
         account["models"] = _dedupe([*existing, *account_models])
         _add_models(data, account_models)
         return account_models, raw_to_qualified
-
-
-def _drop_none_fields(data: dict[str, Any]) -> None:
-    for key in [item_key for item_key, value in data.items() if value is None]:
-        data.pop(key, None)
 
 
 def _base64url(data: bytes) -> str:
@@ -540,13 +503,13 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
         data=data,
         account=account,
         provider=args.provider,
-        raw_models=_parse_csv(args.models),
+        raw_models=parse_comma_separated_values(args.models),
     )
 
     if args.set_default and account_models:
         data["default_model"] = account_models[0]
 
-    _drop_none_fields(account)
+    drop_none_fields(account)
     _ensure_default_model(data)
     return f"Account '{args.name}' saved."
 
@@ -567,7 +530,7 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
     oauth_data = _run_chatgpt_oauth_login_flow(args)
     account.update(oauth_data)
 
-    raw_account_models = _parse_csv(args.models)
+    raw_account_models = parse_comma_separated_values(args.models)
     account_models, raw_to_qualified = AccountEntryManager.merge_qualified_models(
         data=data,
         account=account,
@@ -583,10 +546,10 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
             if current_default in raw_to_qualified:
                 data["default_model"] = raw_to_qualified[current_default]
             else:
-                qualified_default = _qualify_model(args.provider, current_default)
+                qualified_default = qualify_model(args.provider, current_default)
                 if qualified_default in account["models"]:
                     data["default_model"] = qualified_default
-    _drop_none_fields(account)
+    drop_none_fields(account)
     _ensure_default_model(data)
 
     account_id = account.get("oauth_account_id")
@@ -613,7 +576,7 @@ def cmd_add_model(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 def cmd_set_route(args: argparse.Namespace, data: dict[str, Any]) -> str:
     route = data["task_routes"].setdefault(args.task, {})
-    models = _parse_csv(args.model)
+    models = parse_comma_separated_values(args.model)
     if not models:
         raise ValueError("At least one model is required for --model.")
     route[args.tier] = models
@@ -625,7 +588,7 @@ def cmd_set_route(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 
 def cmd_set_fallbacks(args: argparse.Namespace, data: dict[str, Any]) -> str:
-    models = _parse_csv(args.models)
+    models = parse_comma_separated_values(args.models)
     if args.append:
         data["fallback_models"] = _dedupe([*data.get("fallback_models", []), *models])
     else:
@@ -653,7 +616,7 @@ def cmd_set_profile(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 
 def cmd_set_candidates(args: argparse.Namespace, data: dict[str, Any]) -> str:
-    models = _parse_csv(args.models)
+    models = parse_comma_separated_values(args.models)
     learned = data["learned_routing"]
     learned["task_candidates"][args.task] = models
     _add_models(data, models)
@@ -685,13 +648,13 @@ def cmd_set_learned(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 def cmd_show(_: argparse.Namespace, data: dict[str, Any]) -> str:
     models_map = _coerce_models_map(data.get("models"))
-    summary = {
-        "default_model": data.get("default_model"),
-        "models_count": len(models_map),
-        "accounts": [account.get("name") for account in data.get("accounts", [])],
-        "tasks": sorted(data.get("task_routes", {}).keys()),
-        "learned_enabled": bool(data.get("learned_routing", {}).get("enabled", False)),
-    }
+    summary = build_router_summary(
+        default_model=data.get("default_model"),
+        models_count=len(models_map),
+        account_names=[account.get("name") for account in data.get("accounts", [])],
+        tasks=sorted(data.get("task_routes", {}).keys()),
+        learned_enabled=bool(data.get("learned_routing", {}).get("enabled", False)),
+    )
     return render_yaml(summary)
 
 

@@ -18,15 +18,16 @@ from open_llm_router.profile_config import (
     GuardrailThresholds,
     RouterProfileConfig,
 )
+from open_llm_router.routing_defaults import (
+    DEFAULT_CLASSIFIER_CALIBRATION,
+    DEFAULT_COMPLEXITY,
+    DEFAULT_LEARNED_ROUTING,
+    DEFAULT_RETRY_STATUSES,
+    DEFAULT_ROUTE_RERANKER,
+)
 from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
 from open_llm_router.yaml_utils import load_yaml_dict
 
-DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504]
-DEFAULT_COMPLEXITY = {
-    "low_max_chars": 1200,
-    "medium_max_chars": 6000,
-    "high_max_chars": 16000,
-}
 TASKS = ["general", "coding", "thinking", "instruction_following", "image"]
 ROUTE_TIERS = ["low", "medium", "high", "xhigh", "default"]
 
@@ -39,39 +40,9 @@ BASE_EFFECTIVE_CONFIG: dict[str, Any] = {
     "accounts": [],
     "retry_statuses": list(DEFAULT_RETRY_STATUSES),
     "complexity": dict(DEFAULT_COMPLEXITY),
-    "classifier_calibration": {
-        "enabled": False,
-        "min_samples": 30,
-        "target_secondary_success_rate": 0.8,
-        "secondary_low_confidence_min_confidence": 0.18,
-        "secondary_mixed_signal_min_confidence": 0.35,
-        "adjustment_step": 0.03,
-        "deadband": 0.05,
-        "min_threshold": 0.05,
-        "max_threshold": 0.9,
-    },
-    "route_reranker": {
-        "enabled": False,
-        "backend": "local_embedding",
-        "local_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-        "local_files_only": True,
-        "local_max_length": 256,
-        "similarity_weight": 0.35,
-        "min_similarity": 0.0,
-        "model_hints": {},
-    },
-    "learned_routing": {
-        "enabled": False,
-        "bias": -4.0,
-        "default_output_tokens": 512,
-        "feature_weights": {},
-        "task_candidates": {},
-        "utility_weights": {
-            "cost": 12.0,
-            "latency": 0.2,
-            "failure": 3.0,
-        },
-    },
+    "classifier_calibration": deepcopy(DEFAULT_CLASSIFIER_CALIBRATION),
+    "route_reranker": deepcopy(DEFAULT_ROUTE_RERANKER),
+    "learned_routing": deepcopy(DEFAULT_LEARNED_ROUTING),
 }
 
 

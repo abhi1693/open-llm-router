@@ -4,6 +4,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from open_llm_router.cli_utils import parse_comma_separated_values
+
 
 class Settings(BaseSettings):
     backend_base_url: str = "http://localhost:11434"
@@ -61,22 +63,16 @@ class Settings(BaseSettings):
 
     @property
     def ingress_api_keys_list(self) -> list[str]:
-        return _split_csv(self.ingress_api_keys)
+        return parse_comma_separated_values(self.ingress_api_keys)
 
     @property
     def oauth_algorithms_list(self) -> list[str]:
-        values = _split_csv(self.oauth_algorithms)
+        values = parse_comma_separated_values(self.oauth_algorithms)
         return values or ["RS256"]
 
     @property
     def oauth_required_scopes_list(self) -> list[str]:
-        return _split_csv(self.oauth_required_scopes)
-
-
-def _split_csv(value: str | None) -> list[str]:
-    if not value:
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
+        return parse_comma_separated_values(self.oauth_required_scopes)
 
 
 @lru_cache
