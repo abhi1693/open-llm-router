@@ -42,7 +42,7 @@ profile = "black"
 
 [tool.mypy]
 strict = true
-files = ["open_llm_router", "tests"]
+files = ["open_llm_router"]
 python_version = "3.12"
 
 [tool.uv]

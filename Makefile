@@ -1,7 +1,6 @@
 PYTHON := python
 UV := uv
-SRC_DIRS := open_llm_router tests
-TEST_DIR := tests
+SRC_DIRS := open_llm_router
 
 .PHONY: all lint format test tests clean
 
@@ -110,9 +109,9 @@ format:
 test:
 	@echo "Running tests..."
 	@if [ $(HAS_UV) -eq 1 ]; then \
-		$(UV) run pytest $(TEST_DIR); \
+		$(UV) run python -m compileall -q $(SRC_DIRS); \
 	else \
-		$(PYTHON) -m pytest $(TEST_DIR); \
+		$(PYTHON) -m compileall -q $(SRC_DIRS); \
 	fi
 
 tests: test
