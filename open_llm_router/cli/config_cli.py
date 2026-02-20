@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import json
 import secrets
 import threading
 import time
@@ -34,6 +33,7 @@ from open_llm_router.utils.model_utils import (
     normalize_model_metadata as _normalize_model_metadata,
 )
 from open_llm_router.utils.sequence_utils import dedupe_preserving_order as _dedupe
+from open_llm_router.utils.token_utils import TokenMetadataParser
 from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -207,25 +207,10 @@ def _first_query_param(params: dict[str, list[str]], key: str) -> str | None:
 
 
 def _extract_chatgpt_account_id(access_token: str) -> str | None:
-    parts = access_token.split(".")
-    if len(parts) != 3:
-        return None
-
-    payload_b64 = parts[1]
-    padding = "=" * ((4 - len(payload_b64) % 4) % 4)
-    try:
-        payload = json.loads(
-            base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
-        )
-    except Exception:
-        return None
-
-    claim = payload.get(CHATGPT_ACCOUNT_CLAIM_PATH)
-    if isinstance(claim, dict):
-        account_id = claim.get("chatgpt_account_id")
-        if isinstance(account_id, str) and account_id.strip():
-            return account_id.strip()
-    return None
+    return TokenMetadataParser.extract_chatgpt_account_id(
+        access_token,
+        claim_path=CHATGPT_ACCOUNT_CLAIM_PATH,
+    )
 
 
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):

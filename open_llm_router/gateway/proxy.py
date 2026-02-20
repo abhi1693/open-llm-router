@@ -23,6 +23,7 @@ from open_llm_router.utils.persistence import YamlFileStore
 from open_llm_router.utils.sequence_utils import (
     dedupe_preserving_order as _dedupe_preserving_order,
 )
+from open_llm_router.utils.token_utils import TokenMetadataParser
 
 HOP_BY_HOP_RESPONSE_HEADERS = {
     "connection",
@@ -2326,6 +2327,58 @@ class RateLimitTracker:
             self._audit_emitter("proxy_rate_limited", fields)
 
 
+class TargetRateLimitPrioritizer:
+    def __init__(self, *, is_temporarily_rate_limited: Callable[[str], bool]) -> None:
+        self._is_temporarily_rate_limited = is_temporarily_rate_limited
+
+    def prioritize_model_groups(
+        self, grouped_targets: list[list[BackendTarget]]
+    ) -> list[list[BackendTarget]]:
+        if len(grouped_targets) <= 1:
+            return grouped_targets
+
+        healthy_groups: list[list[BackendTarget]] = []
+        limited_groups: list[list[BackendTarget]] = []
+        for model_targets in grouped_targets:
+            if self.group_has_available_targets(model_targets):
+                healthy_groups.append(model_targets)
+            else:
+                limited_groups.append(model_targets)
+
+        if not healthy_groups or not limited_groups:
+            return grouped_targets
+        return [*healthy_groups, *limited_groups]
+
+    def prioritize_targets(
+        self, model_targets: list[BackendTarget]
+    ) -> list[BackendTarget]:
+        if len(model_targets) <= 1:
+            return model_targets
+
+        healthy_targets, limited_targets = self.partition_targets(model_targets)
+        if not healthy_targets or not limited_targets:
+            return model_targets
+        return [*healthy_targets, *limited_targets]
+
+    def group_has_available_targets(self, model_targets: list[BackendTarget]) -> bool:
+        return any(
+            not self._is_temporarily_rate_limited(target.account_name)
+            for target in model_targets
+        )
+
+    def partition_targets(
+        self, model_targets: list[BackendTarget]
+    ) -> tuple[list[BackendTarget], list[BackendTarget]]:
+        healthy_targets: list[BackendTarget] = []
+        limited_targets: list[BackendTarget] = []
+        for target in model_targets:
+            if self._is_temporarily_rate_limited(target.account_name):
+                limited_targets.append(target)
+            else:
+                healthy_targets.append(target)
+        return healthy_targets, limited_targets
+
+
 class OAuthStateManager:
     def __init__(
         self,
@@ -3196,6 +3249,9 @@ class BackendProxy:
             rate_limited_until=self._rate_limited_until,
             audit_emitter=lambda event, fields: self._audit(event, **fields),
         )
+        self._target_rate_limit_prioritizer = TargetRateLimitPrioritizer(
+            is_temporarily_rate_limited=self._rate_limit_tracker.is_temporarily_rate_limited
+        )
         self.accounts = self._initialize_accounts(
             accounts=accounts,
             base_url=base_url,
@@ -3535,55 +3591,24 @@ class BackendProxy:
     def prioritize_model_groups_by_rate_limit(
         self, grouped_targets: list[list[BackendTarget]]
     ) -> list[list[BackendTarget]]:
-        if len(grouped_targets) <= 1:
-            return grouped_targets
-
-        healthy_groups: list[list[BackendTarget]] = []
-        limited_groups: list[list[BackendTarget]] = []
-        for model_targets in grouped_targets:
-            if self._group_has_available_targets(model_targets):
-                healthy_groups.append(model_targets)
-            else:
-                limited_groups.append(model_targets)
-
-        if not healthy_groups or not limited_groups:
-            return grouped_targets
-        return [*healthy_groups, *limited_groups]
+        return self._target_rate_limit_prioritizer.prioritize_model_groups(
+            grouped_targets
+        )
 
     def prioritize_targets_by_rate_limit(
         self, model_targets: list[BackendTarget]
     ) -> list[BackendTarget]:
-        if len(model_targets) <= 1:
-            return model_targets
-
-        healthy_targets, limited_targets = self._partition_targets_by_rate_limit(
-            model_targets
-        )
-        if not healthy_targets or not limited_targets:
-            return model_targets
-        return [*healthy_targets, *limited_targets]
+        return self._target_rate_limit_prioritizer.prioritize_targets(model_targets)
 
     def _group_has_available_targets(self, model_targets: list[BackendTarget]) -> bool:
-        return any(
-            not self._rate_limit_tracker.is_temporarily_rate_limited(
-                target.account_name
-            )
-            for target in model_targets
+        return self._target_rate_limit_prioritizer.group_has_available_targets(
+            model_targets
         )
 
     def _partition_targets_by_rate_limit(
         self, model_targets: list[BackendTarget]
     ) -> tuple[list[BackendTarget], list[BackendTarget]]:
-        healthy_targets: list[BackendTarget] = []
-        limited_targets: list[BackendTarget] = []
-        for target in model_targets:
-            if self._rate_limit_tracker.is_temporarily_rate_limited(
-                target.account_name
-            ):
-                limited_targets.append(target)
-            else:
-                healthy_targets.append(target)
-        return healthy_targets, limited_targets
+        return self._target_rate_limit_prioritizer.partition_targets(model_targets)
 
     def is_temporarily_rate_limited(self, account_name: str) -> bool:
         return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
@@ -3623,56 +3648,18 @@ def _can_enable_http2() -> bool:
 
 
 def _is_token_expiring(expires_at: int | None, skew_seconds: int = 60) -> bool:
-    if expires_at is None:
-        return False
-    return expires_at <= int(time.time()) + skew_seconds
+    return TokenMetadataParser.is_token_expiring(
+        expires_at=expires_at,
+        skew_seconds=skew_seconds,
+    )
 
 
 def _extract_expires_at(token_response: dict[str, Any]) -> int | None:
-    now = int(time.time())
-
-    raw_expires_in = token_response.get("expires_in")
-    if raw_expires_in is not None:
-        try:
-            return now + int(float(raw_expires_in))
-        except (TypeError, ValueError):
-            pass
-
-    raw_expires_at = token_response.get("expires_at")
-    if raw_expires_at is not None:
-        try:
-            return int(float(raw_expires_at))
-        except (TypeError, ValueError):
-            pass
-
-    return None
+    return TokenMetadataParser.extract_expires_at(token_response)
 
 
 def _extract_chatgpt_account_id(token: str | None) -> str | None:
-    if not token:
-        return None
-    parts = token.split(".")
-    if len(parts) != 3:
-        return None
-
-    payload_b64 = parts[1]
-    padding = "=" * ((4 - len(payload_b64) % 4) % 4)
-
-    try:
-        import base64
-        import json
-
-        payload_raw = base64.urlsafe_b64decode(payload_b64 + padding)
-        payload = json.loads(payload_raw.decode("utf-8"))
-    except Exception:
-        return None
-
-    auth_claim = payload.get("https://api.openai.com/auth")
-    if isinstance(auth_claim, dict):
-        account_id = auth_claim.get("chatgpt_account_id")
-        if isinstance(account_id, str) and account_id.strip():
-            return account_id.strip()
-    return None
+    return TokenMetadataParser.extract_chatgpt_account_id(token)
 
 
 def _parse_retry_after_seconds(
