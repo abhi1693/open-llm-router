@@ -392,7 +392,10 @@ def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _load_config(path: Path) -> dict[str, Any]:
-    data = load_yaml_dict(path, error_message=f"Expected root object in '{path}'.")
+    if path.exists():
+        data = load_yaml_dict(path, error_message=f"Expected root object in '{path}'.")
+    else:
+        data = {}
     _ensure_schema(data)
     return data
 

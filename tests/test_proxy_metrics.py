@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from open_llm_router.proxy_metrics import ProxyMetricsAccumulator
+from open_llm_router.runtime.proxy_metrics import ProxyMetricsAccumulator
 
 
 def test_proxy_metrics_accumulator_records_core_metrics() -> None:

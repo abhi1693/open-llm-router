@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from open_llm_router.config_cli import main
+from open_llm_router.cli.config_cli import main
 from tests.yaml_test_utils import load_yaml_file, save_yaml_file
 
 
@@ -324,7 +324,7 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path: Any, monkeypatch: Any) -
         }
 
     monkeypatch.setattr(
-        "open_llm_router.config_cli._run_chatgpt_oauth_login_flow",
+        "open_llm_router.cli.config_cli._run_chatgpt_oauth_login_flow",
         _fake_login,
     )
 
@@ -391,7 +391,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(
         }
 
     monkeypatch.setattr(
-        "open_llm_router.config_cli._run_chatgpt_oauth_login_flow",
+        "open_llm_router.cli.config_cli._run_chatgpt_oauth_login_flow",
         _fake_login,
     )
 
@@ -439,7 +439,7 @@ def test_cli_login_chatgpt_rejects_non_openai_codex_provider(tmp_path: Any) -> N
 def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
     monkeypatch: Any,
 ) -> None:
-    import open_llm_router.config_cli as config_cli
+    import open_llm_router.cli.config_cli as config_cli
 
     class _DummyServer:
         def __init__(self) -> None:
@@ -514,7 +514,7 @@ def test_oauth_login_flow_uses_manual_paste_when_browser_unavailable(
 def test_oauth_login_flow_uses_paste_url_arg_without_browser_or_callback(
     monkeypatch: Any,
 ) -> None:
-    import open_llm_router.config_cli as config_cli
+    import open_llm_router.cli.config_cli as config_cli
 
     class _DummyServer:
         def __init__(self) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from open_llm_router.persistence import YamlFileStore
+from open_llm_router.utils.persistence import YamlFileStore
 
 
 def test_yaml_file_store_load_returns_default_when_missing(tmp_path: Path) -> None:

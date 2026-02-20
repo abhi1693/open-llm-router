@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from open_llm_router.config import BackendAccount
-from open_llm_router.profile_config import ProfileAccountConfig
+from open_llm_router.profile.profile_config import ProfileAccountConfig
 
 
 def test_backend_account_defaults_provider_to_openai() -> None:

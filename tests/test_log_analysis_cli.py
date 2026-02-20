@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from open_llm_router.log_analysis_cli import main, summarize_log
+from open_llm_router.cli.log_analysis_cli import main, summarize_log
 
 
 def _write_log(

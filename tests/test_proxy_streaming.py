@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from open_llm_router.proxy import BackendProxy
+from open_llm_router.gateway.proxy import BackendProxy
 
 
 class _TimeoutingUpstream:

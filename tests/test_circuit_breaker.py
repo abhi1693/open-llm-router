@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from open_llm_router.circuit_breaker import (
+from open_llm_router.gateway.circuit_breaker import (
     CircuitBreakerConfig,
     CircuitBreakerRegistry,
 )

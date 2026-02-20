@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from open_llm_router.catalog_sync import sync_catalog_models_pricing
+from open_llm_router.catalogs.sync import sync_catalog_models_pricing
 
 
 def test_sync_catalog_models_pricing_updates_using_provider_aliases() -> None:

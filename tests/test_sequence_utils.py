@@ -1,4 +1,4 @@
-from open_llm_router.sequence_utils import dedupe_preserving_order
+from open_llm_router.utils.sequence_utils import dedupe_preserving_order
 
 
 def test_dedupe_preserving_order_retains_first_occurrence() -> None:

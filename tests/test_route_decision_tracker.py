@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from open_llm_router.route_decision_tracker import RouteDecisionTracker
+from open_llm_router.runtime.route_decision_tracker import RouteDecisionTracker
 
 
 def test_route_decision_tracker_records_secondary_outcomes() -> None:

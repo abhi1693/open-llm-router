@@ -5,15 +5,15 @@ from typing import Any
 import pytest
 from fastapi.responses import JSONResponse
 
-from open_llm_router.idempotency import (
+from open_llm_router.config.settings import get_settings
+from open_llm_router.gateway.idempotency import (
     IdempotencyConfig,
     IdempotencyStore,
     build_idempotency_cache_key,
     build_idempotency_store,
 )
-from open_llm_router.main import app
-from open_llm_router.proxy import BackendProxy
-from open_llm_router.settings import get_settings
+from open_llm_router.gateway.proxy import BackendProxy
+from open_llm_router.server.main import app
 from tests.client_test_utils import build_test_client
 
 

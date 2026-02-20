@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from open_llm_router.bounded_maps import (
+from open_llm_router.runtime.bounded_maps import (
     BoundedCounterMap,
     BoundedDequeMap,
     BoundedValueMap,

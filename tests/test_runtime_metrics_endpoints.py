@@ -80,7 +80,7 @@ def test_startup_prefetches_local_semantic_model_when_enabled(
         return ("tokenizer", "model", "torch")
 
     monkeypatch.setattr(
-        "open_llm_router.main._load_local_embedding_runtime",
+        "open_llm_router.server.main._load_local_embedding_runtime",
         _fake_load_local_embedding_runtime,
     )
 
@@ -121,7 +121,7 @@ def test_startup_prefetches_local_route_reranker_model_when_enabled(
         return ("tokenizer", "model", "torch")
 
     monkeypatch.setattr(
-        "open_llm_router.main._load_local_embedding_runtime",
+        "open_llm_router.server.main._load_local_embedding_runtime",
         _fake_load_local_embedding_runtime,
     )
 

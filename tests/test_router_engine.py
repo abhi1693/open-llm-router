@@ -1,7 +1,7 @@
 import pytest
 
 from open_llm_router.config import RoutingConfig
-from open_llm_router.router_engine import (
+from open_llm_router.routing.router_engine import (
     InvalidModelError,
     RoutingConstraintError,
     SmartModelRouter,
@@ -567,7 +567,7 @@ def test_hard_constraints_allow_small_context_overflow_with_tolerance(
         }
     )
     monkeypatch.setattr(
-        "open_llm_router.router_engine._estimate_payload_tokens",
+        "open_llm_router.routing.router_engine._estimate_payload_tokens",
         lambda **_: (1050, "test_override"),
     )
     router = SmartModelRouter(config)
@@ -614,7 +614,7 @@ def test_hard_constraints_supplement_large_context_single_candidate_chain(
         }
     )
     monkeypatch.setattr(
-        "open_llm_router.router_engine._estimate_payload_tokens",
+        "open_llm_router.routing.router_engine._estimate_payload_tokens",
         lambda **_: (130000, "test_override"),
     )
     router = SmartModelRouter(config)
@@ -823,7 +823,7 @@ def test_local_embedding_semantic_classifier_can_be_used_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "open_llm_router.classifier._semantic_task_prediction_local",
+        "open_llm_router.routing.classifier._semantic_task_prediction_local",
         lambda **_: (
             "thinking",
             0.9,
@@ -876,7 +876,7 @@ def test_local_embedding_semantic_classifier_falls_back_to_prototype_when_unavai
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "open_llm_router.classifier._semantic_task_prediction_local",
+        "open_llm_router.routing.classifier._semantic_task_prediction_local",
         lambda **_: None,
     )
     config = RoutingConfig.model_validate(
@@ -938,7 +938,7 @@ def test_route_reranker_can_reorder_rule_chain(monkeypatch: pytest.MonkeyPatch) 
         return (0.0, 1.0)
 
     monkeypatch.setattr(
-        "open_llm_router.router_engine._local_embedding_for_text",
+        "open_llm_router.routing.router_engine._local_embedding_for_text",
         _fake_embedding_for_text,
     )
 
@@ -1002,7 +1002,7 @@ def test_route_reranker_can_shift_learned_selection(
         return (0.0, 1.0)
 
     monkeypatch.setattr(
-        "open_llm_router.router_engine._local_embedding_for_text",
+        "open_llm_router.routing.router_engine._local_embedding_for_text",
         _fake_embedding_for_text,
     )
 

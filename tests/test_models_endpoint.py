@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from open_llm_router.config import RoutingConfig
-from open_llm_router.main import _build_models_response
+from open_llm_router.server.main import _build_models_response
 
 
 def _config_with_models() -> RoutingConfig:

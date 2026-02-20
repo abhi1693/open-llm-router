@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from open_llm_router.main import app
-from open_llm_router.settings import get_settings
+from open_llm_router.config.settings import get_settings
+from open_llm_router.server.main import app
 
 TEST_ROUTING_CONFIG_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "router.profile.yaml"

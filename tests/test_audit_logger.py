@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from open_llm_router.audit import JsonlAuditLogger
-from open_llm_router.main import _sanitize_audit_event
+from open_llm_router.gateway.audit import JsonlAuditLogger
+from open_llm_router.server.main import _sanitize_audit_event
 
 
 def test_audit_logger_writes_records_before_close(tmp_path: Path) -> None:

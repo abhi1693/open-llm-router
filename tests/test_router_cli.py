@@ -4,8 +4,8 @@ from typing import Any
 
 import yaml
 
-import open_llm_router.router_cli as router_cli
-from open_llm_router.router_cli import main
+import open_llm_router.cli.router_cli as router_cli
+from open_llm_router.cli.router_cli import main
 from tests.yaml_test_utils import load_yaml_file, save_yaml_file
 
 

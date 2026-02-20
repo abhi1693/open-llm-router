@@ -6,12 +6,15 @@ from pathlib import Path
 import pytest
 
 from open_llm_router.config import RoutingConfig
-from open_llm_router.live_metrics import (
+from open_llm_router.runtime.live_metrics import (
     InMemoryLiveMetricsStore,
     LiveMetricsCollector,
     build_target_metrics_key,
 )
-from open_llm_router.policy_updater import RuntimePolicyUpdater, apply_runtime_overrides
+from open_llm_router.runtime.policy_updater import (
+    RuntimePolicyUpdater,
+    apply_runtime_overrides,
+)
 from tests.yaml_test_utils import save_yaml_file
 
 

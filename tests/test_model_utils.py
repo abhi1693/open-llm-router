@@ -1,6 +1,6 @@
 import pytest
 
-from open_llm_router.model_utils import (
+from open_llm_router.utils.model_utils import (
     coerce_models_map,
     default_model_id,
     normalize_model_metadata,
