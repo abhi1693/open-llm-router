@@ -16,7 +16,7 @@ from fastapi.responses import (
 
 from open_llm_router.config import (
     RoutingConfig,
-    load_routing_config_with_metadata,
+    RoutingConfigLoader,
 )
 from open_llm_router.config.settings import get_settings
 from open_llm_router.gateway.audit import JsonlAuditLogger
@@ -912,9 +912,9 @@ def _prefetch_local_route_reranker_model(routing_config: RoutingConfig) -> None:
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
-    routing_config, explain_metadata = load_routing_config_with_metadata(
+    routing_config, explain_metadata = RoutingConfigLoader(
         settings.routing_config_path
-    )
+    ).load_with_metadata()
     apply_runtime_overrides(
         path=settings.router_runtime_overrides_path,
         routing_config=routing_config,

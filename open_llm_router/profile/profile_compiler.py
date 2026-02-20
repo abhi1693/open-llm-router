@@ -89,14 +89,6 @@ class BuiltinProfileCatalog:
         return deepcopy(template)
 
 
-def list_builtin_profiles() -> list[tuple[str, str]]:
-    return BuiltinProfileCatalog.list_profiles()
-
-
-def get_builtin_profile_template(name: str) -> dict[str, Any]:
-    return BuiltinProfileCatalog.get_template(name)
-
-
 def is_profile_document(raw: dict[str, Any]) -> bool:
     if not isinstance(raw, dict):
         return False
@@ -150,7 +142,7 @@ def compile_profile_config(
     }
 
     global_profile_name = profile.profile.default
-    global_template = get_builtin_profile_template(global_profile_name)
+    global_template = BuiltinProfileCatalog.get_template(global_profile_name)
     _apply_layer(
         effective,
         global_template,
@@ -159,7 +151,7 @@ def compile_profile_config(
     )
 
     for task, task_profile_name in sorted(profile.profile.per_task.items()):
-        task_template = get_builtin_profile_template(task_profile_name)
+        task_template = BuiltinProfileCatalog.get_template(task_profile_name)
         _apply_per_task_profile_layer(
             effective,
             task=task,

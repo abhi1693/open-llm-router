@@ -1828,10 +1828,6 @@ class ModelRegistryResolver:
     def __init__(self, *, model_registry: dict[str, dict[str, Any]]) -> None:
         self._model_registry = model_registry
 
-    @staticmethod
-    def split_model_ref(model: str) -> tuple[str | None, str]:
-        return split_model_ref(model)
-
     def resolve_model_metadata(
         self, account: BackendAccount, model: str
     ) -> dict[str, Any]:
@@ -1840,7 +1836,7 @@ class ModelRegistryResolver:
             return metadata
 
         # Fallback for metadata maps that only key by provider/modelId with empty metadata.
-        provider, model_id = self.split_model_ref(model)
+        provider, model_id = split_model_ref(model)
         account_provider = account.provider.strip().lower()
         if provider and provider.lower() == account_provider:
             provider_key = f"{provider.lower()}/{model_id}"
@@ -1875,7 +1871,7 @@ class ModelRegistryResolver:
             return metadata_id.strip()
 
         # Fallback for metadata maps keyed by provider/modelId.
-        provider, model_id = self.split_model_ref(model)
+        provider, model_id = split_model_ref(model)
         if provider and provider.lower() == account.provider.strip().lower():
             return model_id
 

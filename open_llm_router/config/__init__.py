@@ -358,13 +358,3 @@ class RoutingConfigLoader:
 
         validate_routing_document_against_catalog(raw, catalog=catalog)
         return raw, explain_metadata
-
-
-def load_routing_config(config_path: str) -> RoutingConfig:
-    return RoutingConfigLoader(config_path).load()
-
-
-def load_routing_config_with_metadata(
-    config_path: str,
-) -> tuple[RoutingConfig, dict[str, Any] | None]:
-    return RoutingConfigLoader(config_path).load_with_metadata()

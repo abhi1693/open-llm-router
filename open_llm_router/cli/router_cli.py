@@ -18,14 +18,13 @@ from open_llm_router.catalogs.sync import (
 )
 from open_llm_router.config import (
     RoutingConfig,
-    load_routing_config_with_metadata,
+    RoutingConfigLoader,
 )
 from open_llm_router.profile.profile_compiler import (
+    BuiltinProfileCatalog,
     compile_profile_document,
     compile_profile_file,
-    get_builtin_profile_template,
     is_profile_document,
-    list_builtin_profiles,
 )
 from open_llm_router.profile.profile_config import RouterProfileConfig
 from open_llm_router.routing.scoring import build_routing_features, score_model
@@ -144,7 +143,7 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 
 
 def cmd_profile_list(_: argparse.Namespace) -> int:
-    rows = list_builtin_profiles()
+    rows = BuiltinProfileCatalog.list_profiles()
     for name, description in rows:
         suffix = f" - {description}" if description else ""
         print(f"{name}{suffix}")
@@ -152,7 +151,7 @@ def cmd_profile_list(_: argparse.Namespace) -> int:
 
 
 def cmd_profile_show(args: argparse.Namespace) -> int:
-    template = get_builtin_profile_template(args.name)
+    template = BuiltinProfileCatalog.get_template(args.name)
     payload = {"name": args.name, **template}
     print_yaml(payload)
     return 0
@@ -171,7 +170,7 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
         config = RoutingConfig.model_validate(compiled.effective_config)
         explain_meta = compiled.explain
     else:
-        config, explain_meta = load_routing_config_with_metadata(str(config_path))
+        config, explain_meta = RoutingConfigLoader(config_path).load_with_metadata()
 
     task = args.task
     complexity = args.complexity
@@ -246,7 +245,7 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
 
 
 def cmd_calibration_report(args: argparse.Namespace) -> int:
-    config, _ = load_routing_config_with_metadata(args.path)
+    config, _ = RoutingConfigLoader(args.path).load_with_metadata()
     cfg = config.classifier_calibration
 
     overrides_path = Path(args.overrides_path)
@@ -433,7 +432,7 @@ def _save_profile_payload(
 
 
 def cmd_config_show(args: argparse.Namespace) -> int:
-    config, _ = load_routing_config_with_metadata(args.path)
+    config, _ = RoutingConfigLoader(args.path).load_with_metadata()
     summary = build_router_summary(
         default_model=config.default_model,
         models_count=len(config.models),

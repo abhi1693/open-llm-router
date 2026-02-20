@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from open_llm_router.catalog import CatalogValidationError, load_internal_catalog
-from open_llm_router.profile_compiler import compile_profile_document
+from open_llm_router.catalogs.core import CatalogValidationError, load_internal_catalog
+from open_llm_router.profile.profile_compiler import compile_profile_document
 
 
 def test_compile_profile_document_produces_effective_routing_config() -> None:

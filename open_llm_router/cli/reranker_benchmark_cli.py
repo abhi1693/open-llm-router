@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from open_llm_router.config import load_routing_config_with_metadata
+from open_llm_router.config import RoutingConfigLoader
 from open_llm_router.routing.router_engine import SmartModelRouter
 from open_llm_router.utils.cli_output import write_cli_report
 
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    config, _ = load_routing_config_with_metadata(args.config)
+    config, _ = RoutingConfigLoader(args.config).load_with_metadata()
     if not config.route_reranker.enabled:
         raise ValueError(
             "route_reranker is disabled in config. Enable it before benchmarking."
