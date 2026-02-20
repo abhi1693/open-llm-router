@@ -16,21 +16,9 @@ from open_llm_router.catalog_sync import (
     sync_catalog_models_pricing,
     write_catalog_models_document,
 )
-from open_llm_router.cli_output import emit_or_persist_yaml, print_yaml
-from open_llm_router.cli_utils import (
-    build_router_summary,
-    parse_comma_separated_values,
-    qualify_models,
-    without_none_fields,
-)
 from open_llm_router.config import (
     RoutingConfig,
     load_routing_config_with_metadata,
-)
-from open_llm_router.numeric_utils import (
-    coerce_float,
-    coerce_optional_float,
-    coerce_optional_int,
 )
 from open_llm_router.profile_compiler import (
     compile_profile_document,
@@ -41,8 +29,20 @@ from open_llm_router.profile_compiler import (
 )
 from open_llm_router.profile_config import RouterProfileConfig
 from open_llm_router.scoring import build_routing_features, score_model
-from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
-from open_llm_router.yaml_utils import load_yaml_dict, write_yaml_dict
+from open_llm_router.utils.cli_output import emit_or_persist_yaml, print_yaml
+from open_llm_router.utils.cli_utils import (
+    build_router_summary,
+    parse_comma_separated_values,
+    qualify_models,
+    without_none_fields,
+)
+from open_llm_router.utils.numeric_utils import (
+    coerce_float,
+    coerce_optional_float,
+    coerce_optional_int,
+)
+from open_llm_router.utils.sequence_utils import dedupe_preserving_order as _dedupe
+from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 LOGIN_CHATGPT_DEFAULT_PROVIDER = "openai-codex"
 LOGIN_CHATGPT_DEFAULT_MODELS = "gpt-5.2,gpt-5.2-codex"

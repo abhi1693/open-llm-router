@@ -5,7 +5,7 @@ from open_llm_router.bounded_maps import (
     BoundedDequeMap,
     BoundedValueMap,
 )
-from open_llm_router.stats_utils import percentile
+from open_llm_router.utils.stats_utils import percentile
 
 
 class ProxyMetricsAccumulator:

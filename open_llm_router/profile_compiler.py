@@ -25,8 +25,8 @@ from open_llm_router.routing_defaults import (
     DEFAULT_RETRY_STATUSES,
     DEFAULT_ROUTE_RERANKER,
 )
-from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
-from open_llm_router.yaml_utils import load_yaml_dict
+from open_llm_router.utils.sequence_utils import dedupe_preserving_order as _dedupe
+from open_llm_router.utils.yaml_utils import load_yaml_dict
 
 TASKS = ["general", "coding", "thinking", "instruction_following", "image"]
 ROUTE_TIERS = ["low", "medium", "high", "xhigh", "default"]

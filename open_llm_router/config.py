@@ -7,13 +7,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from open_llm_router.account_fields import AccountCommonFields
-from open_llm_router.model_utils import (
+from open_llm_router.utils.model_utils import (
     coerce_models_map,
     default_model_id,
     normalize_model_metadata,
     split_model_ref,
 )
-from open_llm_router.yaml_utils import load_yaml_dict
+from open_llm_router.utils.yaml_utils import load_yaml_dict
 
 
 class ComplexityConfig(BaseModel):

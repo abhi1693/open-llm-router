@@ -15,26 +15,26 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from open_llm_router.cli_output import emit_or_persist_yaml, render_yaml
-from open_llm_router.cli_utils import (
-    build_router_summary,
-    drop_none_fields,
-    parse_comma_separated_values,
-    qualify_model,
-    qualify_models,
-)
-from open_llm_router.model_utils import coerce_models_map as _coerce_models_map
-from open_llm_router.model_utils import (
-    normalize_model_metadata as _normalize_model_metadata,
-)
 from open_llm_router.routing_defaults import (
     DEFAULT_CLASSIFIER_CALIBRATION,
     DEFAULT_COMPLEXITY,
     DEFAULT_RETRY_STATUSES,
     DEFAULT_ROUTE_RERANKER,
 )
-from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
-from open_llm_router.yaml_utils import load_yaml_dict, write_yaml_dict
+from open_llm_router.utils.cli_output import emit_or_persist_yaml, render_yaml
+from open_llm_router.utils.cli_utils import (
+    build_router_summary,
+    drop_none_fields,
+    parse_comma_separated_values,
+    qualify_model,
+    qualify_models,
+)
+from open_llm_router.utils.model_utils import coerce_models_map as _coerce_models_map
+from open_llm_router.utils.model_utils import (
+    normalize_model_metadata as _normalize_model_metadata,
+)
+from open_llm_router.utils.sequence_utils import dedupe_preserving_order as _dedupe
+from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"

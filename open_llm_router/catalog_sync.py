@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from open_llm_router.yaml_utils import load_yaml_dict, write_yaml_dict
+from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_CATALOG_MODELS_PATH = (

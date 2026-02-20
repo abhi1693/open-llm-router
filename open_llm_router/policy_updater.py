@@ -15,7 +15,7 @@ from open_llm_router.live_metrics import (
     snapshot_to_dict,
 )
 from open_llm_router.route_decision_tracker import ClassifierCalibrationSnapshot
-from open_llm_router.yaml_utils import load_yaml_dict, write_yaml_dict
+from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 
 @dataclass(slots=True)

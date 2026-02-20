@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from open_llm_router.yaml_utils import load_yaml_dict
+from open_llm_router.utils.yaml_utils import load_yaml_dict
 
 
 class CatalogValidationError(ValueError):

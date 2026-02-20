@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from open_llm_router.cli_output import write_cli_report
 from open_llm_router.config import load_routing_config_with_metadata
 from open_llm_router.router_engine import SmartModelRouter
+from open_llm_router.utils.cli_output import write_cli_report
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:

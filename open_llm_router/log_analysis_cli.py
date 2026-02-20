@@ -8,9 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from open_llm_router.cli_output import write_cli_report
-from open_llm_router.numeric_utils import coerce_optional_float, coerce_optional_int
-from open_llm_router.stats_utils import percentile
+from open_llm_router.utils.cli_output import write_cli_report
+from open_llm_router.utils.numeric_utils import (
+    coerce_optional_float,
+    coerce_optional_int,
+)
+from open_llm_router.utils.stats_utils import percentile
 
 
 @dataclass(slots=True)

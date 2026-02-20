@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from open_llm_router.sequence_utils import dedupe_preserving_order
+from open_llm_router.utils.sequence_utils import dedupe_preserving_order
 
 
 def parse_comma_separated_values(value: str | None) -> list[str]:

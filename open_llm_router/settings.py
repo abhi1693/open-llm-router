@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from open_llm_router.cli_utils import parse_comma_separated_values
+from open_llm_router.utils.cli_utils import parse_comma_separated_values
 
 
 class Settings(BaseSettings):
