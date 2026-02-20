@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable, cast
 from uuid import uuid4
 
@@ -49,10 +51,21 @@ from open_llm_router.runtime.policy_updater import (
     apply_runtime_overrides,
 )
 
+
+@asynccontextmanager
+async def lifespan(app_obj: FastAPI) -> AsyncIterator[None]:
+    await _startup(app_obj)
+    try:
+        yield
+    finally:
+        await _shutdown(app_obj)
+
+
 app = FastAPI(
     title="Open-LLM Router",
     description="OpenAI-compatible API router with model auto-selection and fallback.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 logger = logging.getLogger("uvicorn.error")
@@ -909,8 +922,7 @@ def _prefetch_local_route_reranker_model(routing_config: RoutingConfig) -> None:
     )
 
 
-@app.on_event("startup")
-async def startup() -> None:
+async def _startup(app_obj: FastAPI) -> None:
     settings = get_settings()
     routing_config, explain_metadata = RoutingConfigLoader(
         settings.routing_config_path
@@ -923,18 +935,18 @@ async def startup() -> None:
     await asyncio.to_thread(_prefetch_local_semantic_classifier_model, routing_config)
     await asyncio.to_thread(_prefetch_local_route_reranker_model, routing_config)
     authenticator = Authenticator(settings)
-    app.state.settings = settings
-    app.state.authenticator = authenticator
-    app.state.routing_config = routing_config
-    app.state.routing_config_explain = explain_metadata
-    app.state.smart_router = SmartModelRouter(routing_config)
+    app_obj.state.settings = settings
+    app_obj.state.authenticator = authenticator
+    app_obj.state.routing_config = routing_config
+    app_obj.state.routing_config_explain = explain_metadata
+    app_obj.state.smart_router = SmartModelRouter(routing_config)
     audit_logger = JsonlAuditLogger(
         path=settings.router_audit_log_path,
         enabled=settings.router_audit_log_enabled,
     )
-    app.state.audit_logger = audit_logger
-    app.state.audit_payload_summary_enabled = bool(audit_logger.enabled)
-    app.state.audit_safe_logging_enabled = bool(
+    app_obj.state.audit_logger = audit_logger
+    app_obj.state.audit_payload_summary_enabled = bool(audit_logger.enabled)
+    app_obj.state.audit_safe_logging_enabled = bool(
         settings.router_audit_safe_logging_enabled
     )
     live_metrics_store = build_live_metrics_store(
@@ -950,18 +962,18 @@ async def startup() -> None:
         connect_latency_alert_threshold_ms=settings.live_metrics_connect_latency_alert_threshold_ms,
     )
     await live_metrics_collector.start()
-    app.state.live_metrics_store = live_metrics_store
-    app.state.live_metrics_collector = live_metrics_collector
+    app_obj.state.live_metrics_store = live_metrics_store
+    app_obj.state.live_metrics_collector = live_metrics_collector
 
     def audit_event_hook(event: dict[str, Any]) -> None:
         event_payload = event
-        if bool(getattr(app.state, "audit_safe_logging_enabled", True)):
+        if bool(getattr(app_obj.state, "audit_safe_logging_enabled", True)):
             event_payload = _sanitize_audit_event(event)
         audit_logger.log(event_payload)
         live_metrics_collector.ingest(event_payload)
 
-    app.state.audit_event_hook = audit_event_hook
-    app.state.circuit_breakers = CircuitBreakerRegistry(
+    app_obj.state.audit_event_hook = audit_event_hook
+    app_obj.state.circuit_breakers = CircuitBreakerRegistry(
         CircuitBreakerConfig(
             enabled=settings.circuit_breaker_enabled,
             failure_threshold=max(1, settings.circuit_breaker_failure_threshold),
@@ -973,7 +985,7 @@ async def startup() -> None:
             ),
         )
     )
-    app.state.idempotency_store = build_idempotency_store(
+    app_obj.state.idempotency_store = build_idempotency_store(
         config=IdempotencyConfig(
             enabled=settings.idempotency_enabled,
             ttl_seconds=max(1, settings.idempotency_ttl_seconds),
@@ -982,7 +994,7 @@ async def startup() -> None:
         redis_url=settings.redis_url,
         logger=logger,
     )
-    app.state.backend_proxy = BackendProxy(
+    app_obj.state.backend_proxy = BackendProxy(
         base_url=settings.backend_base_url,
         timeout_seconds=settings.backend_timeout_seconds,
         connect_timeout_seconds=settings.backend_connect_timeout_seconds,
@@ -994,7 +1006,7 @@ async def startup() -> None:
         accounts=routing_config.accounts,
         model_registry=routing_config.models,
         audit_hook=audit_event_hook,
-        circuit_breakers=app.state.circuit_breakers,
+        circuit_breakers=app_obj.state.circuit_breakers,
         oauth_state_persistence_path=settings.routing_config_path,
     )
     policy_updater = RuntimePolicyUpdater(
@@ -1009,9 +1021,9 @@ async def startup() -> None:
         classifier_metrics_provider=live_metrics_collector,
     )
     await policy_updater.start()
-    app.state.policy_updater = policy_updater
+    app_obj.state.policy_updater = policy_updater
     _setup_optional_tracing(
-        app_obj=app, proxy=app.state.backend_proxy, settings=settings
+        app_obj=app_obj, proxy=app_obj.state.backend_proxy, settings=settings
     )
     logger.info(
         (
@@ -1028,21 +1040,21 @@ async def startup() -> None:
     )
 
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
+async def _shutdown(app_obj: FastAPI) -> None:
     policy_updater: RuntimePolicyUpdater | None = getattr(
-        app.state, "policy_updater", None
+        app_obj.state, "policy_updater", None
     )
     if policy_updater is not None:
         await policy_updater.stop()
     live_metrics_collector: LiveMetricsCollector | None = getattr(
-        app.state, "live_metrics_collector", None
+        app_obj.state, "live_metrics_collector", None
     )
     if live_metrics_collector is not None:
         await live_metrics_collector.close()
-    proxy: BackendProxy = app.state.backend_proxy
-    await proxy.close()
-    audit_logger: JsonlAuditLogger | None = getattr(app.state, "audit_logger", None)
+    proxy: BackendProxy | None = getattr(app_obj.state, "backend_proxy", None)
+    if proxy is not None:
+        await proxy.close()
+    audit_logger: JsonlAuditLogger | None = getattr(app_obj.state, "audit_logger", None)
     if audit_logger is not None:
         audit_logger.close()
     logger.info("shutdown complete")
