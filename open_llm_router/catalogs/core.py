@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from open_llm_router.catalogs.paths import CatalogDataPaths
 from open_llm_router.utils.yaml_utils import load_yaml_dict
 
 
@@ -252,12 +253,24 @@ def _split_model_ref(model_ref: str) -> tuple[str | None, str]:
     return None, model_ref.strip()
 
 
-def _catalog_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "catalog"
+@dataclass(frozen=True)
+class CatalogDocumentStore:
+    providers_path: Path
+    models_path: Path
 
+    @classmethod
+    def from_package_data(cls) -> CatalogDocumentStore:
+        return cls(
+            providers_path=CatalogDataPaths.providers_yaml(),
+            models_path=CatalogDataPaths.models_yaml(),
+        )
 
-def _load_yaml(path: Path) -> dict[str, Any]:
-    return load_yaml_dict(path, error_message=f"Expected YAML object in {path}")
+    @staticmethod
+    def _load_yaml(path: Path) -> dict[str, Any]:
+        return load_yaml_dict(path, error_message=f"Expected YAML object in {path}")
+
+    def load_documents(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self._load_yaml(self.providers_path), self._load_yaml(self.models_path)
 
 
 def _build_alias_index(models: dict[str, ModelCatalogEntry]) -> dict[str, set[str]]:
@@ -320,9 +333,9 @@ def _expand_model_items_with_presets(
 
 @lru_cache
 def load_internal_catalog() -> RouterCatalog:
-    catalog_root = _catalog_dir()
-    providers_raw = _load_yaml(catalog_root / "providers.yaml")
-    models_raw = _load_yaml(catalog_root / "models.yaml")
+    providers_raw, models_raw = (
+        CatalogDocumentStore.from_package_data().load_documents()
+    )
 
     provider_entries: dict[str, ProviderCatalogEntry] = {}
     for item in providers_raw.get("providers", []):

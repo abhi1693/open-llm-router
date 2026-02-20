@@ -7,12 +7,11 @@ from typing import Any
 
 import httpx
 
+from open_llm_router.catalogs.paths import CatalogDataPaths
 from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-DEFAULT_CATALOG_MODELS_PATH = (
-    Path(__file__).resolve().parents[1] / "catalog" / "models.yaml"
-)
+DEFAULT_CATALOG_MODELS_PATH = CatalogDataPaths.models_yaml()
 
 # Internal provider ids do not always match OpenRouter's model id prefixes.
 PROVIDER_ID_ALIASES: dict[str, tuple[str, ...]] = {
@@ -28,6 +27,115 @@ class CatalogSyncStats:
     unchanged: int
     missing_remote: int
     missing_pricing: int
+
+
+class RemoteModelLookup:
+    def __init__(self, openrouter_models: list[dict[str, Any]]):
+        self._by_canonical: dict[str, dict[str, Any]] = {}
+        self._by_suffix: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+        for item in openrouter_models:
+            canonical = item.get("id")
+            if not isinstance(canonical, str):
+                continue
+            canonical = canonical.strip()
+            if not canonical or "/" not in canonical:
+                continue
+            self._by_canonical[canonical] = item
+            _, suffix = canonical.split("/", 1)
+            self._by_suffix[suffix].append(item)
+
+    def match(
+        self,
+        *,
+        local_provider: str,
+        local_id: str,
+        aliases: Any,
+    ) -> dict[str, Any] | None:
+        provider_candidates = self._provider_candidates(local_provider)
+
+        # 1) Exact provider/id mapping.
+        for provider in provider_candidates:
+            matched = self._by_canonical.get(f"{provider}/{local_id}")
+            if matched is not None:
+                return matched
+
+        # 2) Canonical alias match.
+        normalized_aliases = self._normalize_aliases(aliases)
+        for alias in normalized_aliases:
+            if "/" in alias:
+                matched = self._by_canonical.get(alias)
+                if matched is not None:
+                    return matched
+            for provider in provider_candidates:
+                matched = self._by_canonical.get(f"{provider}/{alias}")
+                if matched is not None:
+                    return matched
+
+        # 3) Unique suffix match with provider preference.
+        matched_by_suffix = self._pick_by_suffix(local_id, provider_candidates)
+        if matched_by_suffix is not None:
+            return matched_by_suffix
+
+        for alias in normalized_aliases:
+            matched_by_suffix = self._pick_by_suffix(alias, provider_candidates)
+            if matched_by_suffix is not None:
+                return matched_by_suffix
+
+        return None
+
+    @staticmethod
+    def _provider_candidates(local_provider: str) -> list[str]:
+        candidates = [local_provider]
+        candidates.extend(PROVIDER_ID_ALIASES.get(local_provider, ()))
+
+        seen: set[str] = set()
+        output: list[str] = []
+        for item in candidates:
+            normalized = item.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            output.append(normalized)
+        return output
+
+    @staticmethod
+    def _normalize_aliases(aliases: Any) -> list[str]:
+        if not isinstance(aliases, list):
+            return []
+        output: list[str] = []
+        seen: set[str] = set()
+        for item in aliases:
+            if not isinstance(item, str):
+                continue
+            normalized = item.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            output.append(normalized)
+        return output
+
+    def _pick_by_suffix(
+        self,
+        suffix: str,
+        provider_candidates: list[str],
+    ) -> dict[str, Any] | None:
+        matches = self._by_suffix.get(suffix)
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+
+        for provider in provider_candidates:
+            scoped = [
+                item
+                for item in matches
+                if isinstance(item.get("id"), str)
+                and str(item["id"]).startswith(f"{provider}/")
+            ]
+            if len(scoped) == 1:
+                return scoped[0]
+        return None
 
 
 def fetch_openrouter_models(
@@ -88,18 +196,7 @@ def sync_catalog_models_pricing(
     if not isinstance(models, list):
         raise ValueError("Catalog document missing 'models' list.")
 
-    remote_by_canonical: dict[str, dict[str, Any]] = {}
-    remote_by_suffix: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in openrouter_models:
-        canonical = item.get("id")
-        if not isinstance(canonical, str):
-            continue
-        canonical = canonical.strip()
-        if not canonical or "/" not in canonical:
-            continue
-        remote_by_canonical[canonical] = item
-        _, suffix = canonical.split("/", 1)
-        remote_by_suffix[suffix].append(item)
+    remote_lookup = RemoteModelLookup(openrouter_models)
 
     updated = 0
     unchanged = 0
@@ -119,12 +216,10 @@ def sync_catalog_models_pricing(
         if not local_provider or not local_id:
             continue
 
-        remote = _match_remote_model(
+        remote = remote_lookup.match(
             local_provider=local_provider,
             local_id=local_id,
             aliases=entry.get("aliases"),
-            remote_by_canonical=remote_by_canonical,
-            remote_by_suffix=remote_by_suffix,
         )
         if remote is None:
             missing_remote += 1
@@ -232,100 +327,4 @@ def _coerce_number(value: Any) -> float | None:
             return float(text)
         except ValueError:
             return None
-    return None
-
-
-def _match_remote_model(
-    *,
-    local_provider: str,
-    local_id: str,
-    aliases: Any,
-    remote_by_canonical: dict[str, dict[str, Any]],
-    remote_by_suffix: dict[str, list[dict[str, Any]]],
-) -> dict[str, Any] | None:
-    provider_candidates = _provider_candidates(local_provider)
-
-    # 1) Exact provider/id mapping.
-    for provider in provider_candidates:
-        matched = remote_by_canonical.get(f"{provider}/{local_id}")
-        if matched is not None:
-            return matched
-
-    # 2) Canonical alias match.
-    for alias in _normalize_aliases(aliases):
-        if "/" in alias:
-            matched = remote_by_canonical.get(alias)
-            if matched is not None:
-                return matched
-        for provider in provider_candidates:
-            matched = remote_by_canonical.get(f"{provider}/{alias}")
-            if matched is not None:
-                return matched
-
-    # 3) Unique suffix match with provider preference.
-    matched_by_suffix = _pick_by_suffix(local_id, provider_candidates, remote_by_suffix)
-    if matched_by_suffix is not None:
-        return matched_by_suffix
-
-    for alias in _normalize_aliases(aliases):
-        matched_by_suffix = _pick_by_suffix(
-            alias, provider_candidates, remote_by_suffix
-        )
-        if matched_by_suffix is not None:
-            return matched_by_suffix
-
-    return None
-
-
-def _provider_candidates(local_provider: str) -> list[str]:
-    candidates = [local_provider]
-    candidates.extend(PROVIDER_ID_ALIASES.get(local_provider, ()))
-
-    seen: set[str] = set()
-    output: list[str] = []
-    for item in candidates:
-        normalized = item.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        output.append(normalized)
-    return output
-
-
-def _normalize_aliases(aliases: Any) -> list[str]:
-    if not isinstance(aliases, list):
-        return []
-    output: list[str] = []
-    seen: set[str] = set()
-    for item in aliases:
-        if not isinstance(item, str):
-            continue
-        normalized = item.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        output.append(normalized)
-    return output
-
-
-def _pick_by_suffix(
-    suffix: str,
-    provider_candidates: list[str],
-    remote_by_suffix: dict[str, list[dict[str, Any]]],
-) -> dict[str, Any] | None:
-    matches = remote_by_suffix.get(suffix)
-    if not matches:
-        return None
-    if len(matches) == 1:
-        return matches[0]
-
-    for provider in provider_candidates:
-        scoped = [
-            item
-            for item in matches
-            if isinstance(item.get("id"), str)
-            and str(item["id"]).startswith(f"{provider}/")
-        ]
-        if len(scoped) == 1:
-            return scoped[0]
     return None

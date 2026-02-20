@@ -311,43 +311,60 @@ class RoutingConfig(BaseModel):
         return sorted(discovered)
 
 
+class RoutingConfigLoader:
+    def __init__(self, config_path: str | Path) -> None:
+        self._path = Path(config_path)
+        self._config_path = str(config_path)
+
+    def load(self) -> RoutingConfig:
+        routing_config, _ = self.load_with_metadata()
+        return routing_config
+
+    def load_with_metadata(self) -> tuple[RoutingConfig, dict[str, Any] | None]:
+        raw = self._load_document()
+        effective, explain_metadata = self._compile_effective(raw)
+        return RoutingConfig.model_validate(effective), explain_metadata
+
+    def _load_document(self) -> dict[str, Any]:
+        if not self._path.exists():
+            raise FileNotFoundError(
+                f"Routing config not found at '{self._config_path}'. "
+                "Create it or set ROUTING_CONFIG_PATH."
+            )
+        return load_yaml_dict(
+            self._path,
+            error_message=f"Expected YAML object in '{self._config_path}'.",
+        )
+
+    @staticmethod
+    def _compile_effective(
+        raw: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        from open_llm_router.catalogs.core import (
+            load_internal_catalog,
+            validate_routing_document_against_catalog,
+        )
+        from open_llm_router.profile.profile_compiler import (
+            compile_profile_document,
+            is_profile_document,
+        )
+
+        catalog = load_internal_catalog()
+        explain_metadata: dict[str, Any] | None = None
+
+        if is_profile_document(raw):
+            compiled = compile_profile_document(raw, catalog=catalog)
+            return compiled.effective_config, compiled.explain
+
+        validate_routing_document_against_catalog(raw, catalog=catalog)
+        return raw, explain_metadata
+
+
 def load_routing_config(config_path: str) -> RoutingConfig:
-    routing_config, _ = load_routing_config_with_metadata(config_path)
-    return routing_config
+    return RoutingConfigLoader(config_path).load()
 
 
 def load_routing_config_with_metadata(
     config_path: str,
 ) -> tuple[RoutingConfig, dict[str, Any] | None]:
-    path = Path(config_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Routing config not found at '{config_path}'. "
-            "Create it or set ROUTING_CONFIG_PATH."
-        )
-
-    raw = load_yaml_dict(
-        path,
-        error_message=f"Expected YAML object in '{config_path}'.",
-    )
-
-    from open_llm_router.catalogs.core import (
-        load_internal_catalog,
-        validate_routing_document_against_catalog,
-    )
-    from open_llm_router.profile.profile_compiler import (
-        compile_profile_document,
-        is_profile_document,
-    )
-
-    catalog = load_internal_catalog()
-    explain_metadata: dict[str, Any] | None = None
-
-    if is_profile_document(raw):
-        compiled = compile_profile_document(raw, catalog=catalog)
-        raw = compiled.effective_config
-        explain_metadata = compiled.explain
-    else:
-        validate_routing_document_against_catalog(raw, catalog=catalog)
-
-    return RoutingConfig.model_validate(raw), explain_metadata
+    return RoutingConfigLoader(config_path).load_with_metadata()

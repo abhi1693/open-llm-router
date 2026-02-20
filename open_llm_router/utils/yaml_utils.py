@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from open_llm_router.persistence import YamlFileStore
+from open_llm_router.utils.persistence import YamlFileStore
 
 
 def load_yaml_dict(

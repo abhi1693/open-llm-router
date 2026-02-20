@@ -1496,7 +1496,9 @@ async def auth_config_handler(_: Request, exc: AuthConfigurationError) -> JSONRe
 def run() -> None:
     import uvicorn
 
-    uvicorn.run("open_llm_router.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(
+        "open_llm_router.server.main:app", host="0.0.0.0", port=8000, reload=False
+    )
 
 
 if __name__ == "__main__":

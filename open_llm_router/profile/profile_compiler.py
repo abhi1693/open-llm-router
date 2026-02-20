@@ -14,6 +14,7 @@ from open_llm_router.catalogs.core import (
     load_internal_catalog,
     validate_routing_document_against_catalog,
 )
+from open_llm_router.catalogs.paths import CatalogDataPaths
 from open_llm_router.profile.profile_config import (
     GuardrailThresholds,
     RouterProfileConfig,
@@ -52,40 +53,48 @@ class CompileResult:
     explain: dict[str, Any]
 
 
-@lru_cache
-def _load_profiles_file() -> dict[str, Any]:
-    profiles_path = Path(__file__).resolve().parents[1] / "catalog" / "profiles.yaml"
-    raw = load_yaml_dict(
-        profiles_path,
-        error_message="Expected profiles catalog to be an object.",
-    )
-    profiles = raw.get("profiles") or {}
-    if not isinstance(profiles, dict):
-        raise ValueError("Expected 'profiles' mapping in profile catalog.")
-    return profiles
+class BuiltinProfileCatalog:
+    @staticmethod
+    @lru_cache
+    def _profiles() -> dict[str, Any]:
+        raw = load_yaml_dict(
+            CatalogDataPaths.profiles_yaml(),
+            error_message="Expected profiles catalog to be an object.",
+        )
+        profiles = raw.get("profiles") or {}
+        if not isinstance(profiles, dict):
+            raise ValueError("Expected 'profiles' mapping in profile catalog.")
+        return profiles
+
+    @classmethod
+    def list_profiles(cls) -> list[tuple[str, str]]:
+        rows: list[tuple[str, str]] = []
+        for name, body in sorted(cls._profiles().items()):
+            description = ""
+            if isinstance(body, dict):
+                description = str(body.get("description") or "")
+            rows.append((name, description))
+        return rows
+
+    @classmethod
+    def get_template(cls, name: str) -> dict[str, Any]:
+        template = cls._profiles().get(name)
+        if template is None:
+            available = ", ".join(sorted(cls._profiles()))
+            raise ValueError(
+                f"Unknown profile '{name}'. Available profiles: {available}"
+            )
+        if not isinstance(template, dict):
+            raise ValueError(f"Invalid template for profile '{name}'.")
+        return deepcopy(template)
 
 
 def list_builtin_profiles() -> list[tuple[str, str]]:
-    profiles = _load_profiles_file()
-    rows: list[tuple[str, str]] = []
-    for name, body in sorted(profiles.items()):
-        description = ""
-        if isinstance(body, dict):
-            description = str(body.get("description") or "")
-        rows.append((name, description))
-    return rows
+    return BuiltinProfileCatalog.list_profiles()
 
 
 def get_builtin_profile_template(name: str) -> dict[str, Any]:
-    profiles = _load_profiles_file()
-    template = profiles.get(name)
-    if template is None:
-        raise ValueError(
-            f"Unknown profile '{name}'. Available profiles: {', '.join(sorted(profiles))}"
-        )
-    if not isinstance(template, dict):
-        raise ValueError(f"Invalid template for profile '{name}'.")
-    return deepcopy(template)
+    return BuiltinProfileCatalog.get_template(name)
 
 
 def is_profile_document(raw: dict[str, Any]) -> bool:
@@ -314,6 +323,42 @@ def _materialize_model_catalog_data(
         profile.setdefault("failure_rate", entry.priors.failure_rate)
 
 
+class AvailableModelPlanner:
+    def __init__(self, *, catalog: RouterCatalog, available_models: set[str]):
+        self._catalog = catalog
+        self.available_models = sorted(_dedupe(list(available_models)))
+        self.available_set = set(self.available_models)
+
+    def filter_to_available(self, models: list[str]) -> list[str]:
+        filtered: list[str] = []
+        for model in _dedupe(models):
+            canonical = self._catalog.resolve_model_id(model)
+            if canonical in self.available_set:
+                filtered.append(canonical)
+        return filtered
+
+    def suggest(self, *, task: str, tier: str, limit: int) -> list[str]:
+        scored: list[tuple[float, str]] = []
+        for model in self.available_models:
+            entry = self._catalog.get_model(model)
+            score = _metadata_score_for_task_tier(
+                model=model,
+                entry=entry,
+                task=task,
+                tier=tier,
+            )
+            scored.append((score, model))
+
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                item[1],
+            ),
+            reverse=True,
+        )
+        return [model for _, model in scored[: max(1, limit)]]
+
+
 def _align_routing_to_enabled_accounts(
     effective: dict[str, Any],
     *,
@@ -324,8 +369,9 @@ def _align_routing_to_enabled_accounts(
     if not available_models:
         return
 
-    available = sorted(_dedupe(list(available_models)))
-    available_set = set(available)
+    planner = AvailableModelPlanner(catalog=catalog, available_models=available_models)
+    available = planner.available_models
+    available_set = planner.available_set
     alignment_notes: list[dict[str, Any]] = []
 
     models_map = effective.get("models")
@@ -361,22 +407,12 @@ def _align_routing_to_enabled_accounts(
 
         for tier in ROUTE_TIERS:
             configured = _coerce_model_list(route.get(tier))
-            filtered = _filter_models_to_available(
-                configured,
-                available_set=available_set,
-                catalog=catalog,
-            )
+            filtered = planner.filter_to_available(configured)
             if filtered:
                 route[tier] = filtered
                 continue
 
-            suggested = _suggest_models_for_task_tier(
-                available_models=available,
-                task=task,
-                tier=tier,
-                catalog=catalog,
-                limit=2,
-            )
+            suggested = planner.suggest(task=task, tier=tier, limit=2)
             if suggested:
                 route[tier] = suggested
                 if configured:
@@ -403,13 +439,7 @@ def _align_routing_to_enabled_accounts(
             default_model = None
 
     if default_model is None:
-        candidates = _suggest_models_for_task_tier(
-            available_models=available,
-            task="general",
-            tier="medium",
-            catalog=catalog,
-            limit=1,
-        )
+        candidates = planner.suggest(task="general", tier="medium", limit=1)
         if candidates:
             old_default = default_model_raw or None
             effective["default_model"] = candidates[0]
@@ -422,17 +452,13 @@ def _align_routing_to_enabled_accounts(
                 }
             )
 
-    fallback_models = _filter_models_to_available(
-        _coerce_model_list(effective.get("fallback_models")),
-        available_set=available_set,
-        catalog=catalog,
+    fallback_models = planner.filter_to_available(
+        _coerce_model_list(effective.get("fallback_models"))
     )
     if not fallback_models:
-        fallback_models = _suggest_models_for_task_tier(
-            available_models=available,
+        fallback_models = planner.suggest(
             task="general",
             tier="high",
-            catalog=catalog,
             limit=max(1, min(4, len(available))),
         )
     if default_model:
@@ -446,17 +472,13 @@ def _align_routing_to_enabled_accounts(
             task_candidates = {}
             learned["task_candidates"] = task_candidates
         for task in TASKS:
-            filtered = _filter_models_to_available(
-                _coerce_model_list(task_candidates.get(task)),
-                available_set=available_set,
-                catalog=catalog,
+            filtered = planner.filter_to_available(
+                _coerce_model_list(task_candidates.get(task))
             )
             if not filtered:
-                filtered = _suggest_models_for_task_tier(
-                    available_models=available,
+                filtered = planner.suggest(
                     task=task,
                     tier="medium",
-                    catalog=catalog,
                     limit=min(4, len(available)),
                 )
             if filtered:
@@ -464,49 +486,6 @@ def _align_routing_to_enabled_accounts(
 
     if alignment_notes:
         explain["account_alignment"] = alignment_notes
-
-
-def _filter_models_to_available(
-    models: list[str],
-    *,
-    available_set: set[str],
-    catalog: RouterCatalog,
-) -> list[str]:
-    filtered: list[str] = []
-    for model in _dedupe(models):
-        canonical = catalog.resolve_model_id(model)
-        if canonical in available_set:
-            filtered.append(canonical)
-    return filtered
-
-
-def _suggest_models_for_task_tier(
-    *,
-    available_models: list[str],
-    task: str,
-    tier: str,
-    catalog: RouterCatalog,
-    limit: int,
-) -> list[str]:
-    scored: list[tuple[float, str]] = []
-    for model in available_models:
-        entry = catalog.get_model(model)
-        score = _metadata_score_for_task_tier(
-            model=model,
-            entry=entry,
-            task=task,
-            tier=tier,
-        )
-        scored.append((score, model))
-
-    scored.sort(
-        key=lambda item: (
-            item[0],
-            item[1],
-        ),
-        reverse=True,
-    )
-    return [model for _, model in scored[: max(1, limit)]]
 
 
 def _metadata_score_for_task_tier(
