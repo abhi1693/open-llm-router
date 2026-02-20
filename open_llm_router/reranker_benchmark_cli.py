@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from open_llm_router.cli_output import write_cli_report
 from open_llm_router.config import load_routing_config_with_metadata
 from open_llm_router.router_engine import SmartModelRouter
 
@@ -195,11 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         "summary": summary,
     }
     rendered = json.dumps(output, indent=2)
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(rendered + "\n", encoding="utf-8")
-    print(rendered)
+    write_cli_report(rendered=rendered, output_path=args.output, always_print=True)
     return 0
 
 

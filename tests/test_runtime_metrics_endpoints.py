@@ -1,30 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi.testclient import TestClient
 
-from open_llm_router.main import app
-from open_llm_router.settings import get_settings
-
-TEST_ROUTING_CONFIG_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "router.profile.yaml"
-)
-
-
-def _build_client(monkeypatch: Any, **env: Any) -> Any:
-    monkeypatch.setenv("ROUTING_CONFIG_PATH", str(TEST_ROUTING_CONFIG_PATH))
-    monkeypatch.setenv("INGRESS_AUTH_REQUIRED", "false")
-    for key, value in env.items():
-        monkeypatch.setenv(key, str(value))
-    get_settings.cache_clear()
-    return TestClient(app)
+from tests.client_test_utils import build_test_client
 
 
 def test_router_live_metrics_endpoint_returns_snapshot(monkeypatch: Any) -> None:
-    with _build_client(monkeypatch) as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         response = client.get("/v1/router/live-metrics")
 
     assert response.status_code == 200
@@ -39,7 +23,7 @@ def test_router_live_metrics_endpoint_returns_snapshot(monkeypatch: Any) -> None
 
 
 def test_router_policy_endpoint_returns_runtime_profile_state(monkeypatch: Any) -> None:
-    with _build_client(monkeypatch) as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         response = client.get("/v1/router/policy")
 
     assert response.status_code == 200
@@ -52,7 +36,7 @@ def test_router_policy_endpoint_returns_runtime_profile_state(monkeypatch: Any) 
 
 
 def test_metrics_endpoint_returns_prometheus_payload(monkeypatch: Any) -> None:
-    with _build_client(monkeypatch) as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         response = client.get("/metrics")
 
     assert response.status_code == 200
@@ -102,7 +86,11 @@ def test_startup_prefetches_local_semantic_model_when_enabled(
         _fake_load_local_embedding_runtime,
     )
 
-    with _build_client(monkeypatch, ROUTING_CONFIG_PATH=str(config_path)) as client:
+    with build_test_client(
+        monkeypatch,
+        ROUTING_CONFIG_PATH=str(config_path),
+        INGRESS_AUTH_REQUIRED="false",
+    ) as client:
         response = client.get("/v1/models")
 
     assert response.status_code == 200
@@ -151,7 +139,11 @@ def test_startup_prefetches_local_route_reranker_model_when_enabled(
         _fake_load_local_embedding_runtime,
     )
 
-    with _build_client(monkeypatch, ROUTING_CONFIG_PATH=str(config_path)) as client:
+    with build_test_client(
+        monkeypatch,
+        ROUTING_CONFIG_PATH=str(config_path),
+        INGRESS_AUTH_REQUIRED="false",
+    ) as client:
         response = client.get("/v1/models")
 
     assert response.status_code == 200

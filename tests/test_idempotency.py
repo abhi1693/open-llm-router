@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.responses import JSONResponse
-from fastapi.testclient import TestClient
 
 from open_llm_router.idempotency import (
     IdempotencyConfig,
@@ -16,22 +14,7 @@ from open_llm_router.idempotency import (
 from open_llm_router.main import app
 from open_llm_router.proxy import BackendProxy
 from open_llm_router.settings import get_settings
-
-TEST_ROUTING_CONFIG_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "router.profile.yaml"
-)
-
-
-def _set_default_test_env(monkeypatch: Any) -> None:
-    monkeypatch.setenv("ROUTING_CONFIG_PATH", str(TEST_ROUTING_CONFIG_PATH))
-
-
-def _build_client(monkeypatch: Any, **env: Any) -> Any:
-    _set_default_test_env(monkeypatch)
-    for key, value in env.items():
-        monkeypatch.setenv(key, str(value))
-    get_settings.cache_clear()
-    return TestClient(app)
+from tests.client_test_utils import build_test_client
 
 
 def test_settings_redis_url_is_loaded(monkeypatch: Any) -> None:
@@ -68,7 +51,7 @@ def test_non_stream_requests_replay_with_same_idempotency_key(monkeypatch: Any) 
         fake_forward_with_fallback,
     )
 
-    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         payload = {
             "model": "auto",
             "messages": [{"role": "user", "content": "hello"}],
@@ -108,7 +91,7 @@ def test_streaming_requests_are_not_cached_by_idempotency(monkeypatch: Any) -> N
         fake_forward_with_fallback,
     )
 
-    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         payload = {
             "model": "auto",
             "messages": [{"role": "user", "content": "hello"}],
@@ -207,7 +190,7 @@ def test_proxy_terminal_event_emitted_for_success(monkeypatch: Any) -> None:
     )
 
     captured: list[dict[str, Any]] = []
-    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         previous_hook = app.state.audit_event_hook
         app.state.audit_event_hook = lambda event: captured.append(event)
         app.state.audit_payload_summary_enabled = False
@@ -260,7 +243,7 @@ def test_proxy_terminal_event_emitted_for_exhausted(monkeypatch: Any) -> None:
     )
 
     captured: list[dict[str, Any]] = []
-    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         previous_hook = app.state.audit_event_hook
         app.state.audit_event_hook = lambda event: captured.append(event)
         app.state.audit_payload_summary_enabled = False
@@ -305,7 +288,7 @@ def test_proxy_terminal_event_emitted_for_unhandled_error(monkeypatch: Any) -> N
     )
 
     captured: list[dict[str, Any]] = []
-    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         previous_hook = app.state.audit_event_hook
         app.state.audit_event_hook = lambda event: captured.append(event)
         app.state.audit_payload_summary_enabled = False

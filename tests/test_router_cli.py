@@ -1,22 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 import open_llm_router.router_cli as router_cli
 from open_llm_router.router_cli import main
-
-
-def _load(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
-
-
-def _save(path: Path, payload: dict[str, Any]) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle, sort_keys=False)
+from tests.yaml_test_utils import load_yaml_file, save_yaml_file
 
 
 def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
@@ -25,7 +15,7 @@ def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
 
     assert main(["init", "--profile", "auto", "--path", str(profile_path)]) == 0
 
-    profile_payload = _load(profile_path)
+    profile_payload = load_yaml_file(profile_path)
     profile_payload["accounts"] = [
         {
             "name": "codex-main",
@@ -33,7 +23,7 @@ def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
             "auth_mode": "passthrough",
         }
     ]
-    _save(profile_path, profile_payload)
+    save_yaml_file(profile_path, profile_payload)
 
     assert (
         main(
@@ -49,7 +39,7 @@ def test_router_cli_init_compile_validate(tmp_path: Any) -> None:
     )
     assert main(["validate-config", "--path", str(profile_path)]) == 0
 
-    effective_payload = _load(effective_path)
+    effective_payload = load_yaml_file(effective_path)
     assert effective_payload["accounts"][0]["provider"] == "openai-codex"
     assert (
         effective_payload["accounts"][0]["base_url"]
@@ -129,7 +119,7 @@ def test_router_cli_calibration_report_uses_runtime_history_and_drift(
     profile_path = tmp_path / "router.profile.yaml"
     overrides_path = tmp_path / "router.runtime.overrides.yaml"
     assert main(["init", "--profile", "auto", "--path", str(profile_path)]) == 0
-    _save(
+    save_yaml_file(
         overrides_path,
         {
             "classifier_calibration": {
@@ -220,7 +210,7 @@ def test_router_provider_login_openai_chatgpt_writes_profile(
         == 0
     )
 
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["name"] == "openai-codex-work"
     assert account["provider"] == "openai-codex"
@@ -247,7 +237,7 @@ def test_router_provider_login_openai_apikey_writes_profile(tmp_path: Any) -> No
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "openai"
     assert account["auth_mode"] == "api_key"
@@ -270,7 +260,7 @@ def test_router_provider_login_gemini_defaults_to_apikey(tmp_path: Any) -> None:
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "gemini"
     assert account["auth_mode"] == "api_key"
@@ -293,7 +283,7 @@ def test_router_provider_login_nvidia_defaults_to_apikey(tmp_path: Any) -> None:
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "nvidia"
     assert account["auth_mode"] == "api_key"
@@ -318,7 +308,7 @@ def test_router_provider_login_github_defaults_to_apikey(tmp_path: Any) -> None:
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "github"
     assert account["auth_mode"] == "api_key"
@@ -347,7 +337,7 @@ def test_router_provider_login_apikey_flag_sets_inline_key(tmp_path: Any) -> Non
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["auth_mode"] == "api_key"
     assert account["api_key"] == "sk-inline-secret"
@@ -372,7 +362,7 @@ def test_router_provider_login_accepts_apikey_env_alias(tmp_path: Any) -> None:
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["api_key_env"] == "MY_GEMINI_KEY"
 
@@ -393,7 +383,7 @@ def test_router_provider_login_accepts_gemeni_alias(tmp_path: Any) -> None:
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "gemini"
 
@@ -414,7 +404,7 @@ def test_router_provider_login_accepts_nim_alias(tmp_path: Any) -> None:
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "nvidia"
 
@@ -435,14 +425,14 @@ def test_router_provider_login_accepts_github_models_alias(tmp_path: Any) -> Non
         )
         == 0
     )
-    payload = _load(profile_path)
+    payload = load_yaml_file(profile_path)
     account = payload["accounts"][0]
     assert account["provider"] == "github"
 
 
 def test_provider_login_rejects_raw_schema_path(tmp_path: Any) -> None:
     raw_path = tmp_path / "router.yaml"
-    _save(
+    save_yaml_file(
         raw_path,
         {
             "default_model": "openai/gpt-5.2",
@@ -534,7 +524,7 @@ def test_catalog_sync_dry_run_does_not_write_catalog(
             }
         ],
     }
-    _save(catalog_path, initial_payload)
+    save_yaml_file(catalog_path, initial_payload)
 
     monkeypatch.setattr(
         router_cli,
@@ -565,13 +555,13 @@ def test_catalog_sync_dry_run_does_not_write_catalog(
     assert "updated: 1" in output
 
     # file should remain unchanged in dry-run mode
-    payload_after = _load(catalog_path)
+    payload_after = load_yaml_file(catalog_path)
     assert payload_after == initial_payload
 
 
 def test_catalog_sync_writes_catalog(monkeypatch: Any, tmp_path: Any) -> None:
     catalog_path = tmp_path / "models.yaml"
-    _save(
+    save_yaml_file(
         catalog_path,
         {
             "version": 1,
@@ -599,7 +589,7 @@ def test_catalog_sync_writes_catalog(monkeypatch: Any, tmp_path: Any) -> None:
 
     assert main(["catalog", "sync", "--catalog-path", str(catalog_path)]) == 0
 
-    payload_after = _load(catalog_path)
+    payload_after = load_yaml_file(catalog_path)
     model = payload_after["models"][0]
     assert model["costs"]["input_per_1k"] == 0.0019
     assert model["costs"]["output_per_1k"] == 0.0067

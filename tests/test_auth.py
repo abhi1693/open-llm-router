@@ -1,34 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import jwt
-from fastapi.testclient import TestClient
 
-from open_llm_router.main import app
-from open_llm_router.settings import get_settings
-
-TEST_ROUTING_CONFIG_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "router.profile.yaml"
-)
-
-
-def _set_default_test_env(monkeypatch: Any) -> None:
-    monkeypatch.setenv("ROUTING_CONFIG_PATH", str(TEST_ROUTING_CONFIG_PATH))
-
-
-def _build_client(monkeypatch: Any, **env: Any) -> Any:
-    _set_default_test_env(monkeypatch)
-    for key, value in env.items():
-        monkeypatch.setenv(key, str(value))
-    get_settings.cache_clear()
-    return TestClient(app)
+from tests.client_test_utils import build_test_client
 
 
 def test_v1_models_allows_when_auth_disabled(monkeypatch: Any) -> None:
-    with _build_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
+    with build_test_client(monkeypatch, INGRESS_AUTH_REQUIRED="false") as client:
         response = client.get("/v1/models")
         assert response.status_code == 200
         body = response.json()
@@ -38,7 +19,7 @@ def test_v1_models_allows_when_auth_disabled(monkeypatch: Any) -> None:
 
 
 def test_v1_models_rejects_without_token_when_auth_required(monkeypatch: Any) -> None:
-    with _build_client(
+    with build_test_client(
         monkeypatch,
         INGRESS_AUTH_REQUIRED="true",
         INGRESS_API_KEYS="router-key-1",
@@ -48,7 +29,7 @@ def test_v1_models_rejects_without_token_when_auth_required(monkeypatch: Any) ->
 
 
 def test_v1_models_accepts_valid_api_key(monkeypatch: Any) -> None:
-    with _build_client(
+    with build_test_client(
         monkeypatch,
         INGRESS_AUTH_REQUIRED="true",
         INGRESS_API_KEYS="router-key-1,router-key-2",
@@ -75,7 +56,7 @@ def test_v1_models_accepts_valid_oauth_token(monkeypatch: Any) -> None:
         algorithm="HS256",
     )
 
-    with _build_client(
+    with build_test_client(
         monkeypatch,
         INGRESS_AUTH_REQUIRED="true",
         INGRESS_API_KEYS="",
@@ -92,7 +73,7 @@ def test_v1_models_accepts_valid_oauth_token(monkeypatch: Any) -> None:
 
 
 def test_v1_models_rejects_openai_like_token_without_match(monkeypatch: Any) -> None:
-    with _build_client(
+    with build_test_client(
         monkeypatch,
         INGRESS_AUTH_REQUIRED="true",
         INGRESS_API_KEYS="router-key-1",
@@ -107,7 +88,7 @@ def test_v1_models_rejects_openai_like_token_without_match(monkeypatch: Any) -> 
 
 def test_v1_models_oauth_errors_do_not_leak_details(monkeypatch: Any) -> None:
     secret = "local-test-secret-with-32-bytes-minimum"
-    with _build_client(
+    with build_test_client(
         monkeypatch,
         INGRESS_AUTH_REQUIRED="true",
         INGRESS_API_KEYS="",

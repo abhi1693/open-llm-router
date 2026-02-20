@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from open_llm_router.cli_output import write_cli_report
+
 
 @dataclass(slots=True)
 class ParseState:
@@ -729,12 +731,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         rendered = _render_text(summary)
 
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(rendered + "\n", encoding="utf-8")
-    else:
-        print(rendered)
+    write_cli_report(rendered=rendered, output_path=args.output)
 
     return 0
 

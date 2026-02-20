@@ -44,6 +44,7 @@ NVIDIA_APIKEY_DEFAULT_KEY_ENV = "NVIDIA_API_KEY"
 GITHUB_APIKEY_DEFAULT_MODELS = "github/openai/gpt-4.1,github/openai/gpt-4.1-mini,github/meta/Llama-3.3-70B-Instruct"
 GITHUB_APIKEY_DEFAULT_KEY_ENV = "GITHUB_TOKEN"
 DEFAULT_RUNTIME_OVERRIDES_PATH = "logs/router.runtime.overrides.yaml"
+DEFAULT_PROFILE_CONFIG_PATH = "router.profile.yaml"
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -58,6 +59,10 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, sort_keys=False)
+
+
+def _add_profile_path_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--path", default=DEFAULT_PROFILE_CONFIG_PATH)
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -607,7 +612,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_cmd = subparsers.add_parser("init", help="Create a profile config file.")
     init_cmd.add_argument("--profile", default="auto")
-    init_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(init_cmd)
     init_cmd.add_argument("--force", action="store_true")
     init_cmd.set_defaults(handler=cmd_init)
 
@@ -615,7 +620,7 @@ def build_parser() -> argparse.ArgumentParser:
         "compile-config",
         help="Compile router.profile.yaml into full routing schema.",
     )
-    compile_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(compile_cmd)
     compile_cmd.add_argument("--output", default="router.effective.yaml")
     compile_cmd.add_argument("--stdout", action="store_true")
     compile_cmd.add_argument("--explain", action="store_true")
@@ -625,14 +630,14 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-config",
         help="Validate profile or raw routing config with strict catalog checks.",
     )
-    validate_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(validate_cmd)
     validate_cmd.set_defaults(handler=cmd_validate_config)
 
     explain_cmd = subparsers.add_parser(
         "explain-route",
         help="Explain route selection for a task/complexity combination.",
     )
-    explain_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(explain_cmd)
     explain_cmd.add_argument("--task", required=True)
     explain_cmd.add_argument(
         "--complexity",
@@ -648,7 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
         "calibration-report",
         help="Show classifier calibration drift and recent adjustment history.",
     )
-    calibration_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(calibration_cmd)
     calibration_cmd.add_argument(
         "--overrides-path",
         default=DEFAULT_RUNTIME_OVERRIDES_PATH,
@@ -683,7 +688,7 @@ def build_parser() -> argparse.ArgumentParser:
     show_cmd = subparsers.add_parser(
         "show", help="Show concise summary for router config."
     )
-    show_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(show_cmd)
     show_cmd.set_defaults(handler=cmd_config_show)
 
     provider_cmd = subparsers.add_parser(
@@ -723,7 +728,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["chatgpt", "apikey"],
         help=argparse.SUPPRESS,
     )
-    provider_login_cmd.add_argument("--path", default="router.profile.yaml")
+    _add_profile_path_argument(provider_login_cmd)
     provider_login_cmd.add_argument("--dry-run", action="store_true")
     provider_login_cmd.add_argument(
         "--name", required=True, help="Account name (required)."

@@ -1,24 +1,12 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from open_llm_router.config_cli import main
-
-
-def _load(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
-
-
-def _save(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(data, handle, sort_keys=False)
+from tests.yaml_test_utils import load_yaml_file, save_yaml_file
 
 
 def test_cli_add_account_and_route(tmp_path: Any) -> None:
@@ -63,7 +51,7 @@ def test_cli_add_account_and_route(tmp_path: Any) -> None:
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     assert config["default_model"] == "openai/gpt-5.2"
     assert config["accounts"][0]["name"] == "openclaw-a"
     assert config["accounts"][0]["provider"] == "openai"
@@ -114,7 +102,7 @@ def test_cli_set_route_accepts_multiple_models(tmp_path: Any) -> None:
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     assert config["task_routes"]["coding"]["medium"] == ["m-1", "m-2", "m-3"]
 
 
@@ -138,7 +126,7 @@ def test_cli_set_route_accepts_provider_qualified_models(tmp_path: Any) -> None:
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     assert config["task_routes"]["coding"]["xhigh"] == [
         "openai/gpt-5.2",
         "openai-codex/gpt-5.2-codex",
@@ -230,7 +218,7 @@ def test_cli_set_profile_candidates_and_learned_options(tmp_path: Any) -> None:
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     profile = config["model_profiles"]["openai-codex/gpt-5.2-codex"]
     assert profile["quality_bias"] == 0.65
     assert profile["cost_output_per_1k"] == 0.004
@@ -272,7 +260,7 @@ def test_cli_add_oauth_account(tmp_path: Any) -> None:
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     account = config["accounts"][0]
     assert account["name"] == "openai-codex-work"
     assert account["auth_mode"] == "oauth"
@@ -307,7 +295,7 @@ def test_cli_add_gemini_api_key_account(tmp_path: Any) -> None:
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     account = config["accounts"][0]
     assert account["name"] == "gemini-work"
     assert account["provider"] == "gemini"
@@ -358,7 +346,7 @@ def test_cli_login_chatgpt_saves_oauth_fields(tmp_path: Any, monkeypatch: Any) -
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     account = config["accounts"][0]
     assert account["name"] == "openai-codex-work"
     assert account["provider"] == "openai-codex"
@@ -383,7 +371,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
     config_path = tmp_path / "router.yaml"
-    _save(
+    save_yaml_file(
         config_path,
         {
             "default_model": "gpt-5.2-codex",
@@ -424,7 +412,7 @@ def test_cli_login_chatgpt_normalizes_existing_default_model(
         == 0
     )
 
-    config = _load(config_path)
+    config = load_yaml_file(config_path)
     assert config["default_model"] == "openai-codex/gpt-5.2-codex"
     assert "openai-codex/gpt-5.2-codex" in config["models"]
     assert "openai-codex/gpt-5.2" in config["models"]

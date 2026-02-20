@@ -4,7 +4,6 @@ profile:
 accounts:
   - name: test-openai-codex
     provider: openai-codex
-    base_url: https://example.invalid/v1
     api_key: test-key
     models:
       - openai-codex/gpt-5.2
