@@ -206,13 +206,6 @@ def _first_query_param(params: dict[str, list[str]], key: str) -> str | None:
     return first or None
 
 
-def _extract_chatgpt_account_id(access_token: str) -> str | None:
-    return TokenMetadataParser.extract_chatgpt_account_id(
-        access_token,
-        claim_path=CHATGPT_ACCOUNT_CLAIM_PATH,
-    )
-
-
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return
@@ -384,7 +377,10 @@ def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     expires_at = int(time.time()) + int(expires_in)
-    account_id = _extract_chatgpt_account_id(access_token)
+    account_id = TokenMetadataParser.extract_chatgpt_account_id(
+        access_token,
+        claim_path=CHATGPT_ACCOUNT_CLAIM_PATH,
+    )
     return {
         "oauth_access_token": access_token,
         "oauth_refresh_token": refresh_token,

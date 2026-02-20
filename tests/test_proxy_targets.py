@@ -89,7 +89,7 @@ def test_build_targets_across_accounts_and_fallback_models() -> None:
             ),
         ],
     )
-    targets = proxy._build_candidate_targets(_decision("m1", ["m2", "m3"]))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("m1", ["m2", "m3"]))
     assert [target.label for target in targets] == [
         "acct-a:m1",
         "acct-b:m1",
@@ -124,7 +124,7 @@ def test_build_targets_prioritize_non_rate_limited_accounts() -> None:
     )
     proxy._rate_limited_until["acct-primary"] = time.time() + 60.0
 
-    targets = proxy._build_candidate_targets(_decision("m1", []))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("m1", []))
     assert [target.label for target in targets] == [
         "acct-fallback:m1",
         "acct-primary:m1",
@@ -157,7 +157,7 @@ def test_build_targets_prioritize_models_with_healthy_accounts() -> None:
     )
     proxy._rate_limited_until["acct-primary"] = time.time() + 60.0
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             ["m2"],
@@ -196,7 +196,7 @@ def test_build_targets_applies_provider_order_preference() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             [],
@@ -231,7 +231,7 @@ def test_build_targets_applies_provider_only_filter() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             [],
@@ -266,7 +266,7 @@ def test_build_targets_applies_provider_ignore_filter() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             [],
@@ -311,7 +311,7 @@ def test_build_targets_applies_provider_sort_price() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             [],
@@ -356,7 +356,7 @@ def test_build_targets_applies_provider_sort_latency() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             [],
@@ -397,7 +397,7 @@ def test_build_targets_partition_model_keeps_model_grouping() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             ["m2"],
@@ -443,7 +443,7 @@ def test_build_targets_partition_none_applies_global_sort() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             ["m2"],
@@ -491,7 +491,7 @@ def test_filter_targets_by_parameter_support_keeps_compatible_targets() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision(
             "m1",
             [],
@@ -1050,7 +1050,7 @@ def test_build_targets_resolves_provider_qualified_model_to_matching_account() -
         ],
     )
 
-    targets = proxy._build_candidate_targets(_decision("openai/gpt-5.2", []))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("openai/gpt-5.2", []))
     assert [target.label for target in targets] == ["acct-openai:gpt-5.2"]
     asyncio.run(proxy.close())
 
@@ -1078,7 +1078,7 @@ def test_build_targets_uses_model_registry_id_for_upstream_model() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision("openai-codex/gpt-5.3-codex", [])
     )
     assert [target.label for target in targets] == [
@@ -1132,7 +1132,7 @@ def test_build_targets_request_source_ignores_fallbacks() -> None:
             ),
         ],
     )
-    targets = proxy._build_candidate_targets(
+    targets = proxy.backend_target_planner.build_candidate_targets(
         _decision("m1", ["m2", "m3"], source="request")
     )
     assert [target.label for target in targets] == ["acct-a:m1", "acct-b:m1"]
@@ -1156,8 +1156,8 @@ def test_build_targets_uses_env_api_key(monkeypatch: Any) -> None:
             )
         ],
     )
-    targets = proxy._build_candidate_targets(_decision("m1", []))
-    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("m1", []))
+    token = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert token == "env-key-a"
     asyncio.run(proxy.close())
 
@@ -1170,9 +1170,9 @@ def test_legacy_backend_used_when_accounts_absent() -> None:
         retry_statuses=[429, 500],
         accounts=[],
     )
-    targets = proxy._build_candidate_targets(_decision("m1", ["m2"]))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("m1", ["m2"]))
     assert [target.label for target in targets] == ["default:m1", "default:m2"]
-    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    token = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert token == "legacy-key"
     asyncio.run(proxy.close())
 
@@ -1197,8 +1197,8 @@ def test_oauth_account_uses_access_token() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
-    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("gpt-5.2-codex", []))
+    token = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert token == "oauth-access-1"
     asyncio.run(proxy.close())
 
@@ -1241,8 +1241,8 @@ def test_oauth_account_refreshes_when_expired() -> None:
         transport=httpx.MockTransport(handler), timeout=30.0
     )
 
-    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
-    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("gpt-5.2-codex", []))
+    token = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert token == "new-access-token"
     asyncio.run(proxy.close())
 
@@ -1304,8 +1304,8 @@ def test_oauth_account_refresh_persists_rotated_tokens_to_config(
         transport=httpx.MockTransport(handler), timeout=30.0
     )
 
-    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
-    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("gpt-5.2-codex", []))
+    token = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert token == refreshed_token
     asyncio.run(proxy.close())
 
@@ -1379,8 +1379,8 @@ def test_oauth_account_refresh_persistence_skips_env_backed_fields(
         transport=httpx.MockTransport(handler), timeout=30.0
     )
 
-    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
-    token = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("gpt-5.2-codex", []))
+    token = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert token == "new-access-token"
     asyncio.run(proxy.close())
 
@@ -1412,10 +1412,10 @@ def test_oauth_account_resolves_chatgpt_account_id_from_token() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(_decision("gpt-5.2-codex", []))
-    resolved = asyncio.run(proxy._resolve_bearer_token(targets[0].account))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("gpt-5.2-codex", []))
+    resolved = asyncio.run(proxy.oauth_state_manager.resolve_bearer_token(targets[0].account))
     assert resolved == token
-    assert proxy._resolve_oauth_account_id(targets[0].account) == "acct_abc123"
+    assert proxy.oauth_state_manager.resolve_oauth_account_id(targets[0].account) == "acct_abc123"
     asyncio.run(proxy.close())
 
 
@@ -1577,7 +1577,7 @@ def test_build_targets_resolves_codex_model_key_to_upstream_model_id() -> None:
         ],
     )
 
-    targets = proxy._build_candidate_targets(_decision("openai-codex/gpt-5.2", []))
+    targets = proxy.backend_target_planner.build_candidate_targets(_decision("openai-codex/gpt-5.2", []))
     assert targets[0].model == "openai-codex/gpt-5.2"
     assert targets[0].upstream_model == "gpt-5.2"
     asyncio.run(proxy.close())

@@ -877,7 +877,7 @@ class ProxyResponseAdapter:
                 pass
 
         if adapter == "chat_completions":
-            return await BackendProxy._to_chat_completions_response(
+            return await ChatCompletionsResponseAdapter.to_chat_completions_response(
                 upstream=upstream,
                 stream=stream,
                 response_headers=response_headers,
@@ -1019,7 +1019,9 @@ class ProxyAttemptProcessor(_ProxyComponent):
         request_id: str,
         stats: ProxyExecutionStats,
     ) -> bool:
-        if not self._proxy.is_temporarily_rate_limited(target.account_name):
+        if not self._proxy.rate_limit_tracker.is_temporarily_rate_limited(
+            target.account_name
+        ):
             return False
 
         logger.info(
@@ -1266,17 +1268,19 @@ class ProxyPreflightPlanner(_ProxyComponent):
         route_decision: RouteDecision,
         payload: dict[str, Any],
     ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
-        candidate_targets = self._proxy.build_candidate_targets(route_decision)
+        candidate_targets = self._proxy.backend_target_planner.build_candidate_targets(
+            route_decision
+        )
         parameter_rejections: dict[str, list[str]] = {}
         requested_parameters: list[str] = []
-        if self._proxy.requires_parameter_compatibility(
+        if TargetSelectionPolicy.requires_parameter_compatibility(
             route_decision.provider_preferences
         ):
             (
                 candidate_targets,
                 parameter_rejections,
                 requested_parameters,
-            ) = self._proxy.filter_targets_by_parameter_support(
+            ) = self._proxy.target_selection_policy.filter_targets_by_parameter_support(
                 candidate_targets=candidate_targets,
                 payload=payload,
             )
@@ -1289,7 +1293,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
         route_decision: RouteDecision,
         request_id: str,
     ) -> list[BackendTarget]:
-        allow_fallbacks = self._proxy.allows_fallbacks(
+        allow_fallbacks = TargetSelectionPolicy.allows_fallbacks(
             route_decision.provider_preferences
         )
         if allow_fallbacks or len(candidate_targets) <= 1:
@@ -1386,7 +1390,7 @@ class ProxyPreflightPlanner(_ProxyComponent):
         if candidate_targets:
             return None
 
-        if self._proxy.requires_parameter_compatibility(
+        if TargetSelectionPolicy.requires_parameter_compatibility(
             route_decision.provider_preferences
         ):
             return self._require_parameters_unsatisfied_response(
@@ -1395,7 +1399,9 @@ class ProxyPreflightPlanner(_ProxyComponent):
                 parameter_rejections=parameter_rejections,
             )
 
-        if self._proxy.has_provider_filters(route_decision.provider_preferences):
+        if TargetSelectionPolicy.has_provider_filters(
+            route_decision.provider_preferences
+        ):
             return self._provider_filters_unsatisfied_response(
                 route_decision=route_decision,
                 request_id=request_id,
@@ -1447,10 +1453,10 @@ class ProxyPreflightPlanner(_ProxyComponent):
         route_decision: RouteDecision,
         request_id: str,
     ) -> JSONResponse:
-        only = self._proxy.normalized_provider_filter_values(
+        only = TargetSelectionPolicy.normalized_provider_filter_values(
             route_decision.provider_preferences.get("only")
         )
-        ignore = self._proxy.normalized_provider_filter_values(
+        ignore = TargetSelectionPolicy.normalized_provider_filter_values(
             route_decision.provider_preferences.get("ignore")
         )
         logger.warning(
@@ -1746,7 +1752,9 @@ class ProxyRequestExecutor(_ProxyComponent):
             provider=target.provider,
             stream=context.stream,
         )
-        bearer_token = await self._proxy.resolve_bearer_token(target.account)
+        bearer_token = await self._proxy.oauth_state_manager.resolve_bearer_token(
+            target.account
+        )
         skip_for_oauth, oauth_response = (
             self._attempt_processor.handle_missing_oauth_token(
                 target=target,
@@ -1765,7 +1773,9 @@ class ProxyRequestExecutor(_ProxyComponent):
             incoming_headers=context.incoming_headers,
             bearer_token=bearer_token,
             provider=target.provider,
-            oauth_account_id=self._proxy.resolve_oauth_account_id(target.account),
+            oauth_account_id=self._proxy.oauth_state_manager.resolve_oauth_account_id(
+                target.account
+            ),
             organization=target.organization,
             project=target.project,
             stream=request_spec.stream,
@@ -2175,7 +2185,7 @@ class BackendTargetPlanner(_ProxyComponent):
     ) -> list[BackendTarget]:
         model_chain = self._candidate_model_chain(route_decision)
         provider_preferences = route_decision.provider_preferences or {}
-        partition = self._proxy.provider_partition_mode(provider_preferences)
+        partition = TargetSelectionPolicy.provider_partition_mode(provider_preferences)
         grouped_targets = [
             self._build_model_targets(
                 model=model,
@@ -2184,11 +2194,14 @@ class BackendTargetPlanner(_ProxyComponent):
             for model in model_chain
         ]
 
-        if route_decision.source != "request" and self._proxy.allows_fallbacks(
-            provider_preferences
+        if (
+            route_decision.source != "request"
+            and TargetSelectionPolicy.allows_fallbacks(provider_preferences)
         ):
-            grouped_targets = self._proxy.prioritize_model_groups_by_rate_limit(
-                grouped_targets
+            grouped_targets = (
+                self._proxy.target_rate_limit_prioritizer.prioritize_model_groups(
+                    grouped_targets
+                )
             )
 
         return self._collect_targets_by_partition(
@@ -2214,7 +2227,9 @@ class BackendTargetPlanner(_ProxyComponent):
         model_targets: list[BackendTarget] = []
         for account in self._proxy.accounts:
             if account.enabled and account.supports_model(model):
-                metadata = self._proxy.resolve_model_metadata(account, model)
+                metadata = self._proxy.model_registry_resolver.resolve_model_metadata(
+                    account, model
+                )
                 model_targets.append(
                     BackendTarget(
                         account=account,
@@ -2222,7 +2237,7 @@ class BackendTargetPlanner(_ProxyComponent):
                         provider=account.provider,
                         base_url=account.base_url,
                         model=model,
-                        upstream_model=self._proxy.resolve_upstream_model(
+                        upstream_model=self._proxy.model_registry_resolver.resolve_upstream_model(
                             account,
                             model,
                             metadata=metadata,
@@ -2233,9 +2248,11 @@ class BackendTargetPlanner(_ProxyComponent):
                         metadata=metadata,
                     )
                 )
-        return self._proxy.filter_targets_by_provider_preferences(
-            model_targets=model_targets,
-            provider_preferences=provider_preferences,
+        return (
+            self._proxy.target_selection_policy.filter_targets_by_provider_preferences(
+                model_targets=model_targets,
+                provider_preferences=provider_preferences,
+            )
         )
 
     def _collect_targets_by_partition(
@@ -2249,19 +2266,25 @@ class BackendTargetPlanner(_ProxyComponent):
             flattened_targets = [
                 target for group in grouped_targets for target in group
             ]
-            sorted_targets = self._proxy.sort_model_targets(
+            sorted_targets = self._proxy.target_selection_policy.sort_model_targets(
                 model_targets=flattened_targets,
                 provider_preferences=provider_preferences,
             )
-            return self._proxy.prioritize_targets_by_rate_limit(sorted_targets)
+            return self._proxy.target_rate_limit_prioritizer.prioritize_targets(
+                sorted_targets
+            )
 
         targets: list[BackendTarget] = []
         for model_targets in grouped_targets:
-            sorted_targets = self._proxy.sort_model_targets(
+            sorted_targets = self._proxy.target_selection_policy.sort_model_targets(
                 model_targets=model_targets,
                 provider_preferences=provider_preferences,
             )
-            targets.extend(self._proxy.prioritize_targets_by_rate_limit(sorted_targets))
+            targets.extend(
+                self._proxy.target_rate_limit_prioritizer.prioritize_targets(
+                    sorted_targets
+                )
+            )
         return targets
 
 
@@ -2413,9 +2436,13 @@ class OAuthStateManager:
             )
             self._oauth_runtime[account.name] = state
 
-        if state.access_token and not _is_token_expiring(state.expires_at):
+        if state.access_token and not TokenMetadataParser.is_token_expiring(
+            state.expires_at
+        ):
             if not state.account_id:
-                state.account_id = _extract_chatgpt_account_id(state.access_token)
+                state.account_id = TokenMetadataParser.extract_chatgpt_account_id(
+                    state.access_token
+                )
             return state.access_token
 
         if state.refresh_token:
@@ -2440,7 +2467,7 @@ class OAuthStateManager:
             if (
                 current
                 and current.access_token
-                and not _is_token_expiring(current.expires_at)
+                and not TokenMetadataParser.is_token_expiring(current.expires_at)
             ):
                 return current
 
@@ -2509,7 +2536,7 @@ class OAuthStateManager:
             next_refresh = (
                 str(raw_refresh).strip() if raw_refresh is not None else refresh_token
             ) or None
-            expires_at = _extract_expires_at(body)
+            expires_at = TokenMetadataParser.extract_expires_at(body)
             if expires_at is None and current:
                 expires_at = current.expires_at
 
@@ -2517,7 +2544,7 @@ class OAuthStateManager:
                 access_token=access_token,
                 refresh_token=next_refresh,
                 expires_at=expires_at,
-                account_id=_extract_chatgpt_account_id(access_token),
+                account_id=TokenMetadataParser.extract_chatgpt_account_id(access_token),
             )
             self._oauth_runtime[account.name] = state
             await self.persist_oauth_state(account, state)
@@ -2681,7 +2708,9 @@ class OAuthStateManager:
             return configured
 
         if runtime_state and runtime_state.access_token:
-            account_id = _extract_chatgpt_account_id(runtime_state.access_token)
+            account_id = TokenMetadataParser.extract_chatgpt_account_id(
+                runtime_state.access_token
+            )
             runtime_state.account_id = account_id
             return account_id
         return None
@@ -3233,14 +3262,18 @@ class BackendProxy:
             oauth_state_persistence_path=self._oauth_state_persistence_path,
             client_getter=lambda: self.client,
         )
+        self.oauth_state_manager = self._oauth_state_manager
         self._model_registry = model_registry or {}
         self._model_registry_resolver = ModelRegistryResolver(
             model_registry=self._model_registry
         )
+        self.model_registry_resolver = self._model_registry_resolver
         self._target_selection_policy = TargetSelectionPolicy(
             target_metadata_resolver=self._model_registry_resolver.resolve_target_metadata
         )
+        self.target_selection_policy = self._target_selection_policy
         self._backend_target_planner = BackendTargetPlanner(proxy=self)
+        self.backend_target_planner = self._backend_target_planner
         self._request_executor = ProxyRequestExecutor(proxy=self)
         self._audit_hook = audit_hook
         self._circuit_breakers = circuit_breakers
@@ -3249,9 +3282,11 @@ class BackendProxy:
             rate_limited_until=self._rate_limited_until,
             audit_emitter=lambda event, fields: self._audit(event, **fields),
         )
+        self.rate_limit_tracker = self._rate_limit_tracker
         self._target_rate_limit_prioritizer = TargetRateLimitPrioritizer(
             is_temporarily_rate_limited=self._rate_limit_tracker.is_temporarily_rate_limited
         )
+        self.target_rate_limit_prioritizer = self._target_rate_limit_prioritizer
         self.accounts = self._initialize_accounts(
             accounts=accounts,
             base_url=base_url,
@@ -3455,63 +3490,6 @@ class BackendProxy:
             )
         return summary
 
-    @staticmethod
-    async def _to_chat_completions_response(
-        upstream: httpx.Response,
-        stream: bool,
-        response_headers: dict[str, str],
-        model: str,
-        request_id: str,
-        audit_hook: Callable[[dict[str, Any]], None] | None,
-        routing_diagnostics: dict[str, Any],
-    ) -> Response:
-        return await ChatCompletionsResponseAdapter.to_chat_completions_response(
-            upstream=upstream,
-            stream=stream,
-            response_headers=response_headers,
-            model=model,
-            request_id=request_id,
-            audit_hook=audit_hook,
-            routing_diagnostics=routing_diagnostics,
-        )
-
-    def _build_candidate_targets(
-        self, route_decision: RouteDecision
-    ) -> list[BackendTarget]:
-        return self._backend_target_planner.build_candidate_targets(route_decision)
-
-    @staticmethod
-    def allows_fallbacks(provider_preferences: dict[str, Any]) -> bool:
-        return TargetSelectionPolicy.allows_fallbacks(provider_preferences)
-
-    def _filter_targets_by_parameter_support(
-        self,
-        *,
-        candidate_targets: list[BackendTarget],
-        payload: dict[str, Any],
-    ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
-        return self._target_selection_policy.filter_targets_by_parameter_support(
-            candidate_targets=candidate_targets,
-            payload=payload,
-        )
-
-    def filter_targets_by_parameter_support(
-        self,
-        *,
-        candidate_targets: list[BackendTarget],
-        payload: dict[str, Any],
-    ) -> tuple[list[BackendTarget], dict[str, list[str]], list[str]]:
-        return self._filter_targets_by_parameter_support(
-            candidate_targets=candidate_targets,
-            payload=payload,
-        )
-
-    async def _resolve_bearer_token(self, account: BackendAccount) -> str | None:
-        return await self._oauth_state_manager.resolve_bearer_token(account)
-
-    def _resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
-        return self._oauth_state_manager.resolve_oauth_account_id(account)
-
     @property
     def circuit_breakers(self) -> CircuitBreakerRegistry | None:
         return self._circuit_breakers
@@ -3522,102 +3500,6 @@ class BackendProxy:
 
     def audit(self, event: str, **fields: Any) -> None:
         self._audit(event, **fields)
-
-    def build_candidate_targets(
-        self, route_decision: RouteDecision
-    ) -> list[BackendTarget]:
-        return self._build_candidate_targets(route_decision)
-
-    @staticmethod
-    def provider_partition_mode(provider_preferences: dict[str, Any]) -> str:
-        return TargetSelectionPolicy.provider_partition_mode(provider_preferences)
-
-    @staticmethod
-    def requires_parameter_compatibility(
-        provider_preferences: dict[str, Any],
-    ) -> bool:
-        return TargetSelectionPolicy.requires_parameter_compatibility(
-            provider_preferences
-        )
-
-    @staticmethod
-    def normalized_provider_filter_values(raw: Any) -> list[str]:
-        return TargetSelectionPolicy.normalized_provider_filter_values(raw)
-
-    @staticmethod
-    def has_provider_filters(provider_preferences: dict[str, Any]) -> bool:
-        return TargetSelectionPolicy.has_provider_filters(provider_preferences)
-
-    def resolve_model_metadata(
-        self, account: BackendAccount, model: str
-    ) -> dict[str, Any]:
-        return self._model_registry_resolver.resolve_model_metadata(account, model)
-
-    def resolve_upstream_model(
-        self,
-        account: BackendAccount,
-        model: str,
-        *,
-        metadata: dict[str, Any] | None = None,
-    ) -> str:
-        return self._model_registry_resolver.resolve_upstream_model(
-            account,
-            model,
-            metadata=metadata,
-        )
-
-    def filter_targets_by_provider_preferences(
-        self,
-        *,
-        model_targets: list[BackendTarget],
-        provider_preferences: dict[str, Any],
-    ) -> list[BackendTarget]:
-        return self._target_selection_policy.filter_targets_by_provider_preferences(
-            model_targets=model_targets,
-            provider_preferences=provider_preferences,
-        )
-
-    def sort_model_targets(
-        self,
-        *,
-        model_targets: list[BackendTarget],
-        provider_preferences: dict[str, Any],
-    ) -> list[BackendTarget]:
-        return self._target_selection_policy.sort_model_targets(
-            model_targets=model_targets,
-            provider_preferences=provider_preferences,
-        )
-
-    def prioritize_model_groups_by_rate_limit(
-        self, grouped_targets: list[list[BackendTarget]]
-    ) -> list[list[BackendTarget]]:
-        return self._target_rate_limit_prioritizer.prioritize_model_groups(
-            grouped_targets
-        )
-
-    def prioritize_targets_by_rate_limit(
-        self, model_targets: list[BackendTarget]
-    ) -> list[BackendTarget]:
-        return self._target_rate_limit_prioritizer.prioritize_targets(model_targets)
-
-    def _group_has_available_targets(self, model_targets: list[BackendTarget]) -> bool:
-        return self._target_rate_limit_prioritizer.group_has_available_targets(
-            model_targets
-        )
-
-    def _partition_targets_by_rate_limit(
-        self, model_targets: list[BackendTarget]
-    ) -> tuple[list[BackendTarget], list[BackendTarget]]:
-        return self._target_rate_limit_prioritizer.partition_targets(model_targets)
-
-    def is_temporarily_rate_limited(self, account_name: str) -> bool:
-        return self._rate_limit_tracker.is_temporarily_rate_limited(account_name)
-
-    async def resolve_bearer_token(self, account: BackendAccount) -> str | None:
-        return await self._resolve_bearer_token(account)
-
-    def resolve_oauth_account_id(self, account: BackendAccount) -> str | None:
-        return self._resolve_oauth_account_id(account)
 
     def mark_rate_limited(
         self,
@@ -3645,21 +3527,6 @@ def _can_enable_http2() -> bool:
     except Exception:
         return False
     return True
-
-
-def _is_token_expiring(expires_at: int | None, skew_seconds: int = 60) -> bool:
-    return TokenMetadataParser.is_token_expiring(
-        expires_at=expires_at,
-        skew_seconds=skew_seconds,
-    )
-
-
-def _extract_expires_at(token_response: dict[str, Any]) -> int | None:
-    return TokenMetadataParser.extract_expires_at(token_response)
-
-
-def _extract_chatgpt_account_id(token: str | None) -> str | None:
-    return TokenMetadataParser.extract_chatgpt_account_id(token)
 
 
 def _parse_retry_after_seconds(
