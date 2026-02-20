@@ -371,7 +371,7 @@ def _normalize_provider_alias(provider: str) -> str:
 
 
 def _run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
-    from open_llm_router import config_cli
+    from open_llm_router.cli import config_cli
 
     return config_cli._run_chatgpt_oauth_login_flow(args)
 

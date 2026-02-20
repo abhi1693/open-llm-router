@@ -8,9 +8,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from open_llm_router.live_metrics_dispatcher import LiveMetricsEventDispatcher
-from open_llm_router.proxy_metrics import ProxyMetricsAccumulator
-from open_llm_router.route_decision_tracker import (
+from open_llm_router.runtime.live_metrics_dispatcher import LiveMetricsEventDispatcher
+from open_llm_router.runtime.proxy_metrics import ProxyMetricsAccumulator
+from open_llm_router.runtime.route_decision_tracker import (
     ClassifierCalibrationSnapshot,
     RouteDecisionTracker,
 )
