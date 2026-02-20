@@ -32,7 +32,6 @@ from open_llm_router.numeric_utils import (
     coerce_optional_float,
     coerce_optional_int,
 )
-from open_llm_router.persistence import YamlFileStore
 from open_llm_router.profile_compiler import (
     compile_profile_document,
     compile_profile_file,
@@ -43,7 +42,7 @@ from open_llm_router.profile_compiler import (
 from open_llm_router.profile_config import RouterProfileConfig
 from open_llm_router.scoring import build_routing_features, score_model
 from open_llm_router.sequence_utils import dedupe_preserving_order as _dedupe
-from open_llm_router.yaml_utils import load_yaml_dict
+from open_llm_router.yaml_utils import load_yaml_dict, write_yaml_dict
 
 LOGIN_CHATGPT_DEFAULT_PROVIDER = "openai-codex"
 LOGIN_CHATGPT_DEFAULT_MODELS = "gpt-5.2,gpt-5.2-codex"
@@ -81,14 +80,6 @@ APIKEY_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 
-def _read_yaml(path: Path) -> dict[str, Any]:
-    return load_yaml_dict(path, error_message=f"Expected YAML object in '{path}'.")
-
-
-def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
-    YamlFileStore(path).write(payload, sort_keys=False)
-
-
 def _add_profile_path_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--path", default=DEFAULT_PROFILE_CONFIG_PATH)
 
@@ -111,7 +102,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             f"Refusing to overwrite existing file: {output_path}. Use --force to overwrite."
         )
 
-    _write_yaml(output_path, template)
+    write_yaml_dict(output_path, template)
     print(f"Wrote profile config: {output_path}")
     return 0
 
@@ -124,7 +115,7 @@ def cmd_compile_config(args: argparse.Namespace) -> int:
         print_yaml(result.effective_config)
     else:
         output_path = Path(args.output)
-        _write_yaml(output_path, result.effective_config)
+        write_yaml_dict(output_path, result.effective_config)
         print(f"Wrote effective config: {output_path}")
 
     if args.explain:
@@ -135,7 +126,10 @@ def cmd_compile_config(args: argparse.Namespace) -> int:
 
 def cmd_validate_config(args: argparse.Namespace) -> int:
     config_path = Path(args.path)
-    raw = _read_yaml(config_path)
+    raw = load_yaml_dict(
+        config_path,
+        error_message=f"Expected YAML object in '{config_path}'.",
+    )
 
     if is_profile_document(raw):
         compile_profile_file(config_path)
@@ -166,7 +160,10 @@ def cmd_profile_show(args: argparse.Namespace) -> int:
 
 def cmd_explain_route(args: argparse.Namespace) -> int:
     config_path = Path(args.path)
-    raw = _read_yaml(config_path)
+    raw = load_yaml_dict(
+        config_path,
+        error_message=f"Expected YAML object in '{config_path}'.",
+    )
 
     explain_meta: dict[str, Any] | None = None
     if is_profile_document(raw):
@@ -256,7 +253,10 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
     overrides_found = overrides_path.exists()
     calibration_runtime: dict[str, Any] = {}
     if overrides_found:
-        raw_overrides = _read_yaml(overrides_path)
+        raw_overrides = load_yaml_dict(
+            overrides_path,
+            error_message=f"Expected YAML object in '{overrides_path}'.",
+        )
         runtime_section = raw_overrides.get("classifier_calibration")
         if isinstance(runtime_section, dict):
             calibration_runtime = runtime_section
@@ -381,7 +381,7 @@ def _load_or_init_profile_payload(path: Path) -> dict[str, Any]:
         profile = RouterProfileConfig()
         return profile.model_dump(mode="python")
 
-    raw = _read_yaml(path)
+    raw = load_yaml_dict(path, error_message=f"Expected YAML object in '{path}'.")
     if raw and not is_profile_document(raw):
         raise ValueError(
             f"Expected profile document at '{path}', but found raw routing schema."
@@ -428,7 +428,7 @@ def _save_profile_payload(
     emit_or_persist_yaml(
         payload=payload,
         dry_run=dry_run,
-        persist=lambda resolved_payload: _write_yaml(path, resolved_payload),
+        persist=lambda resolved_payload: write_yaml_dict(path, resolved_payload),
     )
 
 

@@ -5,6 +5,8 @@ from typing import Any
 
 import yaml
 
+from open_llm_router.persistence import YamlFileStore
+
 
 def load_yaml_dict(
     path: str | Path,
@@ -19,3 +21,12 @@ def load_yaml_dict(
     if error_message is not None:
         raise ValueError(error_message)
     raise ValueError(f"Expected YAML object in '{resolved}'.")
+
+
+def write_yaml_dict(
+    path: str | Path,
+    payload: dict[str, Any],
+    *,
+    sort_keys: bool = False,
+) -> None:
+    YamlFileStore(Path(path)).write(payload, sort_keys=sort_keys)

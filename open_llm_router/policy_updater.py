@@ -14,8 +14,8 @@ from open_llm_router.live_metrics import (
     is_target_metrics_key,
     snapshot_to_dict,
 )
-from open_llm_router.persistence import YamlFileStore
 from open_llm_router.route_decision_tracker import ClassifierCalibrationSnapshot
+from open_llm_router.yaml_utils import load_yaml_dict, write_yaml_dict
 
 
 @dataclass(slots=True)
@@ -502,20 +502,16 @@ class RuntimeOverridesManager:
             return 0
 
         try:
-            raw = YamlFileStore(file_path).load(default={})
+            raw = load_yaml_dict(
+                file_path,
+                error_message=f"Expected YAML object in '{file_path}'.",
+            )
         except Exception as exc:
             if self._logger is not None:
                 self._logger.warning(
                     "runtime_overrides_load_failed path=%s error=%s",
                     file_path,
                     str(exc),
-                )
-            return 0
-        if not isinstance(raw, dict):
-            if self._logger is not None:
-                self._logger.warning(
-                    "runtime_overrides_load_failed path=%s error=invalid_root",
-                    file_path,
                 )
             return 0
         return self.apply_from_raw(raw=raw, source_path=file_path)
@@ -588,7 +584,7 @@ class RuntimeOverridesManager:
             }
         }
 
-        YamlFileStore(path).write(payload, sort_keys=False)
+        write_yaml_dict(path, payload)
 
     def apply_classifier_calibration_overrides(self, *, raw: dict[str, Any]) -> None:
         calibration_raw = raw.get("classifier_calibration")
