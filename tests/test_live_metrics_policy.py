@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from open_llm_router.runtime.policy_updater import (
     apply_runtime_overrides,
 )
 from tests.yaml_test_utils import save_yaml_file
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_live_metrics_collector_records_events() -> None:

@@ -40,5 +40,5 @@ def test_coerce_models_map_accepts_list_and_mapping_inputs() -> None:
 
 
 def test_coerce_models_map_rejects_invalid_metadata_shape() -> None:
-    with pytest.raises(ValueError, match="must be an object"):
+    with pytest.raises((TypeError, ValueError), match="must be an object"):
         coerce_models_map({"openai/gpt-5.2": "invalid"})

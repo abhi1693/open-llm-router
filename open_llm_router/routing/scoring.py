@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import exp
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from open_llm_router.config import LearnedRoutingConfig, ModelProfile
+if TYPE_CHECKING:
+    from open_llm_router.config import LearnedRoutingConfig, ModelProfile
 
 COMPLEXITY_SCORES = {
     "low": 0.25,

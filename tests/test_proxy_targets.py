@@ -733,7 +733,8 @@ def test_proxy_request_error_audit_contains_attempt_and_status_fields() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         state["calls"] += 1
         if state["calls"] == 1:
-            raise httpx.ConnectTimeout("connect timeout", request=request)
+            msg = "connect timeout"
+            raise httpx.ConnectTimeout(msg, request=request)
         return httpx.Response(
             status_code=200,
             headers={"Content-Type": "application/json"},

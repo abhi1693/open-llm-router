@@ -3,9 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -50,6 +49,9 @@ from open_llm_router.runtime.policy_updater import (
     RuntimePolicyUpdater,
     apply_runtime_overrides,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
 
 @asynccontextmanager
@@ -174,7 +176,6 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
         return sorted(supported)
 
     def _architecture(
-        model_id: str,
         metadata: dict[str, Any],
         supported_parameters: list[str],
     ) -> dict[str, Any]:
@@ -309,7 +310,7 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
             "created": created,
             "description": str(metadata.get("description") or ""),
             "context_length": context_length,
-            "architecture": _architecture(model_id, metadata, supported_parameters),
+            "architecture": _architecture(metadata, supported_parameters),
             "pricing": _pricing(metadata),
             "top_provider": _top_provider(context_length, metadata),
             "per_request_limits": metadata.get("per_request_limits"),
@@ -330,10 +331,10 @@ def _build_models_response(config: RoutingConfig) -> dict[str, Any]:
             ),
             "expiration_date": metadata.get("expiration_date"),
         }
-        return cast(dict[str, Any], _prune_empty_fields(entry))
+        return cast("dict[str, Any]", _prune_empty_fields(entry))
 
     auto_entry = cast(
-        dict[str, Any],
+        "dict[str, Any]",
         _prune_empty_fields(
             {
                 "id": "auto",
@@ -445,7 +446,7 @@ def _sanitize_audit_event(event: dict[str, Any]) -> dict[str, Any]:
 
     sanitized_event = _sanitize_value(event)
     if isinstance(sanitized_event, dict):
-        return cast(dict[str, Any], sanitized_event)
+        return cast("dict[str, Any]", sanitized_event)
     return dict(event)
 
 
@@ -1529,7 +1530,7 @@ def run() -> None:
 
     uvicorn.run(
         "open_llm_router.server.main:app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # noqa: S104
         port=8000,
         reload=False,
     )

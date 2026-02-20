@@ -18,9 +18,9 @@ def test_bounded_counter_map_evicts_oldest_key() -> None:
 
 def test_bounded_value_map_evicts_oldest_key() -> None:
     values = BoundedValueMap[str, bool](max_keys=2)
-    values.set("a", True)
-    values.set("b", False)
-    values.set("c", True)
+    values.set("a", value=True)
+    values.set("b", value=False)
+    values.set("c", value=True)
 
     assert values.to_dict() == {"b": False, "c": True}
 

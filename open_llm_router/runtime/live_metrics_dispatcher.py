@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from open_llm_router.runtime.proxy_metrics import ProxyMetricsAccumulator
-from open_llm_router.runtime.route_decision_tracker import RouteDecisionTracker
-
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from open_llm_router.runtime.live_metrics import LiveMetricsStore
+    from open_llm_router.runtime.proxy_metrics import ProxyMetricsAccumulator
+    from open_llm_router.runtime.route_decision_tracker import RouteDecisionTracker
 
 
 @dataclass(slots=True)

@@ -539,6 +539,7 @@ def _semantic_task_prediction_prototype(
 @lru_cache(maxsize=4)
 def _load_local_embedding_runtime(
     model_name: str,
+    *,
     local_files_only: bool,
 ) -> tuple[Any, Any, Any] | None:
     try:

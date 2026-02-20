@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jwt
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from jwt import InvalidTokenError, PyJWKClient
-from jwt.types import Options
 
-from open_llm_router.config.settings import Settings
+if TYPE_CHECKING:
+    from jwt.types import Options
+
+    from open_llm_router.config.settings import Settings
 
 
 class AuthConfigurationError(RuntimeError):
@@ -42,10 +44,13 @@ class OAuthVerifier:
         elif settings.oauth_issuer:
             jwks_url = settings.oauth_issuer.rstrip("/") + "/.well-known/jwks.json"
         else:
-            raise AuthConfigurationError(
+            msg = (
                 "OAuth is enabled but no JWT verification source is configured. "
                 "Set OAUTH_JWKS_URL, or set both OAUTH_ISSUER and OAUTH_JWKS_URL, "
-                "or use OAUTH_JWT_SECRET for shared-secret tokens.",
+                "or use OAUTH_JWT_SECRET for shared-secret tokens."
+            )
+            raise AuthConfigurationError(
+                msg,
             )
 
         self.jwks_client = PyJWKClient(jwks_url)
@@ -55,7 +60,8 @@ class OAuthVerifier:
             signing_key = self.jwt_secret
         else:
             if not self.jwks_client:
-                raise AuthConfigurationError("OAuth verifier is missing a JWKS client.")
+                msg = "OAuth verifier is missing a JWKS client."
+                raise AuthConfigurationError(msg)
             signing_key = self.jwks_client.get_signing_key_from_jwt(token).key
 
         options: Options = {"verify_aud": self.audience is not None}
@@ -72,7 +78,8 @@ class OAuthVerifier:
         scopes = _extract_scopes(claims)
         if self.required_scopes and not self.required_scopes.issubset(scopes):
             missing = sorted(self.required_scopes - scopes)
-            raise InvalidTokenError(f"Missing required scopes: {', '.join(missing)}")
+            msg = f"Missing required scopes: {', '.join(missing)}"
+            raise InvalidTokenError(msg)
 
         principal = str(
             claims.get("sub")
@@ -98,8 +105,9 @@ class Authenticator:
             self.oauth_verifier = OAuthVerifier(settings)
 
         if self.required and not self.api_keys and not self.oauth_verifier:
+            msg = "Ingress auth is required, but no API keys or OAuth verifier are configured."
             raise AuthConfigurationError(
-                "Ingress auth is required, but no API keys or OAuth verifier are configured.",
+                msg,
             )
 
     async def authenticate_request(self, request: Request) -> JSONResponse | None:
@@ -126,11 +134,12 @@ class Authenticator:
             try:
                 result = self.oauth_verifier.verify(bearer_token)
                 request.state.auth = result
-                return None
             except InvalidTokenError:
                 return _unauthorized("Invalid OAuth token.")
             except Exception:
                 return _unauthorized("Invalid OAuth token.")
+            else:
+                return None
 
         return _unauthorized("Invalid API key or OAuth token.")
 

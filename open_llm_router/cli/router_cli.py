@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from open_llm_router.catalogs.core import (
     load_internal_catalog,
@@ -43,6 +42,9 @@ from open_llm_router.utils.numeric_utils import (
 )
 from open_llm_router.utils.sequence_utils import dedupe_preserving_order as _dedupe
 from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 LOGIN_CHATGPT_DEFAULT_PROVIDER = "openai-codex"
 LOGIN_CHATGPT_DEFAULT_MODELS = "gpt-5.2,gpt-5.2-codex"
@@ -98,12 +100,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     output_path = Path(args.path)
     if output_path.exists() and not args.force:
+        msg = f"Refusing to overwrite existing file: {output_path}. Use --force to overwrite."
         raise ValueError(
-            f"Refusing to overwrite existing file: {output_path}. Use --force to overwrite.",
+            msg,
         )
 
     write_yaml_dict(output_path, template)
-    print(f"Wrote profile config: {output_path}")
     return 0
 
 
@@ -116,7 +118,6 @@ def cmd_compile_config(args: argparse.Namespace) -> int:
     else:
         output_path = Path(args.output)
         write_yaml_dict(output_path, result.effective_config)
-        print(f"Wrote effective config: {output_path}")
 
     if args.explain:
         print_yaml(result.explain)
@@ -133,21 +134,21 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 
     if is_profile_document(raw):
         compile_profile_file(config_path)
-        print(f"Profile config is valid: {config_path}")
         return 0
 
     catalog = load_internal_catalog()
     validate_routing_document_against_catalog(raw, catalog=catalog)
     RoutingConfig.model_validate(raw)
-    print(f"Routing config is valid: {config_path}")
     return 0
 
 
 def cmd_profile_list(_: argparse.Namespace) -> int:
     rows = BuiltinProfileCatalog.list_profiles()
     for name, description in rows:
-        suffix = f" - {description}" if description else ""
-        print(f"{name}{suffix}")
+        if description:
+            print_yaml({"name": name, "description": description})
+        else:
+            print_yaml({"name": name, "description": ""})
     return 0
 
 
@@ -187,7 +188,8 @@ def cmd_explain_route(args: argparse.Namespace) -> int:
     }
 
     if not default_chain:
-        raise ValueError("No route candidates available for requested task/complexity.")
+        msg = "No route candidates available for requested task/complexity."
+        raise ValueError(msg)
 
     if config.learned_routing.enabled:
         signals = _synthetic_signals(task=task, input_chars=args.input_chars)
@@ -292,14 +294,9 @@ def cmd_calibration_report(args: argparse.Namespace) -> int:
     history = calibration_runtime.get("history")
     normalized_history: list[dict[str, Any]] = []
     if isinstance(history, list):
-        for entry in history:
-            if isinstance(entry, dict):
-                normalized_history.append(entry)
+        normalized_history.extend(entry for entry in history if isinstance(entry, dict))
     history_limit = max(0, int(args.history_limit))
-    if history_limit > 0:
-        normalized_history = normalized_history[-history_limit:]
-    else:
-        normalized_history = []
+    normalized_history = normalized_history[-history_limit:] if history_limit > 0 else []
 
     payload = {
         "config_path": str(args.path),
@@ -377,8 +374,9 @@ def _load_or_init_profile_payload(path: Path) -> dict[str, Any]:
 
     raw = load_yaml_dict(path, error_message=f"Expected YAML object in '{path}'.")
     if raw and not is_profile_document(raw):
+        msg = f"Expected profile document at '{path}', but found raw routing schema."
         raise ValueError(
-            f"Expected profile document at '{path}', but found raw routing schema.",
+            msg,
         )
     profile = RouterProfileConfig.model_validate(raw)
     return profile.model_dump(mode="python")
@@ -390,11 +388,13 @@ def _upsert_profile_account(
 ) -> None:
     accounts = profile_payload.setdefault("accounts", [])
     if not isinstance(accounts, list):
-        raise ValueError("Invalid profile format: 'accounts' must be a list.")
+        msg = "Invalid profile format: 'accounts' must be a list."
+        raise TypeError(msg)
 
     target_name = str(account_payload.get("name") or "").strip()
     if not target_name:
-        raise ValueError("Account payload missing required 'name'.")
+        msg = "Account payload missing required 'name'."
+        raise ValueError(msg)
 
     clean_payload = without_none_fields(account_payload)
 
@@ -451,18 +451,21 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
     kind = args.kind
 
     if provider == "openai" and kind is None:
-        raise ValueError("For provider 'openai', use --kind chatgpt or --kind apikey.")
+        msg = "For provider 'openai', use --kind chatgpt or --kind apikey."
+        raise ValueError(msg)
 
     if provider in {"gemini", "nvidia", "github"}:
         kind = kind or "apikey"
         if kind != "apikey":
+            msg = f"Provider '{provider}' currently supports only --kind apikey."
             raise ValueError(
-                f"Provider '{provider}' currently supports only --kind apikey.",
+                msg,
             )
 
     if kind == "chatgpt":
         if provider != "openai":
-            raise ValueError("--kind chatgpt is only valid for provider 'openai'.")
+            msg = "--kind chatgpt is only valid for provider 'openai'."
+            raise ValueError(msg)
         models = qualify_models(
             LOGIN_CHATGPT_DEFAULT_PROVIDER,
             parse_comma_separated_values(args.models or LOGIN_CHATGPT_DEFAULT_MODELS),
@@ -496,18 +499,21 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
         if args.set_default and models:
             profile_payload.setdefault("raw_overrides", {})["default_model"] = models[0]
         _save_profile_payload(profile_path, profile_payload, dry_run=args.dry_run)
-        print(f"Provider login saved: {args.name} ({provider}/{kind})")
         return 0
 
     if kind == "apikey":
         if args.api_key and args.api_key_env:
-            raise ValueError("Use only one of --apikey or --api-key-env.")
+            msg = "Use only one of --apikey or --api-key-env."
+            raise ValueError(msg)
 
         provider_defaults = APIKEY_PROVIDER_DEFAULTS.get(provider)
         if provider_defaults is None:
-            raise ValueError(
+            msg = (
                 "Unsupported provider "
-                f"'{provider}'. Supported: openai, gemini, nvidia, github.",
+                f"'{provider}'. Supported: openai, gemini, nvidia, github."
+            )
+            raise ValueError(
+                msg,
             )
         account = args.name
         models_csv = args.models or provider_defaults["models_csv"]
@@ -535,10 +541,10 @@ def cmd_provider_login(args: argparse.Namespace) -> int:
         if args.set_default and models:
             profile_payload.setdefault("raw_overrides", {})["default_model"] = models[0]
         _save_profile_payload(profile_path, profile_payload, dry_run=args.dry_run)
-        print(f"Provider login saved: {args.name} ({provider}/{kind})")
         return 0
 
-    raise ValueError(f"Unsupported --kind '{kind}'. Supported kinds: chatgpt, apikey.")
+    msg = f"Unsupported --kind '{kind}'. Supported kinds: chatgpt, apikey."
+    raise ValueError(msg)
 
 
 def cmd_catalog_sync(args: argparse.Namespace) -> int:
@@ -554,10 +560,10 @@ def cmd_catalog_sync(args: argparse.Namespace) -> int:
     )
 
     if args.dry_run:
-        print("Dry run: catalog not written.")
+        pass
     else:
         write_catalog_models_document(catalog_path, catalog_document)
-        print(f"Wrote catalog: {catalog_path}")
+    status_message = "Dry run: catalog not written." if args.dry_run else "Catalog written."
 
     print_yaml(
         {
@@ -569,6 +575,7 @@ def cmd_catalog_sync(args: argparse.Namespace) -> int:
             "source_url": args.source_url,
             "catalog_path": str(catalog_path),
             "dry_run": bool(args.dry_run),
+            "message": status_message,
         },
     )
     return 0
@@ -792,7 +799,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    handler = cast(Callable[[argparse.Namespace], int], args.handler)
+    handler = cast("Callable[[argparse.Namespace], int]", args.handler)
 
     try:
         return handler(args)

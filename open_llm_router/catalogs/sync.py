@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from open_llm_router.catalogs.paths import CatalogDataPaths
 from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_CATALOG_MODELS_PATH = CatalogDataPaths.models_yaml()
@@ -149,36 +151,37 @@ def fetch_openrouter_models(
         headers={"Accept": "application/json"},
     )
     if response.status_code >= 400:
+        msg = f"Failed to fetch OpenRouter models ({response.status_code}): {response.text}"
         raise RuntimeError(
-            f"Failed to fetch OpenRouter models ({response.status_code}): {response.text}",
+            msg,
         )
 
     body = response.json()
     if not isinstance(body, dict):
-        raise RuntimeError(
-            "Invalid OpenRouter models response: expected top-level object.",
+        msg = "Invalid OpenRouter models response: expected top-level object."
+        raise TypeError(
+            msg,
         )
 
     data = body.get("data")
     if not isinstance(data, list):
-        raise RuntimeError("Invalid OpenRouter models response: missing 'data' list.")
+        msg = "Invalid OpenRouter models response: missing 'data' list."
+        raise TypeError(msg)
 
-    normalized: list[dict[str, Any]] = []
-    for item in data:
-        if isinstance(item, dict):
-            normalized.append(item)
-    return normalized
+    return [item for item in data if isinstance(item, dict)]
 
 
 def load_catalog_models_document(path: Path) -> dict[str, Any]:
     if not path.exists():
-        raise FileNotFoundError(f"Catalog file not found: {path}")
+        msg = f"Catalog file not found: {path}"
+        raise FileNotFoundError(msg)
 
     raw = load_yaml_dict(path, error_message=f"Expected YAML object in '{path}'.")
 
     models = raw.get("models")
     if not isinstance(models, list):
-        raise ValueError(f"Expected 'models' list in '{path}'.")
+        msg = f"Expected 'models' list in '{path}'."
+        raise TypeError(msg)
 
     return raw
 
@@ -194,7 +197,8 @@ def sync_catalog_models_pricing(
 ) -> CatalogSyncStats:
     models = catalog_document.get("models")
     if not isinstance(models, list):
-        raise ValueError("Catalog document missing 'models' list.")
+        msg = "Catalog document missing 'models' list."
+        raise TypeError(msg)
 
     remote_lookup = RemoteModelLookup(openrouter_models)
 

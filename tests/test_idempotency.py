@@ -27,15 +27,7 @@ def test_settings_redis_url_is_loaded(monkeypatch: Any) -> None:
 def test_non_stream_requests_replay_with_same_idempotency_key(monkeypatch: Any) -> None:
     calls = {"count": 0}
 
-    async def fake_forward_with_fallback(
-        self: Any,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Any,
-        route_decision: Any,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Any:
+    async def fake_forward_with_fallback(*_args: Any, **_kwargs: Any) -> Any:
         calls["count"] += 1
         return JSONResponse(
             content={"ok": True, "call_count": calls["count"]},
@@ -73,15 +65,7 @@ def test_non_stream_requests_replay_with_same_idempotency_key(monkeypatch: Any) 
 def test_streaming_requests_are_not_cached_by_idempotency(monkeypatch: Any) -> None:
     calls = {"count": 0}
 
-    async def fake_forward_with_fallback(
-        self: Any,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Any,
-        route_decision: Any,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Any:
+    async def fake_forward_with_fallback(*_args: Any, **_kwargs: Any) -> Any:
         calls["count"] += 1
         return JSONResponse(content={"ok": True, "call_count": calls["count"]})
 
@@ -115,8 +99,10 @@ def test_build_idempotency_store_falls_back_to_in_memory_when_redis_factory_fail
 ):
     config = IdempotencyConfig()
 
-    def failing_factory(_url: Any) -> Any:
-        raise RuntimeError("redis unavailable")
+    def failing_factory(redis_url: str) -> Any:
+        _ = redis_url
+        msg = "redis unavailable"
+        raise RuntimeError(msg)
 
     store = build_idempotency_store(
         config=config,
@@ -138,7 +124,8 @@ def test_build_idempotency_store_uses_redis_factory_when_available() -> None:
 
     fake_store = _FakeKVStore()
 
-    def factory(_url: Any) -> Any:
+    def factory(redis_url: str) -> Any:
+        _ = redis_url
         return fake_store
 
     store = build_idempotency_store(
@@ -172,15 +159,7 @@ def test_build_idempotency_cache_key_is_hashed_and_stable() -> None:
 
 
 def test_proxy_terminal_event_emitted_for_success(monkeypatch: Any) -> None:
-    async def fake_forward_with_fallback(
-        self: Any,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Any,
-        route_decision: Any,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Any:
+    async def fake_forward_with_fallback(*_args: Any, **_kwargs: Any) -> Any:
         return JSONResponse(content={"ok": True}, status_code=200)
 
     monkeypatch.setattr(
@@ -217,15 +196,7 @@ def test_proxy_terminal_event_emitted_for_success(monkeypatch: Any) -> None:
 
 
 def test_proxy_terminal_event_emitted_for_exhausted(monkeypatch: Any) -> None:
-    async def fake_forward_with_fallback(
-        self: Any,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Any,
-        route_decision: Any,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Any:
+    async def fake_forward_with_fallback(*_args: Any, **_kwargs: Any) -> Any:
         return JSONResponse(
             status_code=502,
             content={
@@ -270,16 +241,9 @@ def test_proxy_terminal_event_emitted_for_exhausted(monkeypatch: Any) -> None:
 
 
 def test_proxy_terminal_event_emitted_for_unhandled_error(monkeypatch: Any) -> None:
-    async def fake_forward_with_fallback(
-        self: Any,
-        path: str,
-        payload: dict[str, Any],
-        incoming_headers: Any,
-        route_decision: Any,
-        stream: bool,
-        request_id: str | None = None,
-    ) -> Any:
-        raise RuntimeError("boom")
+    async def fake_forward_with_fallback(*_args: Any, **_kwargs: Any) -> Any:
+        msg = "boom"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(
         BackendProxy,

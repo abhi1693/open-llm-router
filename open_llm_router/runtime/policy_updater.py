@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.runtime.live_metrics import (
@@ -16,6 +15,9 @@ from open_llm_router.runtime.live_metrics import (
 )
 from open_llm_router.runtime.route_decision_tracker import ClassifierCalibrationSnapshot
 from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
+
+if TYPE_CHECKING:
+    import logging
 
 
 @dataclass(slots=True)

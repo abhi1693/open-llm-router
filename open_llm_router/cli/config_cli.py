@@ -5,12 +5,13 @@ import base64
 import contextlib
 import hashlib
 import secrets
+import sys
 import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -39,7 +40,7 @@ from open_llm_router.utils.yaml_utils import load_yaml_dict, write_yaml_dict
 
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
-CHATGPT_TOKEN_URL = "https://auth.openai.com/oauth/token"
+CHATGPT_OAUTH_EXCHANGE_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_REDIRECT_URI = "http://localhost:1455/auth/callback"
 CHATGPT_SCOPE = "openid profile email offline_access"
 CHATGPT_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth"
@@ -52,18 +53,21 @@ def _parse_bool(value: str) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
-    raise ValueError(f"Invalid boolean value: {value}")
+    msg = f"Invalid boolean value: {value}"
+    raise ValueError(msg)
 
 
 def _parse_key_value(entries: list[str]) -> dict[str, float]:
     parsed: dict[str, float] = {}
     for raw in entries:
         if "=" not in raw:
-            raise ValueError(f"Expected KEY=VALUE format, got: {raw}")
+            msg = f"Expected KEY=VALUE format, got: {raw}"
+            raise ValueError(msg)
         key, value = raw.split("=", 1)
         key = key.strip()
         if not key:
-            raise ValueError(f"Feature key is empty in: {raw}")
+            msg = f"Feature key is empty in: {raw}"
+            raise ValueError(msg)
         parsed[key] = float(value.strip())
     return parsed
 
@@ -76,7 +80,7 @@ def _normalize_optional(value: str | None) -> str | None:
 
 
 class AccountConfigMutator:
-    _NORMALIZED_OPTIONAL_FIELDS: dict[str, str] = {
+    _NORMALIZED_OPTIONAL_FIELDS: ClassVar[dict[str, str]] = {
         "api_key": "api_key",
         "api_key_env": "api_key_env",
         "oauth_access_token": "oauth_access_token",
@@ -180,15 +184,12 @@ def _parse_authorization_input(value: str) -> tuple[str | None, str | None]:
     if not raw:
         return None, None
 
-    try:
-        parsed = urlparse(raw)
-        if parsed.scheme and parsed.netloc:
-            params = parse_qs(parsed.query)
-            code = _first_query_param(params, "code")
-            state = _first_query_param(params, "state")
-            return code, state
-    except Exception:
-        pass
+    parsed = urlparse(raw)
+    if parsed.scheme and parsed.netloc:
+        params = parse_qs(parsed.query)
+        code = _first_query_param(params, "code")
+        state = _first_query_param(params, "state")
+        return code, state
 
     if "#" in raw:
         code, state = raw.split("#", 1)
@@ -212,7 +213,7 @@ def _first_query_param(params: dict[str, list[str]], key: str) -> str | None:
 
 
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002, ARG002
         return
 
     def do_GET(self) -> None:
@@ -243,7 +244,10 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(
-            b"<!doctype html><html><body><p>Authentication successful. Return to your terminal.</p></body></html>",
+            (
+                b"<!doctype html><html><body><p>Authentication successful. "
+                b"Return to your terminal.</p></body></html>"
+            ),
         )
 
 
@@ -313,39 +317,37 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
                 expected_state=state,
             )
 
-    print(f"\nOpen this URL in your browser and complete sign-in:\n{auth_url}\n")
     force_paste_mode = bool(getattr(args, "paste_url", False))
     browser_opened = False
     if force_paste_mode:
-        print("Paste mode enabled; skipping browser auto-open and callback wait.")
+        pass
     elif not args.no_browser:
         try:
             browser_opened = bool(webbrowser.open(auth_url))
-        except Exception:
+        except webbrowser.Error:
             browser_opened = False
     else:
-        print("Browser auto-open disabled; using manual paste flow.")
+        pass
 
     code: str | None = None
     if args.manual_code:
         code, input_state = _parse_authorization_input(args.manual_code)
         if input_state and input_state != state:
-            raise ValueError("State mismatch in provided manual code/URL.")
+            msg = "State mismatch in provided manual code/URL."
+            raise ValueError(msg)
     elif server is not None and browser_opened:
-        print(f"Waiting for OAuth callback on {args.redirect_uri} ...")
         code = _wait_for_callback_code(server, args.timeout_seconds)
         if not code:
-            print("Callback not received in time.")
+            pass
     elif server is not None:
-        print(
-            "Browser auto-open is unavailable. Complete login manually and paste the full redirect URL or code.",
-        )
+        pass
 
     if not code:
         manual = input("Paste authorization code (or full redirect URL): ").strip()
         code, input_state = _parse_authorization_input(manual)
         if input_state and input_state != state:
-            raise ValueError("State mismatch in pasted code/URL.")
+            msg = "State mismatch in pasted code/URL."
+            raise ValueError(msg)
 
     if server is not None:
         with contextlib.suppress(Exception):
@@ -354,7 +356,8 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
             server.server_close()
 
     if not code:
-        raise ValueError("Missing authorization code.")
+        msg = "Missing authorization code."
+        raise ValueError(msg)
 
     response = httpx.post(
         args.token_url,
@@ -369,8 +372,9 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
         timeout=30.0,
     )
     if response.status_code >= 400:
+        msg = f"OAuth token exchange failed ({response.status_code}): {response.text}"
         raise RuntimeError(
-            f"OAuth token exchange failed ({response.status_code}): {response.text}",
+            msg,
         )
 
     body = response.json()
@@ -383,8 +387,12 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
         or not refresh_token
         or not isinstance(expires_in, (int, float))
     ):
+        msg = (
+            "OAuth response missing required fields: "
+            "access_token/refresh_token/expires_in."
+        )
         raise RuntimeError(
-            "OAuth response missing required fields: access_token/refresh_token/expires_in.",
+            msg,
         )
 
     expires_at = int(time.time()) + int(expires_in)
@@ -403,10 +411,11 @@ def run_chatgpt_oauth_login_flow(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _load_config(path: Path) -> dict[str, Any]:
-    if path.exists():
-        data = load_yaml_dict(path, error_message=f"Expected root object in '{path}'.")
-    else:
-        data = {}
+    data = (
+        load_yaml_dict(path, error_message=f"Expected root object in '{path}'.")
+        if path.exists()
+        else {}
+    )
     _ensure_schema(data)
     return data
 
@@ -507,7 +516,8 @@ def cmd_add_account(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
 def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.provider != "openai-codex":
-        raise ValueError("login-chatgpt only supports --provider openai-codex.")
+        msg = "login-chatgpt only supports --provider openai-codex."
+        raise ValueError(msg)
 
     account = AccountEntryManager.find_or_create(data=data, name=args.account)
     AccountEntryManager.configure_core(
@@ -545,7 +555,10 @@ def cmd_login_chatgpt(args: argparse.Namespace, data: dict[str, Any]) -> str:
 
     account_id = account.get("oauth_account_id")
     if account_id:
-        return f"ChatGPT OAuth login saved for account '{args.account}' (account_id: {account_id})."
+        return (
+            f"ChatGPT OAuth login saved for account '{args.account}' "
+            f"(account_id: {account_id})."
+        )
     return f"ChatGPT OAuth login saved for account '{args.account}'."
 
 
@@ -554,8 +567,9 @@ def cmd_add_model(args: argparse.Namespace, data: dict[str, Any]) -> str:
     if args.account:
         account = _find_account(data["accounts"], args.account)
         if account is None:
+            msg = f"Account '{args.account}' not found. Add it first with add-account."
             raise ValueError(
-                f"Account '{args.account}' not found. Add it first with add-account.",
+                msg,
             )
         account["models"] = _dedupe([*account.get("models", []), args.model])
 
@@ -569,7 +583,8 @@ def cmd_set_route(args: argparse.Namespace, data: dict[str, Any]) -> str:
     route = data["task_routes"].setdefault(args.task, {})
     models = parse_comma_separated_values(args.model)
     if not models:
-        raise ValueError("At least one model is required for --model.")
+        msg = "At least one model is required for --model."
+        raise ValueError(msg)
     route[args.tier] = models
     _add_models(data, models)
     _ensure_default_model(data)
@@ -752,7 +767,7 @@ class RouterConfigCliParserBuilder:
         self._add_set_default_argument(parser)
         parser.add_argument("--client-id", default=CHATGPT_CLIENT_ID)
         parser.add_argument("--authorize-url", default=CHATGPT_AUTHORIZE_URL)
-        parser.add_argument("--token-url", default=CHATGPT_TOKEN_URL)
+        parser.add_argument("--token-url", default=CHATGPT_OAUTH_EXCHANGE_URL)
         parser.add_argument("--redirect-uri", default=CHATGPT_REDIRECT_URI)
         parser.add_argument("--scope", default=CHATGPT_SCOPE)
         parser.add_argument("--originator", default="pi")
@@ -900,8 +915,9 @@ def main(argv: list[str] | None = None) -> int:
                 resolved_payload,
             ),
         )
+    elif isinstance(result, str) and result.strip():
+        sys.stdout.write(result.rstrip() + "\n")
 
-    print(result)
     return 0
 
 

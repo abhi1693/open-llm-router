@@ -4,13 +4,15 @@ from copy import deepcopy
 from dataclasses import dataclass
 from difflib import get_close_matches
 from functools import lru_cache
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from open_llm_router.catalogs.paths import CatalogDataPaths
 from open_llm_router.utils.yaml_utils import load_yaml_dict
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class CatalogValidationError(ValueError):
@@ -309,32 +311,37 @@ def _expand_model_items_with_presets(
 ) -> list[dict[str, Any]]:
     raw_models = models_raw.get("models", [])
     if not isinstance(raw_models, list):
-        raise ValueError("Expected 'models' list in models catalog.")
+        msg = "Expected 'models' list in models catalog."
+        raise TypeError(msg)
 
     raw_presets = models_raw.get("metadata_presets", {})
     if raw_presets is None:
         raw_presets = {}
     if not isinstance(raw_presets, dict):
-        raise ValueError("Expected 'metadata_presets' mapping in models catalog.")
+        msg = "Expected 'metadata_presets' mapping in models catalog."
+        raise TypeError(msg)
 
     expanded: list[dict[str, Any]] = []
     for idx, item in enumerate(raw_models):
         if not isinstance(item, dict):
-            raise ValueError(f"Expected object at models[{idx}] in models catalog.")
+            msg = f"Expected object at models[{idx}] in models catalog."
+            raise TypeError(msg)
         current = deepcopy(item)
         preset_name = current.pop("metadata_preset", None)
         if preset_name is None:
             expanded.append(current)
             continue
         if not isinstance(preset_name, str) or not preset_name.strip():
+            msg = f"Expected non-empty string metadata_preset at models[{idx}]."
             raise ValueError(
-                f"Expected non-empty string metadata_preset at models[{idx}].",
+                msg,
             )
         preset_key = preset_name.strip()
         preset_payload = raw_presets.get(preset_key)
         if not isinstance(preset_payload, dict):
-            raise ValueError(
-                f"Unknown metadata_preset '{preset_key}' referenced at models[{idx}].",
+            msg = f"Unknown metadata_preset '{preset_key}' referenced at models[{idx}]."
+            raise TypeError(
+                msg,
             )
         expanded.append(_merge_dict(preset_payload, current))
     return expanded
@@ -355,8 +362,9 @@ def load_internal_catalog() -> RouterCatalog:
     for item in _expand_model_items_with_presets(models_raw):
         model_entry = ModelCatalogEntry.model_validate(item)
         if model_entry.provider not in provider_entries:
+            msg = f"Catalog model '{model_entry.canonical_id}' references unknown provider '{model_entry.provider}'."
             raise ValueError(
-                f"Catalog model '{model_entry.canonical_id}' references unknown provider '{model_entry.provider}'.",
+                msg,
             )
         model_entries[model_entry.canonical_id] = model_entry
 
@@ -430,9 +438,11 @@ def _iter_model_references(
 
     model_profiles = raw.get("model_profiles")
     if isinstance(model_profiles, dict):
-        for model_key in model_profiles:
-            if isinstance(model_key, str) and model_key.strip():
-                refs.append((f"model_profiles.{model_key}", None, model_key))
+        refs.extend(
+            (f"model_profiles.{model_key}", None, model_key)
+            for model_key in model_profiles
+            if isinstance(model_key, str) and model_key.strip()
+        )
 
     models = raw.get("models")
     if isinstance(models, list):
@@ -440,9 +450,11 @@ def _iter_model_references(
             if isinstance(model, str) and model.strip():
                 refs.append((f"models[{idx}]", None, model))
     elif isinstance(models, dict):
-        for model_key in models:
-            if isinstance(model_key, str) and model_key.strip():
-                refs.append((f"models.{model_key}", None, model_key))
+        refs.extend(
+            (f"models.{model_key}", None, model_key)
+            for model_key in models
+            if isinstance(model_key, str) and model_key.strip()
+        )
 
     task_routes = raw.get("task_routes")
     if isinstance(task_routes, dict):

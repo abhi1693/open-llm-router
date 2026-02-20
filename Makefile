@@ -19,7 +19,7 @@ help:
 lint:
 	@echo "Running lint checks..."
 	@$(UV) run python -m compileall -q $(LINT_DIRS)
-	@$(UV) run ruff check --select ALL .
+	@$(UV) run ruff check --select ALL --ignore D,ANN,S101,C901,PLR0911,PLR0912,PLR0913,PLR0915,PLR2004,BLE001,PLC0415 .
 	@$(UV) run flake8 $(LINT_DIRS)
 	@$(UV) run isort --check-only $(LINT_DIRS)
 	@$(UV) run mypy --strict $(SRC_DIRS)

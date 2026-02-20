@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections import OrderedDict, deque
-from collections.abc import ItemsView
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import ItemsView
 
 K = TypeVar("K")
 V = TypeVar("V")

@@ -63,7 +63,8 @@ class BuiltinProfileCatalog:
         )
         profiles = raw.get("profiles") or {}
         if not isinstance(profiles, dict):
-            raise ValueError("Expected 'profiles' mapping in profile catalog.")
+            msg = "Expected 'profiles' mapping in profile catalog."
+            raise TypeError(msg)
         return profiles
 
     @classmethod
@@ -81,11 +82,13 @@ class BuiltinProfileCatalog:
         template = cls._profiles().get(name)
         if template is None:
             available = ", ".join(sorted(cls._profiles()))
+            msg = f"Unknown profile '{name}'. Available profiles: {available}"
             raise ValueError(
-                f"Unknown profile '{name}'. Available profiles: {available}",
+                msg,
             )
         if not isinstance(template, dict):
-            raise ValueError(f"Invalid template for profile '{name}'.")
+            msg = f"Invalid template for profile '{name}'."
+            raise TypeError(msg)
         return deepcopy(template)
 
 

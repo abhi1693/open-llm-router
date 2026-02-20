@@ -20,9 +20,11 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 parsed = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"{path}:{line_no}: invalid JSON ({exc})") from exc
+                msg = f"{path}:{line_no}: invalid JSON ({exc})"
+                raise ValueError(msg) from exc
             if not isinstance(parsed, dict):
-                raise ValueError(f"{path}:{line_no}: each line must be a JSON object")
+                msg = f"{path}:{line_no}: each line must be a JSON object"
+                raise TypeError(msg)
             rows.append(parsed)
     return rows
 
@@ -31,7 +33,8 @@ def _normalize_case_payload(case: dict[str, Any]) -> tuple[dict[str, Any], str]:
     if "payload" in case:
         payload = case.get("payload")
         if not isinstance(payload, dict):
-            raise ValueError("Case field 'payload' must be an object when provided.")
+            msg = "Case field 'payload' must be an object when provided."
+            raise ValueError(msg)
     else:
         payload = {
             key: value
@@ -73,7 +76,8 @@ def _summarize(
     reranked: list[dict[str, Any]],
 ) -> dict[str, Any]:
     if len(baseline) != len(reranked):
-        raise ValueError("Baseline and reranked result counts do not match.")
+        msg = "Baseline and reranked result counts do not match."
+        raise ValueError(msg)
     total = len(baseline)
     changed = 0
     expected_model_cases = 0
@@ -164,14 +168,16 @@ def main(argv: list[str] | None = None) -> int:
 
     config, _ = RoutingConfigLoader(args.config).load_with_metadata()
     if not config.route_reranker.enabled:
+        msg = "route_reranker is disabled in config. Enable it before benchmarking."
         raise ValueError(
-            "route_reranker is disabled in config. Enable it before benchmarking.",
+            msg,
         )
 
     dataset_path = Path(args.dataset)
     cases = _load_jsonl(dataset_path)
     if not cases:
-        raise ValueError("Dataset is empty.")
+        msg = "Dataset is empty."
+        raise ValueError(msg)
 
     baseline_config = config.model_copy(deep=True)
     baseline_config.route_reranker.enabled = False

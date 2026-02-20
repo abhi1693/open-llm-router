@@ -12,6 +12,7 @@ class JsonlAuditLogger:
     def __init__(
         self,
         path: str,
+        *,
         enabled: bool = True,
         max_queue_size: int = 8192,
     ) -> None:

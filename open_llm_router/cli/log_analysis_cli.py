@@ -3,11 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter, defaultdict
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from open_llm_router.utils.cli_output import write_cli_report
 from open_llm_router.utils.numeric_utils import (
@@ -15,6 +14,9 @@ from open_llm_router.utils.numeric_utils import (
     coerce_optional_int,
 )
 from open_llm_router.utils.stats_utils import percentile
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @dataclass(slots=True)
@@ -713,10 +715,11 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = summarize_log(path=log_path, top_n=max(1, int(args.top)))
 
-    if args.format == "json":
-        rendered = json.dumps(summary, ensure_ascii=True, indent=2)
-    else:
-        rendered = _render_text(summary)
+    rendered = (
+        json.dumps(summary, ensure_ascii=True, indent=2)
+        if args.format == "json"
+        else _render_text(summary)
+    )
 
     write_cli_report(rendered=rendered, output_path=args.output)
 

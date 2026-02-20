@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from open_llm_router.cli.log_analysis_cli import main, summarize_log
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _write_log(

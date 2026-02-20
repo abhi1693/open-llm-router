@@ -61,10 +61,12 @@ def coerce_models_map(value: Any) -> dict[str, dict[str, Any]]:
                 normalized_models[model_key] = normalize_model_metadata(model_key, {})
                 continue
             if not isinstance(raw_metadata, dict):
-                raise ValueError(f"Model metadata for '{model_key}' must be an object.")
+                msg = f"Model metadata for '{model_key}' must be an object."
+                raise TypeError(msg)
             normalized_models[model_key] = normalize_model_metadata(
                 model_key,
                 raw_metadata,
             )
         return normalized_models
-    raise ValueError("Expected 'models' to be either a list or a mapping.")
+    msg = "Expected 'models' to be either a list or a mapping."
+    raise ValueError(msg)

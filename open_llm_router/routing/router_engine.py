@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from functools import lru_cache
 from math import log, sqrt
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from open_llm_router.config import ModelProfile, RoutingConfig
 from open_llm_router.routing.classifier import (
@@ -22,6 +21,9 @@ from open_llm_router.routing.scoring import (
 from open_llm_router.utils.sequence_utils import (
     dedupe_preserving_order as _dedupe_preserving_order,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _CONTEXT_WINDOW_OVERFLOW_TOLERANCE = 0.10
 _HIGH_CONTEXT_SUPPLEMENT_TOKENS = 120_000
@@ -1123,7 +1125,7 @@ def _vector_cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
 @lru_cache(maxsize=32)
 def _resolve_token_encoder(model_hint: str | None) -> Any | None:
     try:
-        import tiktoken  # type: ignore
+        import tiktoken  # type: ignore[import-not-found]
     except ImportError:
         return None
 
@@ -1302,7 +1304,9 @@ def _model_satisfies_provider_filters(
     return not (
         ignore
         and _model_matches_provider_values(
-            model=model, routing_config=routing_config, values=ignore,
+            model=model,
+            routing_config=routing_config,
+            values=ignore,
         )
     )
 

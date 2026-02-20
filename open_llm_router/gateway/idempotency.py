@@ -4,13 +4,21 @@ import asyncio
 import base64
 import hashlib
 import json
-import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi.responses import Response
+
+_redis_from_url: Any | None
+
+try:
+    from redis.asyncio import from_url as _redis_from_url
+except ImportError:  # pragma: no cover - optional dependency.
+    _redis_from_url = None
+
+if TYPE_CHECKING:
+    import logging
 
 
 @dataclass(slots=True)
@@ -65,6 +73,10 @@ class AsyncKeyValueStore(Protocol):
     async def get(self, key: str) -> bytes | str | None: ...
 
     async def set(self, key: str, value: str, ttl_seconds: int) -> None: ...
+
+
+class KeyValueStoreFactory(Protocol):
+    def __call__(self, redis_url: str) -> AsyncKeyValueStore: ...
 
 
 class IdempotencyStore:
@@ -161,7 +173,11 @@ class KeyValueIdempotencyStore:
             return BeginResult(mode="leader", key=key)
         return BeginResult(mode="replay", key=key, cached=cached)
 
-    async def wait_for_existing(self, result: BeginResult) -> CachedResponse | None:
+    async def wait_for_existing(
+        self,
+        result: BeginResult,
+    ) -> CachedResponse | None:
+        _ = result
         # Redis backend currently supports replay across requests/pods, but not distributed
         # in-flight leader election/waiting for concurrent duplicates.
         return None
@@ -178,17 +194,21 @@ class KeyValueIdempotencyStore:
             headers=headers,
             body=body,
         )
-        await self._kv_store.set(key, serialized, ttl_seconds=self._config.ttl_seconds)
+        await self._kv_store.set(
+            key,
+            serialized,
+            ttl_seconds=self._config.ttl_seconds,
+        )
 
     async def release_without_store(self, key: str) -> None:
-        return None
+        _ = key
 
 
 def build_idempotency_store(
     config: IdempotencyConfig,
     redis_url: str | None = None,
     logger: logging.Logger | None = None,
-    create_key_value_store: Callable[[str], AsyncKeyValueStore] | None = None,
+    create_key_value_store: KeyValueStoreFactory | None = None,
 ) -> IdempotencyBackend:
     if not redis_url:
         return IdempotencyStore(config=config)
@@ -196,7 +216,7 @@ def build_idempotency_store(
     factory = create_key_value_store or build_redis_key_value_store
     try:
         return KeyValueIdempotencyStore(config=config, kv_store=factory(redis_url))
-    except Exception as exc:
+    except RuntimeError as exc:
         if logger is not None:
             logger.warning(
                 "idempotency_redis_unavailable reason=%s fallback=in_memory",
@@ -222,11 +242,10 @@ class RedisAsyncKeyValueStore:
 
 
 def build_redis_key_value_store(redis_url: str) -> AsyncKeyValueStore:
-    try:
-        from redis.asyncio import from_url
-    except Exception as exc:  # pragma: no cover - covered by fallback tests.
-        raise RuntimeError("redis package is not installed") from exc
-    client = from_url(redis_url, decode_responses=False)
+    if _redis_from_url is None:  # pragma: no cover - covered by fallback tests.
+        msg = "redis package is not installed"
+        raise RuntimeError(msg)
+    client = _redis_from_url(redis_url, decode_responses=False)
     return RedisAsyncKeyValueStore(redis_client=client)
 
 
@@ -257,7 +276,13 @@ def _deserialize_cached_response(raw: bytes | str) -> CachedResponse | None:
             return None
         body = base64.b64decode(body_b64.encode("ascii"))
         created_at = float(payload.get("created_at_epoch", 0.0))
-    except Exception:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
         return None
 
     normalized_headers: dict[str, str] = {}

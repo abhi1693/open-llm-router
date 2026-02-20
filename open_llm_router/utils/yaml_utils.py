@@ -20,7 +20,8 @@ def load_yaml_dict(
         return payload
     if error_message is not None:
         raise ValueError(error_message)
-    raise ValueError(f"Expected YAML object in '{resolved}'.")
+    msg = f"Expected YAML object in '{resolved}'."
+    raise ValueError(msg)
 
 
 def write_yaml_dict(

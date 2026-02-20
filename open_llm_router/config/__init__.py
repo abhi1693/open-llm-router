@@ -77,7 +77,7 @@ class TaskRoute(BaseModel):
     default: str | list[str] | None = None
 
     @staticmethod
-    def _coerce_models(value: str | list[str] | None) -> list[str]:
+    def coerce_models(value: str | list[str] | None) -> list[str]:
         if value is None:
             return []
         if isinstance(value, str):
@@ -89,15 +89,15 @@ class TaskRoute(BaseModel):
         for item in value:
             if not isinstance(item, str):
                 continue
-            item = item.strip()
-            if item:
-                cleaned.append(item)
+            stripped = item.strip()
+            if stripped:
+                cleaned.append(stripped)
         return cleaned
 
     @staticmethod
     def _pick_first_non_empty(*candidates: str | list[str] | None) -> list[str]:
         for candidate in candidates:
-            models = TaskRoute._coerce_models(candidate)
+            models = TaskRoute.coerce_models(candidate)
             if models:
                 return models
         return []
@@ -317,11 +317,11 @@ class RoutingConfig(BaseModel):
         for account in self.accounts:
             discovered.update(account.models)
         for route in self.task_routes.values():
-            discovered.update(TaskRoute._coerce_models(route.low))
-            discovered.update(TaskRoute._coerce_models(route.medium))
-            discovered.update(TaskRoute._coerce_models(route.high))
-            discovered.update(TaskRoute._coerce_models(route.xhigh))
-            discovered.update(TaskRoute._coerce_models(route.default))
+            discovered.update(TaskRoute.coerce_models(route.low))
+            discovered.update(TaskRoute.coerce_models(route.medium))
+            discovered.update(TaskRoute.coerce_models(route.high))
+            discovered.update(TaskRoute.coerce_models(route.xhigh))
+            discovered.update(TaskRoute.coerce_models(route.default))
         return sorted(discovered)
 
 
@@ -341,9 +341,12 @@ class RoutingConfigLoader:
 
     def _load_document(self) -> dict[str, Any]:
         if not self._path.exists():
-            raise FileNotFoundError(
+            msg = (
                 f"Routing config not found at '{self._config_path}'. "
-                "Create it or set ROUTING_CONFIG_PATH.",
+                "Create it or set ROUTING_CONFIG_PATH."
+            )
+            raise FileNotFoundError(
+                msg,
             )
         return load_yaml_dict(
             self._path,

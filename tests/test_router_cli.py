@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 import yaml
 
 from open_llm_router.cli import router_cli
@@ -443,7 +444,7 @@ def test_provider_login_rejects_raw_schema_path(tmp_path: Any) -> None:
             "task_routes": {"general": {"default": ["openai/gpt-5.2"]}},
         },
     )
-    try:
+    with pytest.raises(SystemExit) as exc_info:
         main(
             [
                 "provider",
@@ -455,43 +456,27 @@ def test_provider_login_rejects_raw_schema_path(tmp_path: Any) -> None:
                 str(raw_path),
             ],
         )
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:  # pragma: no cover
-        raise AssertionError(
-            "Expected failure when provider login is pointed at raw schema file",
-        )
+    assert exc_info.value.code == 2
 
 
 def test_removed_old_top_level_login_commands() -> None:
-    try:
+    with pytest.raises(SystemExit) as exc_info:
         main(["login-chatgpt"])
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:  # pragma: no cover
-        raise AssertionError(
-            "Expected parser failure for removed command login-chatgpt",
-        )
+    assert exc_info.value.code == 2
 
-    try:
+    with pytest.raises(SystemExit) as exc_info:
         main(["add-account", "--models", "openai/gpt-5.2"])
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:  # pragma: no cover
-        raise AssertionError("Expected parser failure for removed command add-account")
+    assert exc_info.value.code == 2
 
 
 def test_provider_login_requires_name() -> None:
-    try:
+    with pytest.raises(SystemExit) as exc_info:
         main(["provider", "login", "gemini"])
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:  # pragma: no cover
-        raise AssertionError("Expected parser failure when --name is omitted")
+    assert exc_info.value.code == 2
 
 
 def test_provider_login_rejects_apikey_and_api_key_env_together() -> None:
-    try:
+    with pytest.raises(SystemExit) as exc_info:
         main(
             [
                 "provider",
@@ -505,12 +490,7 @@ def test_provider_login_rejects_apikey_and_api_key_env_together() -> None:
                 "GEMINI_API_KEY",
             ],
         )
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:  # pragma: no cover
-        raise AssertionError(
-            "Expected failure when both --apikey and --api-key-env are set",
-        )
+    assert exc_info.value.code == 2
 
 
 def test_catalog_sync_dry_run_does_not_write_catalog(

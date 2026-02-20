@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from open_llm_router.utils.persistence import YamlFileStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_yaml_file_store_load_returns_default_when_missing(tmp_path: Path) -> None:

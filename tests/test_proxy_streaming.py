@@ -14,7 +14,8 @@ class _TimeoutingUpstream:
     async def aiter_lines(self) -> Any:
         if False:
             yield ""
-        raise httpx.ReadTimeout("timed out", request=self.request)
+        msg = "timed out"
+        raise httpx.ReadTimeout(msg, request=self.request)
 
 
 class _LineUpstream:

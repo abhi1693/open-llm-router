@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def write_cli_report(
@@ -18,7 +21,7 @@ def write_cli_report(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered + "\n", encoding="utf-8")
     if always_print or not output_path:
-        print(rendered)
+        sys.stdout.write(rendered + "\n")
 
 
 def render_yaml(payload: Any) -> str:
@@ -26,7 +29,7 @@ def render_yaml(payload: Any) -> str:
 
 
 def print_yaml(payload: Any) -> None:
-    print(render_yaml(payload))
+    sys.stdout.write(render_yaml(payload) + "\n")
 
 
 def emit_or_persist_yaml(

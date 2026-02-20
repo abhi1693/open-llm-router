@@ -5,27 +5,31 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import httpx
 from fastapi import status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from starlette.datastructures import Headers
 
 from open_llm_router.config import BackendAccount
-from open_llm_router.gateway.circuit_breaker import CircuitBreakerRegistry
-from open_llm_router.routing.router_engine import RouteDecision
 from open_llm_router.utils.model_utils import split_model_ref
 from open_llm_router.utils.persistence import YamlFileStore
 from open_llm_router.utils.sequence_utils import (
     dedupe_preserving_order as _dedupe_preserving_order,
 )
 from open_llm_router.utils.token_utils import TokenMetadataParser
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable
+
+    from starlette.datastructures import Headers
+
+    from open_llm_router.gateway.circuit_breaker import CircuitBreakerRegistry
+    from open_llm_router.routing.router_engine import RouteDecision
 
 HOP_BY_HOP_RESPONSE_HEADERS = {
     "connection",
@@ -105,11 +109,11 @@ class UpstreamRequestSpec:
 
 
 def _filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
-    filtered: dict[str, str] = {}
-    for name, value in headers.items():
-        if name.lower() not in HOP_BY_HOP_RESPONSE_HEADERS:
-            filtered[name] = value
-    return filtered
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() not in HOP_BY_HOP_RESPONSE_HEADERS
+    }
 
 
 def _response_content_type(response_headers: dict[str, str]) -> str | None:
@@ -195,6 +199,7 @@ def _build_upstream_headers(
     oauth_account_id: str | None,
     organization: str | None,
     project: str | None,
+    *,
     stream: bool = False,
     allow_passthrough_auth: bool = False,
 ) -> dict[str, str]:
@@ -238,7 +243,7 @@ class UpstreamHeaderBuilder:
             "x-stainless-runtime-version",
         },
     )
-    CANONICAL_HEADER_NAMES: dict[str, str] = {
+    CANONICAL_HEADER_NAMES: ClassVar[dict[str, str]] = {
         "accept": "Accept",
         "baggage": "baggage",
         "content-type": "Content-Type",
@@ -694,6 +699,7 @@ def _drop_none_fields(value: Any) -> Any:
 
 def _prepare_gemini_chat_payload(
     payload: dict[str, Any],
+    *,
     stream: bool,
 ) -> dict[str, Any]:
     allowed_fields = {
@@ -735,13 +741,14 @@ def _prepare_gemini_chat_payload(
     if "max_tokens" not in prepared and isinstance(max_output_tokens, int):
         prepared["max_tokens"] = max_output_tokens
 
-    return cast(dict[str, Any], _drop_none_fields(prepared))
+    return cast("dict[str, Any]", _drop_none_fields(prepared))
 
 
 def _prepare_upstream_request(
     path: str,
     payload: dict[str, Any],
     provider: str,
+    *,
     stream: bool,
 ) -> UpstreamRequestSpec:
     if provider.strip().lower() == "openai-codex" and path in {
@@ -1163,7 +1170,6 @@ class ProxyAttemptProcessor(_ProxyComponent):
                 connect_ms=round(connect_latency_ms, 3),
                 status=upstream.status_code,
             )
-            return upstream, None
         except httpx.RequestError as exc:
             error_details = _request_error_details(exc)
             if self._proxy.circuit_breakers is not None:
@@ -1214,6 +1220,7 @@ class ProxyAttemptProcessor(_ProxyComponent):
                     },
                 },
             )
+        return upstream, None
 
     def should_retry_upstream_response(
         self,
@@ -2601,10 +2608,10 @@ class OAuthStateManager:
                 config_path,
                 account.name,
                 state,
-                can_persist_access,
-                can_persist_refresh,
-                can_persist_expires,
-                can_persist_account_id,
+                can_persist_access=can_persist_access,
+                can_persist_refresh=can_persist_refresh,
+                can_persist_expires=can_persist_expires,
+                can_persist_account_id=can_persist_account_id,
             )
 
     @staticmethod
@@ -2612,6 +2619,7 @@ class OAuthStateManager:
         config_path: Path,
         account_name: str,
         state: OAuthRuntimeState,
+        *,
         can_persist_access: bool,
         can_persist_refresh: bool,
         can_persist_expires: bool,
@@ -2672,25 +2680,37 @@ class OAuthStateManager:
 
         changed = False
 
-        if can_persist_access and state.access_token:
-            if entry.get("oauth_access_token") != state.access_token:
-                entry["oauth_access_token"] = state.access_token
-                changed = True
+        if (
+            can_persist_access
+            and state.access_token
+            and entry.get("oauth_access_token") != state.access_token
+        ):
+            entry["oauth_access_token"] = state.access_token
+            changed = True
 
-        if can_persist_refresh and state.refresh_token:
-            if entry.get("oauth_refresh_token") != state.refresh_token:
-                entry["oauth_refresh_token"] = state.refresh_token
-                changed = True
+        if (
+            can_persist_refresh
+            and state.refresh_token
+            and entry.get("oauth_refresh_token") != state.refresh_token
+        ):
+            entry["oauth_refresh_token"] = state.refresh_token
+            changed = True
 
-        if can_persist_expires and state.expires_at is not None:
-            if entry.get("oauth_expires_at") != state.expires_at:
-                entry["oauth_expires_at"] = state.expires_at
-                changed = True
+        if (
+            can_persist_expires
+            and state.expires_at is not None
+            and entry.get("oauth_expires_at") != state.expires_at
+        ):
+            entry["oauth_expires_at"] = state.expires_at
+            changed = True
 
-        if can_persist_account_id and state.account_id:
-            if entry.get("oauth_account_id") != state.account_id:
-                entry["oauth_account_id"] = state.account_id
-                changed = True
+        if (
+            can_persist_account_id
+            and state.account_id
+            and entry.get("oauth_account_id") != state.account_id
+        ):
+            entry["oauth_account_id"] = state.account_id
+            changed = True
 
         if not changed:
             return
@@ -2951,10 +2971,13 @@ class ChatCompletionsResponseAdapter:
                                 finish_reason=finish_reason,
                             )
                             logger.info(
-                                "proxy_chat_result request_id=%s model=%s stream=%s text_chars=%d tool_calls=%d finish_reason=%s",
+                                (
+                                    "proxy_chat_result request_id=%s model=%s stream=%s "
+                                    "text_chars=%d tool_calls=%d finish_reason=%s"
+                                ),
                                 request_id,
                                 model,
-                                True,
+                                stream,
                                 len("".join(state["text_parts"])),
                                 len(state["tool_calls"]),
                                 finish_reason,
@@ -3005,10 +3028,13 @@ class ChatCompletionsResponseAdapter:
                     finish_reason=finish_reason,
                 )
                 logger.info(
-                    "proxy_chat_result request_id=%s model=%s stream=%s text_chars=%d tool_calls=%d finish_reason=%s",
+                    (
+                        "proxy_chat_result request_id=%s model=%s stream=%s "
+                        "text_chars=%d tool_calls=%d finish_reason=%s"
+                    ),
                     request_id,
                     model,
-                    True,
+                    stream,
                     len("".join(state["text_parts"])),
                     len(state["tool_calls"]),
                     finish_reason,
@@ -3176,10 +3202,13 @@ class ChatCompletionsResponseAdapter:
         }
         response_body["_router"] = routing_diagnostics
         logger.info(
-            "proxy_chat_result request_id=%s model=%s stream=%s text_chars=%d tool_calls=%d finish_reason=%s",
+            (
+                "proxy_chat_result request_id=%s model=%s stream=%s "
+                "text_chars=%d tool_calls=%d finish_reason=%s"
+            ),
             request_id,
             model,
-            False,
+            stream,
             len(content),
             len(state["tool_calls"]),
             finish_reason,
@@ -3354,6 +3383,7 @@ class BackendProxy:
         payload: dict[str, Any],
         incoming_headers: Headers,
         route_decision: RouteDecision,
+        *,
         stream: bool,
         request_id: str | None = None,
     ) -> Response:
@@ -3369,6 +3399,7 @@ class BackendProxy:
     @staticmethod
     async def _to_fastapi_response(
         upstream: httpx.Response,
+        *,
         stream: bool,
         upstream_stream: bool,
         target: BackendTarget,
@@ -3565,7 +3596,7 @@ def _parse_retry_after_seconds(
         delta = (retry_dt - datetime.now(UTC)).total_seconds()
         if delta > 0:
             return float(delta)
-    except Exception:
-        pass
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return default_seconds
 
     return default_seconds

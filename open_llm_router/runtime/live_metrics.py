@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from open_llm_router.runtime.live_metrics_dispatcher import LiveMetricsEventDispatcher
 from open_llm_router.runtime.proxy_metrics import ProxyMetricsAccumulator
@@ -14,6 +13,9 @@ from open_llm_router.runtime.route_decision_tracker import (
     ClassifierCalibrationSnapshot,
     RouteDecisionTracker,
 )
+
+if TYPE_CHECKING:
+    import logging
 
 TARGET_METRICS_KEY_PREFIX = "target::"
 
